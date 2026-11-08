@@ -85,7 +85,8 @@ export function InfoTip({ text }: { text: string }) {
 }
 
 export function DemoBadge({ label = "Demo Data" }: { label?: string }) {
-  return <Badge tone="amber">{label}</Badge>;
+  const { source } = useStore();
+  return source === "sheets" ? <Badge tone="green">Google Sheets</Badge> : <Badge tone="amber">{label}</Badge>;
 }
 
 export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {

@@ -1,5 +1,14 @@
 // Deterministic, timezone-free date helpers (YYYY-MM-DD strings).
-export const ANCHOR = "2026-11-07"; // "today" for the demo dataset
+/** Fixed "today" used only by the built-in demo dataset so it is deterministic. */
+export const DEMO_ANCHOR = "2026-11-07";
+/** The app's notion of "today". Demo = fixed; Google Sheets data = the real date (see setAnchor). */
+export let ANCHOR = DEMO_ANCHOR;
+export let NOW_ISO = `${DEMO_ANCHOR}T23:59:00`;
+export function setAnchor(iso: string) { ANCHOR = iso; NOW_ISO = `${iso}T23:59:00`; }
+export function localToday(): string {
+  const d = new Date(); const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 export function parse(iso: string): Date {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
@@ -54,7 +63,6 @@ export function relTime(iso: string, nowIso: string): string {
   const days = Math.floor(mins / 1440);
   return days < 30 ? `${days}d` : fmtShort(iso);
 }
-export const NOW_ISO = `${ANCHOR}T23:59:00`;
 export function nowStamp(): string {
   // Real clock for user-made changes (client only).
   const d = new Date();

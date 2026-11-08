@@ -30,7 +30,9 @@ function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void)
 export default function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { data, user, setUserId, filters, setFilters, eff } = useStore();
+  const { data, user, setUserId, filters, setFilters, eff, source, sourceMeta, reloadData, continueWithDemo } = useStore();
+  const [showWarn, setShowWarn] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [menuAt, setMenuAt] = useState<string | null>(null);
   const menu = menuAt === path; // auto-closes when the route changes
   const setMenu = (fn: boolean | ((m: boolean) => boolean)) => setMenuAt((cur) => ((typeof fn === "function" ? fn(cur === path) : fn) ? path : null));
@@ -54,6 +56,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const unread = myLeads.filter((l) => l.unread).length;
   const unassigned = data.leads.filter((l) => !l.repId && !l.dropped).length;
   const dueFollow = myLeads.filter((l) => l.followUpDate && l.followUpDate <= ANCHOR).slice(0, 5);
+
+  if (source === "loading") {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-muted" role="status"><span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-brand-soft border-t-brand" />Loading data…</div>;
+  }
+  if (source === "error") {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
+          <p className="text-base font-semibold">Couldn&apos;t load your Google Sheet</p>
+          <p className="mt-2 text-sm text-muted">{sourceMeta?.message}</p>
+          <div className="mt-4 flex justify-center gap-2">
+            <button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Try again</button>
+            <button onClick={continueWithDemo} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium hover:bg-gray-50">View demo data instead</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -89,7 +109,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-1.5">
-            <Badge tone="amber" className="hidden xl:inline-flex">Demo Data · as of {fmtShort(ANCHOR)}</Badge>
+            {source === "sheets"
+              ? <Badge tone="green" className="hidden xl:inline-flex">Google Sheets · as of {fmtShort(ANCHOR)}</Badge>
+              : <Badge tone="amber" className="hidden xl:inline-flex">Demo Data · as of {fmtShort(ANCHOR)}</Badge>}
             <DisplayMenu />
             <div className="relative" ref={bellRef}>
               <button onClick={() => setBell((b) => !b)} aria-label="Notifications" className="relative rounded-lg p-2 text-muted hover:bg-gray-100">
@@ -145,6 +167,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </nav>
         )}
       </header>
+      {source === "sheets" && (
+        <div className="border-b border-amber-200 bg-amber-50 text-amber-800">
+          <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs lg:px-6">
+            <span><b>Read-only view of your Google Sheet.</b> Edits made here (moving cards, notes, replies, imports) are not saved back to the sheet and reset on refresh.</span>
+            <span className="text-amber-700">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>
+            <button className="font-semibold underline" disabled={reloading} onClick={async () => { setReloading(true); await reloadData(true); setReloading(false); }}>{reloading ? "Reloading…" : "Reload from sheet"}</button>
+            {(sourceMeta?.warningCount ?? 0) > 0 || (sourceMeta?.missingTabs.length ?? 0) > 0 ? <button className="font-semibold underline" onClick={() => setShowWarn((v) => !v)}>{sourceMeta?.warningCount} data warning(s) {showWarn ? "▲" : "▼"}</button> : <span>No data warnings</span>}
+          </div>
+          {showWarn && (
+            <div className="mx-auto max-w-[1560px] px-4 pb-2 text-xs lg:px-6">
+              {(sourceMeta?.missingTabs.length ?? 0) > 0 && <p className="mb-1 font-semibold">Missing required tab(s): {sourceMeta?.missingTabs.join(", ")}</p>}
+              <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5">{sourceMeta?.warnings.map((w, i) => <li key={i}>{w.tab} · row {w.row}: {w.message}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      )}
       <main className="mx-auto max-w-[1560px] px-4 py-5 lg:px-6">{children}</main>
       <FeedbackHost />
     </div>

@@ -169,7 +169,7 @@ export default function AdsPerformance() {
           : <TimeChart data={chartData} fmt={sel.fmt} series={[{ key: "cur", name: "This period", type: sel.id === "spend" || sel.id === "messages" ? "area" : "line" }, { key: "prev", name: "Previous period", dashed: true, color: "#9ca3af" }]} />}
       </ChartCard>
 
-      <Card title="Campaign performance" subtitle={`${rows.length} ads with delivery in this range · values are Meta-reported unless noted · Demo Data`}
+      <Card title="Campaign performance" subtitle={`${rows.length} ads with delivery in this range · values are Meta-reported unless noted`}
         right={<Select value={qFilter} onChange={setQFilter} options={[{ value: "all", label: "All chat quality" }, { value: "flag", label: "⚠ High cost / low performance" }, ...["Excellent", "Good", "Average", "Poor", "No data"].map((v) => ({ value: v, label: v }))]} />}>
         <DataTable columns={cols} rows={filtered} rowKey={(r) => r.ad.id} searchText={(r) => `${r.ad.name} ${r.campaign} ${r.ad.id}`} searchPlaceholder="Search campaign or ad…"
           defaultSort={{ key: "spend", dir: "desc" }} onRowClick={setOpen} rowClass={(r) => (lowPerf(r) ? "bg-red-50/40" : undefined)} caption="Campaign performance" emptyTitle="No ads match" emptyHint="Widen the date range or clear filters." />

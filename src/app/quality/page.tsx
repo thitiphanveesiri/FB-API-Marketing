@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveCo
 import { useStore } from "@/lib/store";
 import { allLeadsFor, roleCan } from "@/lib/queries";
 import { leadStats, fmtPct } from "@/lib/metrics";
-import { Badge, Btn, Card, Column, DataTable, EmptyState, KpiCard, Modal, Select, STATUS_COLOR, StatusBadge, TextArea, InfoTip } from "@/components/ui";
+import { Btn, Card, Column, DataTable, EmptyState, KpiCard, Modal, Select, STATUS_COLOR, StatusBadge, TextArea, InfoTip, DemoBadge } from "@/components/ui";
 import { ConversationView } from "@/components/LeadDrawer";
 import { ChartCard } from "@/components/charts";
 import { Evaluation, Lead, LeadQuality, QUALITIES } from "@/lib/types";
@@ -65,7 +65,7 @@ export default function QualityPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2"><h1 className="text-xl font-semibold">Quality</h1><Badge tone="amber">Demo Data</Badge></div>
+      <div className="flex items-center gap-2"><h1 className="text-xl font-semibold">Quality</h1><DemoBadge /></div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label="Valid leads" value={String(ls.valid)} sub={ls.total - ls.valid ? `${ls.total - ls.valid} excluded as invalid` : undefined} />
         <KpiCard label="Qualified lead rate" value={fmtPct(ls.qualifiedRate)} tip="Qualified + Appointment Booked + Connection Created ÷ valid leads" />

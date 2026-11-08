@@ -1,20 +1,44 @@
-# Deploying to Vercel (data in Google Sheets)
+# Deploying to Vercel with Google Sheets as the data source
 
-## 1. Push to GitHub
+## 1. Push to GitHub, import into Vercel
 ```bash
 git remote add origin https://github.com/<you>/<repo>.git
 git push -u origin main
 ```
-## 2. Import into Vercel
-Vercel → Add New → Project → pick the repo. Framework is auto-detected as Next.js; no build settings needed. `npm run build` is already green.
+Vercel → Add New → Project → pick the repo (Next.js is auto-detected, no build settings needed).
+With no environment variables set the app runs on **Demo Data**, so a first deploy always works.
 
-## 3. Before putting real data behind it
-- The demo has **no real sign-in**; roles are UI-only. Anyone with the URL sees everything. Until auth exists, keep it on demo data, or turn on Vercel *Deployment Protection* (Project → Settings) so only your team can open it.
-- Never expose the Sheet, its service-account key or customer chats to the browser. Read the Sheet only inside Next.js route handlers (`src/app/api/*`) using the env vars in `.env.example`.
+## 2. Create the Google Sheet from the template
+1. Google Drive → New → File upload → `public/google-sheet-template.xlsx` (also served at `/google-sheet-template.xlsx`), open it, then **File → Save as Google Sheets**.
+   (`google-sheet-sample.xlsx` is the same layout filled with demo data — handy to try the connection before real data exists.)
+2. Tabs: `pages, agencies, users, campaigns, ads, ad_performance, leads, messages`. Required: `pages, campaigns, ads, ad_performance, leads`. The `_README` tab lists every column. Do not rename tabs or row-1 headers (column order is free).
+3. **Format ID columns as Plain text before pasting** (select column → Format → Number → Plain text): `ad_id`, `campaign_id`, `lead_id`, `page_id`, `user_id`. Meta Ad IDs have 15–18 digits; as numbers they are rounded (1.2E+17) and the dashboard will warn about it.
+4. Fill in order: `pages` → `campaigns` → `ads` → `ad_performance` (an `ad_performance` row whose `ad_id` is not in `ads` is skipped with a warning) → `leads` (+ optional `messages`).
 
-## 4. Google Sheets as the data source (not wired yet)
-Current state: the app reads `src/lib/seed.ts` (demo) and keeps changes in browser memory, which resets on refresh — on Vercel it cannot save anything either. To use your Sheet:
-1. Create a Google Cloud service account, enable the Google Sheets API, share the Sheet with the service-account email.
-2. One tab per entity with a header row that matches `src/lib/types.ts` (e.g. `ad_performance`: date, ad_id, spend, reach, impressions, clicks, messages, purchases; `leads`: lead_id, name, ad_id, status, rep, created_at…).
-3. Add a repository layer: `GET /api/data` reads the tabs and returns the same `Dataset` shape as `buildDemoDataset()`; write actions (Board moves, notes, imports) become `POST` routes that append/update rows. The pages and `lib/*` logic stay unchanged.
-4. Sheets is fine for a small team but has API quotas and no transactions: cache reads for a minute or two, batch writes, and plan to move to Supabase when rows or users grow (schema in `docs/schema.sql`).
+## 3. Google service account (read access)
+1. console.cloud.google.com → create a project → **APIs & Services → Library → Google Sheets API → Enable**.
+2. **IAM & Admin → Service Accounts → Create**. Open it → **Keys → Add key → JSON**. Keep that file private.
+3. In the Sheet, **Share** it with the service account's `client_email` as **Viewer**.
+
+## 4. Vercel environment variables (Project → Settings → Environment Variables)
+| Name | Value |
+|---|---|
+| `GOOGLE_SHEET_ID` | the long id in the sheet URL: `docs.google.com/spreadsheets/d/<ID>/edit` |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | `client_email` from the JSON key |
+| `GOOGLE_PRIVATE_KEY` | `private_key` from the JSON key (paste as-is; `\n` sequences are handled) |
+
+Redeploy. The top bar then shows **Google Sheets** instead of Demo Data. If the sheet cannot be read, the app shows an error screen (it never silently falls back to demo numbers).
+
+## 5. How it behaves
+- Reads happen only on the server (`/api/data`); the key never reaches the browser. Results are cached ~60 s per server instance; **Reload from sheet** in the banner bypasses the cache.
+- **Read-only for now:** moving cards, notes, replies and in-app imports are *not* written back to the sheet and reset on refresh (a banner says so). Edit the data in the Sheet. Write-back is the next step.
+- Rows with problems are skipped, not guessed, and listed under **data warnings** in the banner (unknown IDs, bad dates, duplicates, rounded IDs…). A lead is counted once (duplicate `lead_id`s and duplicate `ad_id + date` rows are skipped).
+- Dates are read as unambiguous Sheets dates, so regional formats (1/10 vs 10/1) do not matter. "Today" is the real date.
+
+## 6. Before real customer data goes live
+- The app still has **no real sign-in**; roles are a demo switch. Anyone with the URL would see the data. Turn on **Vercel Deployment Protection** (Project → Settings) or add real authentication first.
+- Sheets API quotas apply; fine for a small team. Move to Supabase (`docs/schema.sql`) when rows/users grow.
+- Customer names, phones and chats are personal data (PDPA): limit who can open the Sheet.
+
+## Testing without Google (developers)
+`SHEETS_LOCAL_JSON=/path/to/tabs.json npm start` reads tabs from a JSON file (`{ "pages": [["page_id","name"],…], … }`) instead of Google. `npx tsx scripts/sheet-roundtrip.ts` checks the mapper; `npx tsx scripts/make-sheet-template.ts` regenerates the workbooks.

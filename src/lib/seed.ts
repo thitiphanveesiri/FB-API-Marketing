@@ -1,6 +1,6 @@
 // DEMO DATA ONLY. Deterministic generator — nothing here is real Facebook data.
 // Replace `buildDemoDataset()` with a repository that reads from SQL / Meta APIs.
-import { addDays, ANCHOR, diffDays } from "./dates";
+import { addDays, DEMO_ANCHOR as ANCHOR, diffDays } from "./dates";
 import {
   Ad, AdStatus, Agency, Campaign, DailyPerf, DropReason, Evaluation, FbPage, ImportRecord,
   Lead, LeadQuality, LeadStatus, Message, QUALITIES, QUALIFIED_QUALITIES, User,

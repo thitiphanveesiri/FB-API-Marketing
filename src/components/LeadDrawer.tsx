@@ -9,11 +9,11 @@ import { fmtDate, fmtDateTime } from "@/lib/dates";
 import { roleCan } from "@/lib/queries";
 
 export function ConversationView({ leadId, height = 260 }: { leadId: string; height?: number }) {
-  const { data } = useStore();
+  const { data, source } = useStore();
   const msgs = data.messages[leadId] ?? [];
   return (
     <div>
-      <p className="mb-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Simulated demo conversation — not real Facebook Messenger data.</p>
+      <p className="mb-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">{source === "sheets" ? "Messages loaded from your Google Sheet — not a live Messenger connection." : "Simulated demo conversation — not real Facebook Messenger data."}</p>
       <div className="space-y-2 overflow-y-auto rounded-xl bg-gray-50 p-3" style={{ maxHeight: height }}>
         {msgs.length === 0 && <p className="py-6 text-center text-sm text-muted">No messages recorded for this lead.</p>}
         {msgs.map((m) => (

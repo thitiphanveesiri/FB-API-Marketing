@@ -4,7 +4,7 @@ import { Check, Minus, Plus } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import { aggregate, fmtMoney, fmtPct, leadStats } from "@/lib/metrics";
-import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, cn } from "@/components/ui";
+import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, cn, DemoBadge } from "@/components/ui";
 import { Agency, FbPage, ROLES, Role, User } from "@/lib/types";
 
 type Tab = "pages" | "agencies" | "users" | "roles";
@@ -17,7 +17,7 @@ export default function SettingsPage() {
   const canManage = roleCan.manageSettings(user.role);
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Setting</h1><Badge tone="amber">Demo Data</Badge>
+      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Setting</h1><DemoBadge />
         {!canManage && <Badge tone="blue">Read-only for your role</Badge>}</div>
       <nav className="flex gap-1 overflow-x-auto border-b border-line" aria-label="Settings sections">
         {TABS.map((t) => <button key={t.id} aria-current={tab === t.id} onClick={() => setTab(t.id)} className={cn("whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium", tab === t.id ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink")}>{t.label}</button>)}

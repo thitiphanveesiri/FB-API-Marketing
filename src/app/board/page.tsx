@@ -5,7 +5,7 @@ import { CalendarClock, GripVertical } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
-import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, hueOf, Facebook } from "@/components/ui";
+import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, hueOf, Facebook, DemoBadge } from "@/components/ui";
 import LeadDrawer from "@/components/LeadDrawer";
 import { Lead, LeadStatus, STATUSES } from "@/lib/types";
 import { ANCHOR, fmtShort, NOW_ISO, relTime } from "@/lib/dates";
@@ -102,7 +102,7 @@ export default function Board() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold">Board</h1><Badge tone="amber">Demo Data</Badge>
+        <h1 className="text-xl font-semibold">Board</h1><DemoBadge />
         <div className="ml-auto flex flex-wrap items-end gap-2">
           <SearchBox className="w-56" value={q} onChange={setQ} placeholder="Search name, Lead ID, Ad ID…" />
           {user.role !== "Sales Representative" && <Select value={rep} onChange={setRep} options={[{ value: "all", label: "All salespeople" }, { value: "none", label: "Unassigned" }, ...data.users.filter((u) => u.role === "Sales Representative").map((u) => ({ value: u.id, label: u.name }))]} />}
