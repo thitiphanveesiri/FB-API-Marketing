@@ -30,7 +30,7 @@ function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void)
 export default function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { data, user, setUserId, filters, setFilters, eff, source, sourceMeta, reloadData, continueWithDemo } = useStore();
+  const { data, user, setUserId, filters, setFilters, eff, source, sourceMeta, reloadData, continueWithDemo, authed, signOut } = useStore();
   const [showWarn, setShowWarn] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [menuAt, setMenuAt] = useState<string | null>(null);
@@ -59,6 +59,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   if (source === "loading") {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted" role="status"><span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-brand-soft border-t-brand" />Loading data…</div>;
+  }
+  if (source === "forbidden") {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
+          <p className="text-base font-semibold">This account has no access</p>
+          <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> is not on the allow-list (or is switched off). Ask an Administrator to add the email to the <code>users</code> tab of the Google Sheet.</p>
+          <div className="mt-4 flex justify-center"><button onClick={() => { void signOut(); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Sign out and use another account</button></div>
+        </div>
+      </div>
+    );
   }
   if (source === "error") {
     return (
@@ -139,7 +150,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <div className="absolute right-0 mt-2 w-72 rounded-xl border border-line bg-surface p-2 shadow-pop">
                   <Link href="/account" onClick={() => setAcct(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-gray-50"><UserRound size={16} /> User Account</Link>
                   <div className="my-1 border-t border-line" />
-                  <label className="block px-2 py-1 text-xs font-medium text-muted">Demo: view as another user
+                  {!authed && <><label className="block px-2 py-1 text-xs font-medium text-muted">Demo: view as another user
                     <select value={user.id} onChange={(e) => { setUserId(e.target.value); setAcct(false); }} className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-2 text-sm text-ink">
                       {ROLES.map((r) => (
                         <optgroup key={r} label={r}>
@@ -148,8 +159,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       ))}
                     </select>
                   </label>
-                  <div className="my-1 border-t border-line" />
-                  <button onClick={() => { setAcct(false); setUserId("U-ADMIN"); router.push("/dashboard/ads"); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out (demo)</button>
+                  <div className="my-1 border-t border-line" /></>}
+                  {authed
+                    ? <button onClick={() => { void signOut(); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out</button>
+                    : <button onClick={() => { setAcct(false); setUserId("U-ADMIN"); router.push("/dashboard/ads"); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out (demo)</button>}
                 </div>
               )}
             </div>

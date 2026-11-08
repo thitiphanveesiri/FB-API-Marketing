@@ -19,7 +19,7 @@ export interface ConfirmOpts {
 }
 export interface ConfirmState extends ConfirmOpts { resolve: (r: { ok: boolean; reason?: string }) => void }
 
-export type Source = "loading" | "demo" | "sheets" | "error";
+export type Source = "loading" | "demo" | "sheets" | "error" | "forbidden";
 export interface SourceMeta { fetchedAt?: string; warnings: SheetWarning[]; warningCount: number; missingTabs: string[]; counts?: Record<string, number>; message?: string }
 
 interface Store {
@@ -27,6 +27,8 @@ interface Store {
   sourceMeta: SourceMeta | null;
   reloadData: (fresh?: boolean) => Promise<void>;
   continueWithDemo: () => void;
+  authed: boolean; // a real signed-in session exists
+  signOut: () => Promise<void>;
   data: Dataset;
   user: User;
   setUserId: (id: string) => void;
@@ -79,18 +81,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const seq = useRef(1);
   const [source, setSource] = useState<Source>("loading");
+  const [authed, setAuthed] = useState(false);
   const [sourceMeta, setSourceMeta] = useState<SourceMeta | null>(null);
 
-  const applyResponse = useCallback((j: { source: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; message?: string }) => {
+  const applyResponse = useCallback((j: { source: string; me?: { id?: string; email?: string; name?: string } | null; email?: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; message?: string }) => {
     if (j.source === "sheets" && j.dataset) {
       setAnchor(localToday()); // real data uses the real date, not the demo's fixed one
       const ds = j.dataset;
       setData(ds); setF(defaultFilters());
-      setUserId((ds.users.find((u) => u.role === "Administrator") ?? ds.users[0]).id);
+      setUserId(j.me?.id ?? (ds.users.find((u) => u.role === "Administrator") ?? ds.users[0]).id);
+      setAuthed(!!j.me);
       setSourceMeta({ fetchedAt: j.fetchedAt, warnings: j.warnings ?? [], warningCount: j.warningCount ?? 0, missingTabs: j.missingTabs ?? [], counts: j.counts });
       setSource("sheets");
-    } else if (j.source === "error") { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: j.message }); setSource("error"); }
-    else setSource("demo");
+    } else if (j.source === "unauthenticated") { // full page load on purpose: drops all in-memory data
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`; }
+    else if (j.source === "forbidden") { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: j.email }); setSource("forbidden"); }
+    else if (j.source === "error") { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: j.message }); setSource("error"); }
+    else { setAuthed(!!j.me); setSource("demo"); }
+  }, []);
+  const signOut = useCallback(async () => {
+    try { await fetch("/api/auth/logout", { method: "POST" }); }
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full reload so no data stays in memory
+    finally { window.location.href = "/login"; }
   }, []);
   const reloadData = useCallback(async (fresh = false) => {
     try { applyResponse(await (await fetch(`/api/data${fresh ? "?fresh=1" : ""}`, { cache: "no-store" })).json()); }
@@ -123,7 +136,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const byName = user.name;
 
   const store: Store = {
-    source, sourceMeta, reloadData, continueWithDemo: () => setSource("demo"),
+    source, sourceMeta, reloadData, continueWithDemo: () => setSource("demo"), authed, signOut,
     data, user, setUserId,
     filters, eff,
     setFilters: (p) => setF((f) => ({ ...f, ...p, preset: p.start || p.end ? "custom" : (p.preset ?? f.preset) })),

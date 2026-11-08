@@ -29,16 +29,33 @@ With no environment variables set the app runs on **Demo Data**, so a first depl
 
 Redeploy. The top bar then shows **Google Sheets** instead of Demo Data. If the sheet cannot be read, the app shows an error screen (it never silently falls back to demo numbers).
 
-## 5. How it behaves
+## 5. Sign-in (Google account + allow-list)
+1. [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → **OAuth consent screen** (External is fine; add yourself as test user while in Testing) → **Credentials → Create credentials → OAuth client ID → Web application**.
+2. **Authorized redirect URI:** `https://<your-vercel-domain>/api/auth/callback` (add `http://localhost:3000/api/auth/callback` for local use). Copy the client ID and secret.
+3. Add to Vercel:
+
+| Name | Value |
+|---|---|
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from step 1 |
+| `AUTH_SECRET` | random string, 32+ chars: `openssl rand -hex 32` |
+| `AUTH_ADMIN_EMAILS` | *(optional)* your own email(s), comma separated. Always allowed as Administrator, so you can sign in while the sheet is still empty |
+| `AUTH_URL` | *(optional)* `https://your-domain` if the redirect URI is wrong behind a custom domain |
+
+4. In the Sheet's **`users`** tab, add one row per person (`email`, `role`, `agency_id` for Agency users, `active` = TRUE). **A Google account whose email is not on the tab (or is `active` FALSE) is refused.** Changes apply within ~1 minute (sheet cache) and on the user's next page load.
+
+What the server enforces (not just the UI): Administrator, Marketing Manager and Sales Manager receive all data; a Sales Representative receives only the leads assigned to them and those chats; an Agency user receives only their agency's campaigns, ads and performance, with no customer names, phones or chats; a Viewer receives dashboards only, without customer personal data. If the Sheet is connected but sign-in is **not** configured, `/api/data` refuses to serve it (set `ALLOW_PUBLIC=1` only if you deliberately want it open). Sessions last 7 days; **Sign out** clears the cookie.
+
+## 6. How it behaves
 - Reads happen only on the server (`/api/data`); the key never reaches the browser. Results are cached ~60 s per server instance; **Reload from sheet** in the banner bypasses the cache.
 - **Read-only for now:** moving cards, notes, replies and in-app imports are *not* written back to the sheet and reset on refresh (a banner says so). Edit the data in the Sheet. Write-back is the next step.
 - Rows with problems are skipped, not guessed, and listed under **data warnings** in the banner (unknown IDs, bad dates, duplicates, rounded IDs…). A lead is counted once (duplicate `lead_id`s and duplicate `ad_id + date` rows are skipped).
 - Dates are read as unambiguous Sheets dates, so regional formats (1/10 vs 10/1) do not matter. "Today" is the real date.
 
-## 6. Before real customer data goes live
-- The app still has **no real sign-in**; roles are a demo switch. Anyone with the URL would see the data. Turn on **Vercel Deployment Protection** (Project → Settings) or add real authentication first.
+## 7. Before real customer data goes live
+- Known limits of the sign-in: no rate limiting or brute-force protection (Google handles the password); the ID token is read straight from Google's token endpoint over TLS rather than signature-verified; a removed user can still hold a valid cookie for up to ~1 minute (blocked as soon as the sheet cache refreshes); sessions can't be revoked individually (rotate `AUTH_SECRET` to sign everyone out).
+- Without Google sign-in configured, the demo build is open to anyone with the URL. Never connect real data without it.
 - Sheets API quotas apply; fine for a small team. Move to Supabase (`docs/schema.sql`) when rows/users grow.
-- Customer names, phones and chats are personal data (PDPA): limit who can open the Sheet.
+- Customer names, phones and chats are personal data (PDPA): limit who can open the Sheet itself.
 
-## Testing without Google (developers)
+## 8. Testing without Google (developers)
 `SHEETS_LOCAL_JSON=/path/to/tabs.json npm start` reads tabs from a JSON file (`{ "pages": [["page_id","name"],…], … }`) instead of Google. `npx tsx scripts/sheet-roundtrip.ts` checks the mapper; `npx tsx scripts/make-sheet-template.ts` regenerates the workbooks.

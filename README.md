@@ -83,3 +83,6 @@ Filters (store) → `useDash` → `queries.ts` selects ads/performance/leads for
 3. **Ads data:** start with the existing CSV/XLSX import writing to `ad_performance` (primary key `ad_id, date` gives duplicate protection). Then a scheduled job pulling Meta Marketing API insights (ad level, daily) with a fixed attribution window stored per row.
 4. **Messenger:** requires a Meta app with Page permissions approved through App Review, per-page access tokens (encrypted), and a webhook (`META_WEBHOOK_VERIFY_TOKEN`) that creates `leads`/`conversations`/`messages`, deduping on `(page_id, messenger_psid)`. Ad attribution comes from the referral payload on click-to-Messenger conversations. Respect the 24-hour messaging window when sending.
 5. **CRM:** a webhook/import sets `Converted` and CRM purchase values, kept in separate columns from Meta-reported purchases.
+
+## Sign-in
+Google sign-in with a sheet-based allow-list and server-side role scoping. Setup: docs/DEPLOY.md §5.
