@@ -1,0 +1,11 @@
+Day,Campaign name,Ad ID,Ad name,Amount spent (THB),Reach,Impressions,Link clicks,Messaging conversations started,Purchases
+2026-10-20,Sample Always-On,AD-9001,Hero image,520,8200,10400,180,24,1
+2026-10-21,Sample Always-On,AD-9001,Hero image,540,8600,10900,190,27,2
+2026-10-22,Sample Always-On,AD-9001,Hero image,505,8000,10100,170,21,0
+2026-10-20,Sample Always-On,AD-9002,UGC video,610,9100,11800,230,35,2
+2026-10-21,Sample Always-On,AD-9002,UGC video,598,9000,11500,222,33,1
+2026-10-21,Sample Always-On,AD-9002,UGC video,598,9000,11500,222,33,1
+2026-10-22,Sample Always-On,,Missing id example,300,4000,5200,80,9,0
+2026-13-40,Sample Always-On,AD-9003,Bad date example,300,4000,5200,80,9,0
+2026-10-22,Sample Always-On,AD-9003,Bad number,abc,4000,5200,80,9,0
+2026-10-23,Sample Always-On Renamed,AD-9001,Hero image,515,8100,10200,175,22,1
