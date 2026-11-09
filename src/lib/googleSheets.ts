@@ -6,6 +6,18 @@ import { RawTabs } from "./sheetMapper";
 
 const SCOPE_RO = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const SCOPE_RW = "https://www.googleapis.com/auth/spreadsheets";
+/** Accepts the key however it got pasted into Vercel: real newlines, literal "\n", wrapped in quotes, spaces instead of
+ *  line breaks, or the whole service-account JSON. Rebuilds a clean PEM from the base64 body. */
+export function normalizePrivateKey(raw: string): string {
+  let t = raw.trim();
+  if (t.startsWith("{")) { try { const k = (JSON.parse(t) as { private_key?: string }).private_key; if (k) t = k; } catch { /* fall through */ } }
+  t = t.replace(/^["']+|["']+$/g, "").replace(/\\r/g, "").replace(/\\n/g, "\n");
+  const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(t);
+  if (!m) throw new Error("GOOGLE_PRIVATE_KEY must contain the full key, from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----");
+  const body = m[2].replace(/[^A-Za-z0-9+/=]/g, "");
+  if (body.length < 700) throw new Error(`GOOGLE_PRIVATE_KEY is incomplete (only ${body.length} characters between BEGIN and END; a real key has about 1600). Copy the whole "private_key" value from the JSON file.`);
+  return `-----BEGIN ${m[1]}-----\n${body.match(/.{1,64}/g)?.join("\n") ?? body}\n-----END ${m[1]}-----\n`;
+}
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 
 export function sheetsConfigured(): boolean {
@@ -17,7 +29,7 @@ export async function accessToken(write = false): Promise<string> {
   const scope = write ? SCOPE_RW : SCOPE_RO; const hit = tokenCache[scope];
   if (hit && hit.exp > Date.now() + 60_000) return hit.token;
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
-  const key = process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n");
+  const key = normalizePrivateKey(process.env.GOOGLE_PRIVATE_KEY!);
   const now = Math.floor(Date.now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claim = b64u(JSON.stringify({ iss: email, scope, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
