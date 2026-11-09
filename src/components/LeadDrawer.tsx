@@ -4,16 +4,16 @@ import { CalendarClock, Phone, Mail, StickyNote, History } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { Facebook, Avatar, Badge, Btn, Drawer, Select, StatusBadge, TextArea, TextInput, hueOf } from "./ui";
-import { LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
+import { LeadQuality, LeadStatus, QUALITIES, STATUSES, statusTh } from "@/lib/types";
 import { fmtDate, fmtDateTime } from "@/lib/dates";
 import { roleCan } from "@/lib/queries";
 
 export function ConversationView({ leadId, height = 260 }: { leadId: string; height?: number }) {
-  const { data, source } = useStore();
+  const { data } = useStore();
   const msgs = data.messages[leadId] ?? [];
   return (
     <div>
-      <p className="mb-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">{source === "sheets" ? "Messages loaded from your Google Sheet — not a live Messenger connection." : "Simulated demo conversation — not real Facebook Messenger data."}</p>
+      <p className="mb-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Messages come from your Google Sheet — not a live Messenger connection.</p>
       <div className="space-y-2 overflow-y-auto rounded-xl bg-gray-50 p-3" style={{ maxHeight: height }}>
         {msgs.length === 0 && <p className="py-6 text-center text-sm text-muted">No messages recorded for this lead.</p>}
         {msgs.map((m) => (
@@ -60,7 +60,7 @@ export default function LeadDrawer({ leadId, onClose }: { leadId: string | null;
           </dl>
 
           <div className="grid grid-cols-2 gap-3 rounded-xl border border-line p-3">
-            <Select label="Stage" value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} />
+            <Select label="Stage" value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: statusTh(s) }))} />
             <Select label="Lead quality" value={lead.quality} disabled={!canEdit} onChange={(v) => act.quality(lead, v as LeadQuality)} options={QUALITIES.map((s) => ({ value: s, label: s }))} />
             <Select label="Assigned to" value={lead.repId ?? ""} disabled={!canEdit} onChange={(v) => act.assign(lead, v || null)} options={[{ value: "", label: "Unassigned" }, ...reps.map((r) => ({ value: r.id, label: r.name }))]} />
             <TextInput label="Follow-up reminder" type="date" disabled={!canEdit} value={lead.followUpDate ?? ""} onChange={(e) => { patchLead(lead.id, { followUpDate: e.target.value || null }); toast(e.target.value ? `Reminder set for ${fmtDate(e.target.value)}` : "Reminder cleared"); }} />

@@ -1,6 +1,6 @@
 // Pure data-access/business logic: filters in, slices out. No React here.
 import { addDays, ANCHOR, diffDays } from "./dates";
-import { Dataset } from "./seed";
+import type { Dataset } from "./dataset";
 import { Ad, DailyPerf, Lead, Role, User } from "./types";
 
 export type Preset = "7d" | "30d" | "90d" | "custom";

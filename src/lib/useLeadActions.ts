@@ -2,7 +2,7 @@
 import { useStore } from "./store";
 import { checkTransition } from "./transitions";
 import { roleCan } from "./queries";
-import { Lead, LeadQuality, LeadStatus, QUALIFIED_QUALITIES, QUALITIES, SALES_STAGES } from "./types";
+import { statusTh, Lead, LeadQuality, LeadStatus, QUALIFIED_QUALITIES, QUALITIES, SALES_STAGES } from "./types";
 
 /** Guarded lead mutations: permission checks + confirmations + toasts live here, not in the UI. */
 export function useLeadActions() {
@@ -13,12 +13,12 @@ export function useLeadActions() {
       if (chk.kind === "blocked") { s.toast(chk.message, "error"); return false; }
       let note: string | undefined;
       if (chk.kind === "confirm") {
-        const r = await s.confirm({ title: chk.title, message: chk.message, requireReason: chk.requireReason, confirmLabel: "Move lead" });
+        const r = await s.confirm({ title: chk.title, message: chk.message, requireReason: chk.requireReason, confirmLabel: "ย้ายแชท" });
         if (!r.ok) return false;
         note = r.reason;
       }
       s.moveLead(lead.id, to, note);
-      s.toast(`${lead.name} moved to ${to}`);
+      s.toast(`ย้าย ${lead.name} ไป “${statusTh(to)}” แล้ว`);
       return true;
     },
     async assign(lead: Lead, repId: string | null): Promise<boolean> {

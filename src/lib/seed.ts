@@ -6,18 +6,8 @@ import {
   Lead, LeadQuality, LeadStatus, Message, QUALITIES, QUALIFIED_QUALITIES, User,
 } from "./types";
 
-export interface Dataset {
-  users: User[];
-  pages: FbPage[];
-  agencies: Agency[];
-  campaigns: Campaign[];
-  ads: Ad[];
-  perf: DailyPerf[];
-  leads: Lead[];
-  messages: Record<string, Message[]>;
-  evaluations: Evaluation[];
-  imports: ImportRecord[];
-}
+import type { Dataset } from "./dataset";
+export type { Dataset };
 
 function rng(seed: number) {
   let a = seed;
@@ -240,5 +230,5 @@ export function buildDemoDataset(): Dataset {
 
   const evaluations: Evaluation[] = [];
   const imports: ImportRecord[] = [];
-  return { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports };
+  return { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights: [] };
 }

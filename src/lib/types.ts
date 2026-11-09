@@ -51,6 +51,22 @@ export const DROP_REASONS = [
   "No Follow-up",
   "Postponed",
 ] as const;
+/** Thai names shown on the Board and in menus. The English values stay the stored/sheet values. */
+export const STATUS_TH: Record<LeadStatus, string> = {
+  "Not Responded": "ไม่ตอบ", "Very Poor": "แย่มาก", Average: "พอได้คุย", Qualified: "มีคุณสมบัติ", "Appointment Booked": "นัดได้แล้ว", "Connection Created": "สร้างคอนเนกชันมาใหม่",
+  New: "ใหม่", "In-Process": "กำลังดำเนินการ", Intake: "รับเข้า", Converted: "ปิดการขายแล้ว",
+};
+export const statusTh = (s: string) => (STATUS_TH as Record<string, string>)[s] ?? s;
+/** Board columns, left to right: chats grouped by how the conversation went. */
+export const BOARD_COLUMNS: LeadQuality[] = ["Not Responded", "Very Poor", "Average", "Qualified", "Appointment Booked", "Connection Created"];
+/** Accepts English or Thai status text (from a sheet or a file). */
+export function parseStatus(v: string): LeadStatus | undefined {
+  const t = v.trim().toLowerCase(); if (!t) return undefined;
+  return STATUSES.find((x) => x.toLowerCase() === t || STATUS_TH[x] === v.trim());
+}
+
+export interface PageInsight { pageId: string; date: string; reach: number; views: number; engagements: number; followers: number; newFollowers: number; linkClicks: number }
+
 export type DropReason = (typeof DROP_REASONS)[number];
 export type RecoveryStatus = "Not Started" | "In Progress" | "Recovered" | "Lost";
 
@@ -173,6 +189,8 @@ export type ImportDataType =
   | "Campaign Performance"
   | "Ad-Level Performance"
   | "Lead Data"
+  | "Inbox Conversations"
+  | "Page Insights"
   | "Sales Performance";
 export interface ImportRecord {
   id: string;

@@ -1,5 +1,5 @@
 // Pure import logic: column auto-mapping, row validation, dedupe. No React, no store.
-import { ImportDataType, DailyPerf, Lead, LeadStatus, STATUSES, QUALITIES, LeadQuality, QUALIFIED_QUALITIES } from "./types";
+import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, parseStatus } from "./types";
 import { ANCHOR } from "./dates";
 
 export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
@@ -22,12 +22,32 @@ const CAMPAIGN_FIELDS = AD_FIELDS.map((f) => (f.key === "adId" ? { ...f, require
 
 const LEAD_FIELDS: FieldDef[] = [
   F("leadId", "Lead ID", false, "text", ["lead id", "lead_id", "id"]),
-  F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name"]),
-  F("adId", "Source Ad ID", true, "text", ["ad id", "source ad", "source ad id", "ad_id"]),
-  F("date", "Created date", true, "date", ["date", "created", "created date", "created at"]),
-  F("status", "Lead status", false, "text", ["status", "lead status", "stage"]),
-  F("phone", "Phone", false, "text", ["phone", "mobile", "tel"]),
+  F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "full_name", "ชื่อ", "ชื่อลูกค้า"]),
+  F("adId", "Source Ad ID", false, "text", ["ad id", "source ad", "source ad id", "ad_id", "adid"]),
+  F("date", "Created date", true, "date", ["date", "created", "created date", "created at", "created_time", "created time", "วันที่"]),
+  F("status", "Lead status", false, "text", ["status", "lead status", "stage", "lead_status", "สถานะ"]),
+  F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone_number", "phone number", "เบอร์", "เบอร์โทร"]),
   F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep"]),
+];
+const INBOX_FIELDS: FieldDef[] = [
+  F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "contact", "contact name", "sender", "ชื่อ", "ชื่อลูกค้า"]),
+  F("date", "First contact date", true, "date", ["date", "created", "created date", "first contact", "first message", "first message date", "started", "conversation started", "วันที่"]),
+  F("leadId", "Conversation / Lead ID", false, "text", ["lead id", "lead_id", "id", "conversation id", "thread id"]),
+  F("lastMessage", "Last message", false, "text", ["last message", "latest message", "message", "ข้อความล่าสุด"]),
+  F("lastContactAt", "Last message date", false, "date", ["last message date", "last message time", "last contact", "last activity", "updated", "updated time", "วันที่ล่าสุด"]),
+  F("adId", "Source Ad ID", false, "text", ["ad id", "ad_id", "source ad", "source ad id", "referral ad id"]),
+  F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone number", "เบอร์", "เบอร์โทร"]),
+  F("status", "Chat type / status", false, "text", ["status", "stage", "label", "labels", "chat type", "สถานะ", "ประเภท"]),
+  F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "assignee"]),
+];
+const INSIGHT_FIELDS: FieldDef[] = [
+  F("date", "Date", true, "date", ["date", "day", "วันที่"]),
+  F("reach", "Reach", true, "int", ["reach", "page reach", "facebook reach", "total reach", "การเข้าถึง"]),
+  F("views", "Views", false, "int", ["views", "page views", "impressions", "facebook views", "การดู"]),
+  F("engagements", "Engagements", false, "int", ["engagements", "post engagements", "interactions", "content interactions", "การมีส่วนร่วม"]),
+  F("followers", "Followers", false, "int", ["followers", "page followers", "total followers", "ผู้ติดตาม"]),
+  F("newFollowers", "New followers", false, "int", ["new followers", "follows", "page follows", "net follows", "ผู้ติดตามใหม่"]),
+  F("linkClicks", "Link clicks", false, "int", ["link clicks", "clicks", "link_clicks", "การคลิกลิงก์"]),
 ];
 const SALES_FIELDS: FieldDef[] = [
   F("leadId", "Lead ID", true, "text", ["lead id", "lead_id", "id"]),
@@ -41,6 +61,8 @@ export const FIELDS: Record<ImportDataType, FieldDef[]> = {
   "Campaign Performance": CAMPAIGN_FIELDS,
   "Ad-Level Performance": AD_FIELDS,
   "Lead Data": LEAD_FIELDS,
+  "Inbox Conversations": INBOX_FIELDS,
+  "Page Insights": INSIGHT_FIELDS,
   "Sales Performance": SALES_FIELDS,
 };
 export const isAdsType = (t: ImportDataType) => t === "Ads Performance" || t === "Campaign Performance" || t === "Ad-Level Performance";
@@ -87,6 +109,8 @@ export interface ValidationResult {
   issues: RowIssue[];
   perf: DailyPerf[];
   leads: Lead[];
+  insights: PageInsight[];
+  replaceInsightKeys: Set<string>;
   newAdIds: { adId: string; adName: string; campaignName: string }[];
   replaceKeys: Set<string>; // existing ad|date keys that a "replace" import would overwrite
   periodStart: string | null;
@@ -103,6 +127,7 @@ export interface ValidateCtx {
   existingPerfKeys: Set<string>;
   existingAdIds: Set<string>;
   existingLeadIds: Set<string>;
+  existingInsightKeys: Set<string>;
   pageId: string;
   repsByName: Map<string, string>;
   nextLeadNo: number;
@@ -110,7 +135,7 @@ export interface ValidateCtx {
 
 export function validate(ctx: ValidateCtx): ValidationResult {
   const fields = FIELDS[ctx.type];
-  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
+  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
   const get = (row: Record<string, string>, key: string) => { const h = ctx.mapping[key]; return h ? String(row[h] ?? "").trim() : ""; };
   const seen = new Set<string>();
   const campByAd = new Map<string, string>();
@@ -157,24 +182,37 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (!res.periodStart || date < res.periodStart) res.periodStart = date;
       if (!res.periodEnd || date > res.periodEnd) res.periodEnd = date;
       res.ok++;
-    } else if (ctx.type === "Lead Data") {
+    } else if (ctx.type === "Lead Data" || ctx.type === "Inbox Conversations") {
       const id = vals.leadId || "";
       if (id && (ctx.existingLeadIds.has(id) || seen.has(id))) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
       if (id) seen.add(id);
       const date = parseDate(vals.date)!;
-      const st = STATUSES.find((s) => s.toLowerCase() === vals.status.toLowerCase());
+      const st = parseStatus(vals.status);
       if (vals.status && !st) { res.issues.push({ row: n, message: `Unknown status "${vals.status}" — set to Not Responded`, level: "warning" }); res.warnings++; }
       const status: LeadStatus = st ?? "Not Responded";
       const quality: LeadQuality = (QUALITIES as readonly string[]).includes(status) ? (status as LeadQuality) : "Qualified";
-      void QUALIFIED_QUALITIES;
       const repId = vals.repName ? ctx.repsByName.get(vals.repName.toLowerCase()) ?? null : null;
       if (vals.repName && !repId) { res.issues.push({ row: n, message: `Salesperson "${vals.repName}" not found — left unassigned`, level: "warning" }); res.warnings++; }
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
         id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || null, repId, status, quality, valid: true, createdAt: date,
-        lastContactAt: `${date}T09:00:00`, lastMessage: "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
+        lastContactAt: `${parseDate(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, source: "import",
       });
+      res.ok++;
+    } else if (ctx.type === "Page Insights") {
+      const date = parseDate(vals.date)!;
+      if (date > ANCHOR) { res.failed++; res.issues.push({ row: n, message: `Date ${date} is in the future`, level: "error" }); return; }
+      const key = `${ctx.pageId}|${date}`;
+      if (seen.has(key)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate date ${date} in file`, level: "duplicate" }); return; }
+      seen.add(key);
+      const exists = ctx.existingInsightKeys.has(key);
+      if (exists && ctx.mode === "incremental") { res.duplicates++; res.issues.push({ row: n, message: `Already imported: ${date} (skipped in incremental mode)`, level: "duplicate" }); return; }
+      if (exists) res.replaceInsightKeys.add(key);
+      const num = (k: string) => parseNumber(vals[k]) ?? 0;
+      res.insights.push({ pageId: ctx.pageId, date, reach: num("reach"), views: num("views"), engagements: num("engagements"), followers: num("followers"), newFollowers: num("newFollowers"), linkClicks: num("linkClicks") });
+      if (!res.periodStart || date < res.periodStart) res.periodStart = date;
+      if (!res.periodEnd || date > res.periodEnd) res.periodEnd = date;
       res.ok++;
     } else {
       const id = vals.leadId;

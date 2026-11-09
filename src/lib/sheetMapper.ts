@@ -1,9 +1,9 @@
 // Pure: Google Sheet tabs (arrays of cell strings) -> Dataset. No network, no React.
-import { Dataset } from "./seed";
+import type { Dataset } from "./dataset";
 import { parseDate, parseNumber } from "./importer";
 import { SHEET_TABS } from "./sheetSchema";
 import {
-  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, STATUSES, User,
+  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User,
 } from "./types";
 
 export type RawTabs = Record<string, string[][]>;
@@ -134,10 +134,10 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (leadIds.has(id)) { warn("leads", r.n, `Duplicate lead_id ${id} — skipped`); continue; }
     if (!pageIds.has(pageId)) { warn("leads", r.n, `page_id "${pageId}" not found — row skipped`); continue; }
     const created = dateOnly(r.get("created_at")); if (!created) { warn("leads", r.n, `Invalid created_at "${r.get("created_at")}" — row skipped`); continue; }
-    const status = pick<LeadStatus>(STATUSES, r.get("status"));
+    const status = parseStatus(r.get("status"));
     if (!status) warn("leads", r.n, `Unknown status "${r.get("status")}" — set to Not Responded`);
     const st: LeadStatus = status ?? "Not Responded";
-    const q = pick<LeadQuality>(QUALITIES, r.get("quality")) ?? ((QUALITIES as readonly string[]).includes(st) ? (st as LeadQuality) : "Qualified");
+    const q = pick<LeadQuality>(QUALITIES, r.get("quality")) ?? (parseStatus(r.get("quality")) as LeadQuality | undefined) ?? ((QUALITIES as readonly string[]).includes(st) ? (st as LeadQuality) : "Qualified");
     let adId: string | null = r.get("ad_id") || null; if (adId && !adIds.has(adId)) { warn("leads", r.n, `ad_id "${adId}" not found — lead kept without source ad${idHint(adId)}`); adId = null; }
     const rep: string | null = r.get("assigned_to") || null; if (rep && !userIds.has(rep)) { warn("leads", r.n, `assigned_to "${rep}" not in users — treated as a salesperson id`); }
     const reason = pick<DropReason>(DROP_REASONS, r.get("drop_reason"));
@@ -150,7 +150,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
       lastContactAt: last, lastMessage: r.get("last_message"), followUpDate: dateOnly(r.get("follow_up_date")), notes: [],
       firstResponseMin: num("first_response_min"), followUps: num("follow_ups") ?? 0, avgFollowUpHrs: num("avg_follow_up_hrs"), unread: bool(r.get("unread"), false),
       history: [{ at: `${created}T09:00:00`, from: null, to: st, by: "Google Sheet", note: "Loaded from sheet" }],
-      dropped: reason ? { reason, at: dateOnly(r.get("dropped_at")) ?? last.slice(0, 10), previousStatus: pick<LeadStatus>(STATUSES, r.get("previous_status")) ?? st,
+      dropped: reason ? { reason, at: dateOnly(r.get("dropped_at")) ?? last.slice(0, 10), previousStatus: parseStatus(r.get("previous_status")) ?? st,
         recovery: (pick<RecoveryStatus>(["Not Started", "In Progress", "Recovered", "Lost"], r.get("recovery_status")) ?? "Not Started"), lastActivity: r.get("last_activity") } : null,
       source: "import",
     });
@@ -169,12 +169,47 @@ export function mapSheets(tabs: RawTabs): MapResult {
   }
   for (const k of Object.keys(messages)) messages[k].sort((a, b) => a.at.localeCompare(b.at));
 
+  // history + notes written by the app
+  const byLead = new Map(leads.map((l) => [l.id, l]));
+  const logged = new Set<string>();
+  for (const r of tab("lead_log").rows) {
+    const l = byLead.get(r.get("lead_id")); const at = dateTime(r.get("at"));
+    if (!l || !at) { warn("lead_log", r.n, "Unknown lead_id or invalid time — row skipped"); continue; }
+    if (!logged.has(l.id)) { l.history = []; logged.add(l.id); }
+    if (r.get("kind").toLowerCase() === "note") l.notes.push({ at, by: r.get("by"), text: r.get("text") } as LeadNote);
+    else l.history.push({ at, from: parseStatus(r.get("from")) ?? null, to: parseStatus(r.get("to")) ?? l.status, by: r.get("by"), note: r.get("text") || undefined } as StatusChange);
+  }
+  const evaluations: Evaluation[] = [];
+  for (const r of tab("evaluations").rows) {
+    const q = pick<LeadQuality>(QUALITIES, r.get("quality")); const lid = r.get("lead_id"); const at = dateTime(r.get("at"));
+    if (!q || !leadIds.has(lid) || !at) { warn("evaluations", r.n, "Unknown lead_id, quality or time — row skipped"); continue; }
+    const sc = (c: string) => parseNumber(r.get(c)) ?? 0;
+    evaluations.push({ id: r.get("eval_id") || `EV-${evaluations.length + 1}`, leadId: lid, reviewerId: r.get("reviewer_id"), at, quality: q, previousQuality: pick<LeadQuality>(QUALITIES, r.get("previous_quality")) ?? q,
+      scores: { responsiveness: sc("responsiveness"), needIdentified: sc("need_identified"), intent: sc("intent"), contactCaptured: sc("contact_captured") }, notes: r.get("notes"), reason: r.get("reason") || undefined });
+  }
+  evaluations.sort((a, b) => b.at.localeCompare(a.at));
+  const insights: PageInsight[] = []; const seenIns = new Set<string>();
+  for (const r of tab("page_insights").rows) {
+    const pid = r.get("page_id"), date = dateOnly(r.get("date"));
+    if (!pageIds.has(pid) || !date) { warn("page_insights", r.n, "Unknown page_id or invalid date — row skipped"); continue; }
+    const k = `${pid}|${date}`; if (seenIns.has(k)) { warn("page_insights", r.n, `Duplicate ${pid} on ${date} — skipped`); continue; } seenIns.add(k);
+    const n = (c: string) => parseNumber(r.get(c)) ?? 0;
+    insights.push({ pageId: pid, date, reach: n("reach"), views: n("views"), engagements: n("engagements"), followers: n("followers"), newFollowers: n("new_followers"), linkClicks: n("link_clicks") });
+  }
+  insights.sort((a, b) => a.date.localeCompare(b.date));
+  const imports: ImportRecord[] = [];
+  for (const r of tab("import_log").rows) {
+    imports.push({ id: r.get("import_id"), at: r.get("at"), pageId: r.get("page_id"), dataType: (r.get("data_type") || "Ads Performance") as ImportDataType, fileName: r.get("file_name"), mode: r.get("mode") === "replace" ? "replace" : "incremental",
+      total: parseNumber(r.get("total")) ?? 0, imported: parseNumber(r.get("imported")) ?? 0, failed: parseNumber(r.get("failed")) ?? 0, duplicates: parseNumber(r.get("duplicates")) ?? 0, errors: [], by: r.get("by"), rows: [], mapping: {} });
+  }
+  imports.reverse();
+
   // make sure someone can sign in
   if (!users.some((u) => u.role === "Administrator")) users.unshift({ id: "U-SHEET-ADMIN", name: "Admin (no users tab)", email: "", role: "Administrator", active: true, hue: 160 });
 
   return {
-    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations: [], imports: [] },
+    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights },
     warnings, missingTabs,
-    counts: { pages: pages.length, agencies: agencies.length, users: users.length, campaigns: campaigns.length, ads: ads.length, ad_performance: perf.length, leads: leads.length, messages: Object.values(messages).reduce((s, m) => s + m.length, 0) },
+    counts: { pages: pages.length, agencies: agencies.length, users: users.length, campaigns: campaigns.length, ads: ads.length, ad_performance: perf.length, leads: leads.length, messages: Object.values(messages).reduce((s, m) => s + m.length, 0), page_insights: insights.length, lead_log: logged.size },
   };
 }

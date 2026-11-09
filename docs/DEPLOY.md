@@ -18,7 +18,7 @@ With no environment variables set the app runs on **Demo Data**, so a first depl
 ## 3. Google service account (read access)
 1. console.cloud.google.com → create a project → **APIs & Services → Library → Google Sheets API → Enable**.
 2. **IAM & Admin → Service Accounts → Create**. Open it → **Keys → Add key → JSON**. Keep that file private.
-3. In the Sheet, **Share** it with the service account's `client_email` as **Viewer**.
+3. In the Sheet, **Share** it with the service account's `client_email` as **Editor** (the app writes card moves, notes, reviews, settings and uploads back to the sheet).
 
 ## 4. Vercel environment variables (Project → Settings → Environment Variables)
 | Name | Value |
@@ -47,7 +47,10 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 
 ## 6. How it behaves
 - Reads happen only on the server (`/api/data`); the key never reaches the browser. Results are cached ~60 s per server instance; **Reload from sheet** in the banner bypasses the cache.
-- **Read-only for now:** moving cards, notes, replies and in-app imports are *not* written back to the sheet and reset on refresh (a banner says so). Edit the data in the Sheet. Write-back is the next step.
+- **Saved to the sheet:** moving cards on the Board, quality reviews, assigning reps, internal notes, dropping/recovering leads, Settings (users, pages, agencies, campaign assignment) and every Upload. Each change is checked on the server against the signed-in role. Not saved: replies typed in Inbox (no Messenger API, so they are never sent).
+- **Tabs the app creates and writes itself:** `lead_log` (stage changes and notes), `evaluations`, `page_insights`, `import_log`. Do not rename their header row; you can add your own columns.
+- **Upload (Facebook Page data):** Inbox chats/customers → Board cards; Ads Manager exports (per ad or per campaign) → `ads`, `campaigns`, `ad_performance`; Page Insights → `page_insights`; Leads Center / Lead Ads → `leads`. Thai or English column headings and status names are accepted. "Add new rows only" skips rows already imported; "Overwrite" updates rows with the same key.
+- Writes are applied one at a time per server instance; two people saving at the same instant is safe, but edits made directly in the sheet while the app writes the same cell can overwrite each other.
 - Rows with problems are skipped, not guessed, and listed under **data warnings** in the banner (unknown IDs, bad dates, duplicates, rounded IDs…). A lead is counted once (duplicate `lead_id`s and duplicate `ad_id + date` rows are skipped).
 - Dates are read as unambiguous Sheets dates, so regional formats (1/10 vs 10/1) do not matter. "Today" is the real date.
 

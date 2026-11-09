@@ -4,7 +4,7 @@ import { Check, Minus, Plus } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import { aggregate, fmtMoney, fmtPct, leadStats } from "@/lib/metrics";
-import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, cn, DemoBadge } from "@/components/ui";
+import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, cn } from "@/components/ui";
 import { Agency, FbPage, ROLES, Role, User } from "@/lib/types";
 
 type Tab = "pages" | "agencies" | "users" | "roles";
@@ -17,7 +17,7 @@ export default function SettingsPage() {
   const canManage = roleCan.manageSettings(user.role);
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Setting</h1><DemoBadge />
+      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Setting</h1>
         {!canManage && <Badge tone="blue">Read-only for your role</Badge>}</div>
       <nav className="flex gap-1 overflow-x-auto border-b border-line" aria-label="Settings sections">
         {TABS.map((t) => <button key={t.id} aria-current={tab === t.id} onClick={() => setTab(t.id)} className={cn("whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium", tab === t.id ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink")}>{t.label}</button>)}
@@ -138,7 +138,7 @@ function UsersTab({ canManage }: { canManage: boolean }) {
       <Btn size="sm" disabled={u.id === me.id} title={u.id === me.id ? "You cannot disable yourself" : ""} onClick={async () => { if (u.active) { const r = await confirm({ title: `Disable ${u.name}?`, message: "They can no longer sign in. Their leads stay assigned until you reassign them.", tone: "danger", confirmLabel: "Disable" }); if (!r.ok) return; } saveUser({ ...u, active: !u.active }); toast(u.active ? "User disabled" : "User enabled"); }}>{u.active ? "Disable" : "Enable"}</Btn></div> },
   ];
   return (
-    <Card title="Users" subtitle="Demo users only — real sign-in (Supabase Auth / SSO) arrives with the database phase." right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `U-${Date.now().toString(36)}`, name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
+    <Card title="Users" subtitle="People who can sign in with Google. Saved to the users tab of your sheet; the email must match their Google account." right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `U-${Date.now().toString(36)}`, name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
       <DataTable columns={cols} rows={data.users} rowKey={(u) => u.id} searchText={(u) => `${u.name} ${u.email} ${u.role}`} searchPlaceholder="Search users…" caption="Users" />
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add user" : "Edit user"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label="Email *" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} />
@@ -166,7 +166,7 @@ const PERMS: { label: string; check: (r: Role) => boolean }[] = [
 function RolesTab() {
   const rows = useMemo(() => PERMS, []);
   return (
-    <Card title="Role-based access control" subtitle="Permissions are enforced in the demo UI. In production, enforce the same rules on the server (and with database row-level security).">
+    <Card title="Role-based access control" subtitle="Enforced on the server: each role only receives, and can only change, what is allowed below.">
       <div className="overflow-x-auto rounded-xl border border-line"><table className="w-full text-sm"><thead className="bg-gray-50 text-xs"><tr><th className="px-3 py-2 text-left">Permission</th>{ROLES.map((r) => <th key={r} className="px-3 py-2 text-center font-semibold">{r}</th>)}</tr></thead>
         <tbody>{rows.map((p) => <tr key={p.label} className="border-t border-line"><td className="px-3 py-2">{p.label}</td>{ROLES.map((r) => <td key={r} className="px-3 py-2 text-center">{p.check(r) ? <Check size={16} className="mx-auto text-emerald-600" aria-label="Allowed" /> : <Minus size={16} className="mx-auto text-gray-300" aria-label="Not allowed" />}</td>)}</tr>)}</tbody></table></div>
       <p className="mt-3 text-xs text-muted">Sales Representatives see only their own assigned leads; Agency users only see campaigns assigned to their agency. To change a user&apos;s role, edit the user on the Users tab.</p>

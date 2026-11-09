@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import FilterBar from "@/components/FilterBar";
-import { DemoBadge, cn } from "@/components/ui";
+import { cn } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import { fmtDate } from "@/lib/dates";
@@ -25,7 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2"><h1 className="text-xl font-semibold">Dashboard</h1><DemoBadge /></div>
+        <div className="flex items-center gap-2"><h1 className="text-xl font-semibold">Dashboard</h1></div>
         <p className="text-xs text-muted">Showing {fmtDate(r.start)} – {fmtDate(r.end)} · compared with {fmtDate(p.start)} – {fmtDate(p.end)}</p>
       </div>
       <FilterBar />

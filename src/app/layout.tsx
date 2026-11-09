@@ -4,7 +4,7 @@ import { PRE_PAINT_SCRIPT } from "@/lib/prePaint";
 
 export const metadata: Metadata = {
   title: "Marketing Intelligence Dashboard",
-  description: "Facebook Ads performance, chat quality and lead management (demo data)",
+  description: "Facebook Ads performance, chat quality and lead management",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

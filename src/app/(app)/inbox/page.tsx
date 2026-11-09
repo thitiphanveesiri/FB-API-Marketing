@@ -15,7 +15,7 @@ const FILTERS: { id: F; label: string }[] = [
 ];
 
 export default function InboxPage() {
-  const { data, user, markRead, sendMessage, patchLead, addNote, toast, filters, source } = useStore();
+  const { data, user, markRead, sendMessage, patchLead, addNote, toast, filters } = useStore();
   const act = useLeadActions();
   const [f, setF] = useState<F>("all");
   const [q, setQ] = useState("");
@@ -62,8 +62,8 @@ export default function InboxPage() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Inbox</h1>
-        {source === "sheets" ? <Badge tone="green">From Google Sheet</Badge> : <Badge tone="amber">Simulated conversations</Badge>}
-        <span className="text-xs text-muted">{source === "sheets" ? "Messenger API is not connected. Messages come from your sheet; replies here are not sent to customers and are not saved." : "Facebook Messenger API is not connected. Messages here are demo data and nothing is sent to real customers."}</span>
+        <Badge tone="green">From Google Sheet</Badge>
+        <span className="text-xs text-muted">Messenger API is not connected. Chats come from your sheet; replies typed here are not sent to customers and are not saved. Internal notes are saved.</span>
       </div>
       <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_1fr_300px]">
         {/* LEFT */}
@@ -104,14 +104,14 @@ export default function InboxPage() {
                 <Select value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-44" />
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-gray-50 p-4">
-                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">{source === "sheets" ? "Conversation loaded from your sheet — not live Messenger" : "Simulated conversation — demo data, not real Facebook messages"}</p>
+                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">Conversation loaded from your sheet — not live Messenger</p>
                 {msgs.map((m) => (
                   <div key={m.id} className={m.direction === "out" ? "flex justify-end" : m.direction === "note" ? "flex justify-center" : "flex"}>
                     <div className={cn("max-w-[78%] rounded-2xl px-3.5 py-2 text-sm", m.direction === "out" ? "bg-brand text-white" : m.direction === "note" ? "w-full max-w-[90%] border border-dashed border-amber-300 bg-amber-50 text-amber-900" : "border border-line bg-surface")}>
                       {m.direction === "note" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase"><StickyNote size={11} /> Internal note · only your team sees this</p>}
                       {m.text}
                       {m.attachment && <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs">{m.attachment.kind === "image" ? "🖼" : "📎"} {m.attachment.name}</div>}
-                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>{fmtDateTime(m.at)}{m.simulated && " · demo"}</p>
+                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>{fmtDateTime(m.at)}{m.simulated && " · not sent"}</p>
                     </div>
                   </div>
                 ))}

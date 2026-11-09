@@ -84,11 +84,6 @@ export function InfoTip({ text }: { text: string }) {
   );
 }
 
-export function DemoBadge({ label = "Demo Data" }: { label?: string }) {
-  const { source } = useStore();
-  return source === "sheets" ? <Badge tone="green">Google Sheets</Badge> : <Badge tone="amber">{label}</Badge>;
-}
-
 export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
@@ -416,7 +411,7 @@ export function DataTable<T>({
 }
 
 /* ---------- shared status colouring ---------- */
-import { LeadQuality, LeadStatus } from "@/lib/types";
+import { LeadQuality, LeadStatus, statusTh } from "@/lib/types";
 import { ChatQuality } from "@/lib/metrics";
 export const STATUS_TONE: Record<LeadStatus, Tone> = {
   "Not Responded": "gray", "Very Poor": "red", Average: "amber", Qualified: "green",
@@ -427,7 +422,7 @@ export const STATUS_COLOR: Record<LeadStatus, string> = {
   "Appointment Booked": "#3b82f6", "Connection Created": "#8b5cf6", New: "#60a5fa", "In-Process": "#f59e0b", Intake: "#a78bfa", Converted: "#087a58",
 };
 export function StatusBadge({ status }: { status: LeadStatus | LeadQuality }) {
-  return <Badge tone={STATUS_TONE[status]}>{status}</Badge>;
+  return <Badge tone={STATUS_TONE[status]}>{statusTh(status)}</Badge>;
 }
 export function ChatQualityBadge({ q }: { q: ChatQuality }) {
   const tone: Record<ChatQuality, Tone> = { Excellent: "green", Good: "blue", Average: "amber", Poor: "red", "No data": "gray" };

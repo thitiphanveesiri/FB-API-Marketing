@@ -12,11 +12,11 @@ npm run build && npm start   # production check
 Node 20+ recommended. Copy `.env.example` to `.env.local` only when you start Phase 2 (not needed now).
 Try the import wizard with `public/sample-ads-export.csv` (also downloadable from the Upload page): it intentionally contains a duplicate row, a missing Ad ID, a bad date, a bad number and an inconsistent campaign name.
 
-**Try roles:** top-right account menu → “Demo: view as another user”. Sales Reps see only their leads; Agency users only their campaigns; Viewer is read-only.
+**Roles:** set per person in the sheet's `users` tab. Sales Reps see only their leads; Agency users only their campaigns (no customer data); Viewer is read-only. Enforced on the server.
 
 ## Data sources
 - **Demo Data** (default, nothing to configure) — built-in generator, resets on refresh.
-- **Google Sheets** — set `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`; the server route `/api/data` reads the tabs and maps them to the same `Dataset` the pages already use (`src/lib/sheetMapper.ts`; layout in `src/lib/sheetSchema.ts`). Read-only in this version. Template: `public/google-sheet-template.xlsx`. Full steps: `docs/DEPLOY.md`.
+- **Google Sheets** — set `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`; the server route `/api/data` reads the tabs and maps them to the same `Dataset` the pages already use (`src/lib/sheetMapper.ts`; layout in `src/lib/sheetSchema.ts`). Reads and writes (service account must be an Editor). Template: `public/google-sheet-template.xlsx`. Full steps: `docs/DEPLOY.md`.
 
 ## Comfort & display (palette icon in the header)
 - **Theme:** Soft (default, low-glare), Light, Dark, Auto (follows the device). Colours are CSS tokens in `src/app/globals.css`; a tiny pre-paint script (`src/lib/prePaint.ts`) applies the saved choice before first paint so there is no flash.

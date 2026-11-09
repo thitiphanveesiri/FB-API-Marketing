@@ -4,21 +4,23 @@ import { readFile } from "fs/promises";
 import { TAB_NAMES } from "./sheetSchema";
 import { RawTabs } from "./sheetMapper";
 
-const SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const SCOPE_RO = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const SCOPE_RW = "https://www.googleapis.com/auth/spreadsheets";
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 
 export function sheetsConfigured(): boolean {
   return !!process.env.SHEETS_LOCAL_JSON || !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
 }
 
-let tokenCache: { token: string; exp: number } | null = null;
-async function accessToken(): Promise<string> {
-  if (tokenCache && tokenCache.exp > Date.now() + 60_000) return tokenCache.token;
+const tokenCache: Record<string, { token: string; exp: number } | undefined> = {};
+export async function accessToken(write = false): Promise<string> {
+  const scope = write ? SCOPE_RW : SCOPE_RO; const hit = tokenCache[scope];
+  if (hit && hit.exp > Date.now() + 60_000) return hit.token;
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
   const key = process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, "\n");
   const now = Math.floor(Date.now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claim = b64u(JSON.stringify({ iss: email, scope: SCOPE, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
+  const claim = b64u(JSON.stringify({ iss: email, scope, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
   const sig = createSign("RSA-SHA256").update(`${head}.${claim}`).sign(key);
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -26,7 +28,7 @@ async function accessToken(): Promise<string> {
   });
   if (!res.ok) throw new Error(`Google token request failed (${res.status})`);
   const j = (await res.json()) as { access_token: string; expires_in: number };
-  tokenCache = { token: j.access_token, exp: Date.now() + j.expires_in * 1000 };
+  tokenCache[scope] = { token: j.access_token, exp: Date.now() + j.expires_in * 1000 };
   return j.access_token;
 }
 

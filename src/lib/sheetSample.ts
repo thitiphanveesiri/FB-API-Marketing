@@ -1,5 +1,5 @@
 // Dataset -> sheet rows. Used to generate the sample workbook and to round-trip-test the mapper.
-import { Dataset } from "./seed";
+import type { Dataset } from "./dataset";
 import { RawTabs } from "./sheetMapper";
 import { SHEET_TABS } from "./sheetSchema";
 

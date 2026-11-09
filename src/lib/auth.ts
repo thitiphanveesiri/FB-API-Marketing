@@ -1,6 +1,6 @@
 // SERVER ONLY. Google Sign-In (OIDC code flow + PKCE) with a signed session cookie. No extra dependencies.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
-import type { Dataset } from "./seed";
+import type { Dataset } from "./dataset";
 import type { User } from "./types";
 
 export const SESSION_COOKIE = "mid_session";

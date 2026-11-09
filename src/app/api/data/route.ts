@@ -4,12 +4,10 @@ import { readTabs, sheetsConfigured } from "@/lib/googleSheets";
 import { mapSheets } from "@/lib/sheetMapper";
 import { authConfigured, resolveUser, SESSION_COOKIE, verifySession } from "@/lib/auth";
 import { scopeDataset } from "@/lib/authz";
-import type { Dataset } from "@/lib/seed";
+import type { Dataset } from "@/lib/dataset";
+import { getCached, setCached } from "@/lib/sheetCache";
 
 const noStore = { headers: { "Cache-Control": "no-store" } };
-// Tiny per-instance cache of the SHEET (not of any user's response) so many viewers don't each hit the Sheets API quota.
-let cache: { at: number; mapped: ReturnType<typeof mapSheets> } | null = null;
-const TTL_MS = 60_000;
 
 export async function GET(req: Request) {
   await connection(); // per-request: env vars, cookies and the sheet must be read at request time
@@ -21,13 +19,12 @@ export async function GET(req: Request) {
   const session = auth ? verifySession((await cookies()).get(SESSION_COOKIE)?.value) : null;
   if (auth && !session) return NextResponse.json({ source: "unauthenticated" }, { status: 401, ...noStore });
 
-  if (!sheets) { // demo data lives in the browser; auth (if on) still gates the pages
-    return NextResponse.json({ source: "demo", me: session ? { email: session.email, name: session.name } : null }, noStore);
-  }
+  if (!sheets) return NextResponse.json({ source: "setup" }, noStore); // nothing connected yet: the app shows how to connect the Sheet
   try {
     const fresh = new URL(req.url).searchParams.get("fresh") === "1";
-    if (fresh || !cache || Date.now() - cache.at >= TTL_MS) cache = { at: Date.now(), mapped: mapSheets(await readTabs()) };
-    const { dataset, warnings, counts, missingTabs } = cache.mapped;
+    let mapped = fresh ? null : getCached();
+    if (!mapped) { mapped = mapSheets(await readTabs()); setCached(mapped); }
+    const { dataset, warnings, counts, missingTabs } = mapped;
     let scoped: Dataset = dataset;
     let me = null as { id: string; role: string } | null;
     if (session) {

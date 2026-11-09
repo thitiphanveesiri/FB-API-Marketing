@@ -35,5 +35,16 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
     C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any") ] },
+  { tab: "lead_log", required: false, purpose: "History of stage changes and internal notes per lead (written by the app)", cols: [
+    C("lead_id", "→ leads.lead_id", true), C("at", "YYYY-MM-DD HH:MM", true), C("kind", "status | note", true), C("from", "Previous status"), C("to", "New status"), C("by", "Who did it"), C("text", "Note text / reason") ] },
+  { tab: "evaluations", required: false, purpose: "Quality reviews of conversations (written by the app)", cols: [
+    C("eval_id", "Unique", true), C("lead_id", "→ leads.lead_id", true), C("reviewer_id", "→ users.user_id"), C("at", "YYYY-MM-DD HH:MM"), C("quality", "New quality"), C("previous_quality", "Old quality"),
+    C("responsiveness", "1-5"), C("need_identified", "1-5"), C("intent", "1-5"), C("contact_captured", "1-5"), C("notes", "Reviewer notes"), C("reason", "Reason for change") ] },
+  { tab: "page_insights", required: false, purpose: "Daily Page Insights from Meta Business Suite (Upload page writes here)", cols: [
+    C("page_id", "→ pages.page_id", true), C("date", "YYYY-MM-DD", true), C("reach", "Reach"), C("views", "Page views / impressions"), C("engagements", "Post engagements"),
+    C("followers", "Total followers"), C("new_followers", "New followers"), C("link_clicks", "Link clicks") ] },
+  { tab: "import_log", required: false, purpose: "One row per Upload (written by the app)", cols: [
+    C("import_id", "e.g. IMP-001", true), C("at", "When"), C("page_id", "→ pages.page_id"), C("data_type", "Type of file"), C("file_name", "File name"), C("mode", "incremental | replace"),
+    C("total", "Rows in file"), C("imported", "Rows imported"), C("failed", "Rows failed"), C("duplicates", "Rows skipped as duplicates"), C("by", "Who uploaded") ] },
 ];
 export const TAB_NAMES = SHEET_TABS.map((t) => t.tab);

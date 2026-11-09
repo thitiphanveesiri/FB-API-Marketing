@@ -8,7 +8,6 @@ import { roleCan } from "@/lib/queries";
 import { Facebook, Avatar, Badge, FeedbackHost, cn } from "./ui";
 import DisplayMenu from "./DisplayMenu";
 import { ANCHOR, fmtShort } from "@/lib/dates";
-import { ROLES } from "@/lib/types";
 
 const NAV = [
   { key: "dashboard", label: "Dashboard", href: "/dashboard/ads", icon: LayoutDashboard },
@@ -30,7 +29,7 @@ function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void)
 export default function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { data, user, setUserId, filters, setFilters, eff, source, sourceMeta, reloadData, continueWithDemo, authed, signOut } = useStore();
+  const { data, user, filters, setFilters, eff, source, sourceMeta, reloadData, authed, signOut } = useStore();
   const [showWarn, setShowWarn] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [menuAt, setMenuAt] = useState<string | null>(null);
@@ -48,8 +47,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   // guard: bounce to dashboard if the current role may not open this page
   useEffect(() => {
-    if (current && !roleCan.nav(user.role, current)) router.replace("/dashboard/ads");
-  }, [current, user.role, router]);
+    if (source === "sheets" && current && !roleCan.nav(user.role, current)) router.replace("/dashboard/ads"); // only once the real user is known
+  }, [current, user.role, router, source]);
 
   const pagesForUser = data.pages.filter((p) => p.active && (eff.agencyId === "all" || p.agencyId === eff.agencyId));
   const myLeads = data.leads.filter((l) => !l.dropped && (user.role !== "Sales Representative" || l.repId === user.id));
@@ -59,6 +58,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   if (source === "loading") {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted" role="status"><span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-brand-soft border-t-brand" />Loading data…</div>;
+  }
+  if (source === "setup") {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-line bg-surface p-6 shadow-card">
+          <p className="text-base font-semibold">Connect your Google Sheet to get started</p>
+          <p className="mt-2 text-sm text-muted">No data source is connected yet, so there is nothing to show. Set these in Vercel (Settings → Environment Variables), then redeploy:</p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm"><li><code>GOOGLE_SHEET_ID</code></li><li><code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code> (share the sheet with it as <b>Editor</b>)</li><li><code>GOOGLE_PRIVATE_KEY</code></li></ul>
+          <p className="mt-3 text-sm text-muted">Step-by-step guide: <code>docs/DEPLOY.md</code>. Template sheet: <a className="font-medium text-brand underline" href="/google-sheet-template.xlsx">google-sheet-template.xlsx</a>.</p>
+          <div className="mt-4 flex gap-2"><button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Check again</button>{authed && <button onClick={() => { void signOut(); }} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium hover:bg-gray-50">Sign out</button>}</div>
+        </div>
+      </div>
+    );
   }
   if (source === "forbidden") {
     return (
@@ -79,7 +91,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <p className="mt-2 text-sm text-muted">{sourceMeta?.message}</p>
           <div className="mt-4 flex justify-center gap-2">
             <button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Try again</button>
-            <button onClick={continueWithDemo} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium hover:bg-gray-50">View demo data instead</button>
           </div>
         </div>
       </div>
@@ -120,9 +131,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-1.5">
-            {source === "sheets"
-              ? <Badge tone="green" className="hidden xl:inline-flex">Google Sheets · as of {fmtShort(ANCHOR)}</Badge>
-              : <Badge tone="amber" className="hidden xl:inline-flex">Demo Data · as of {fmtShort(ANCHOR)}</Badge>}
+            <Badge tone="green" className="hidden xl:inline-flex">Google Sheets · as of {fmtShort(ANCHOR)}</Badge>
             <DisplayMenu />
             <div className="relative" ref={bellRef}>
               <button onClick={() => setBell((b) => !b)} aria-label="Notifications" className="relative rounded-lg p-2 text-muted hover:bg-gray-100">
@@ -150,19 +159,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <div className="absolute right-0 mt-2 w-72 rounded-xl border border-line bg-surface p-2 shadow-pop">
                   <Link href="/account" onClick={() => setAcct(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-gray-50"><UserRound size={16} /> User Account</Link>
                   <div className="my-1 border-t border-line" />
-                  {!authed && <><label className="block px-2 py-1 text-xs font-medium text-muted">Demo: view as another user
-                    <select value={user.id} onChange={(e) => { setUserId(e.target.value); setAcct(false); }} className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-2 text-sm text-ink">
-                      {ROLES.map((r) => (
-                        <optgroup key={r} label={r}>
-                          {data.users.filter((u) => u.role === r && u.active).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="my-1 border-t border-line" /></>}
                   {authed
                     ? <button onClick={() => { void signOut(); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out</button>
-                    : <button onClick={() => { setAcct(false); setUserId("U-ADMIN"); router.push("/dashboard/ads"); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out (demo)</button>}
+                    : <p className="px-2 py-2 text-xs text-muted">Sign-in is off (ALLOW_PUBLIC). Turn on Google sign-in to enable Sign out.</p>}
                 </div>
               )}
             </div>
@@ -181,10 +180,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
         )}
       </header>
       {source === "sheets" && (
-        <div className="border-b border-amber-200 bg-amber-50 text-amber-800">
+        <div className="border-b border-emerald-200 bg-emerald-50 text-emerald-900">
           <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs lg:px-6">
-            <span><b>Read-only view of your Google Sheet.</b> Edits made here (moving cards, notes, replies, imports) are not saved back to the sheet and reset on refresh.</span>
-            <span className="text-amber-700">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>
+            <span><b>Connected to your Google Sheet.</b> Changes you make here are saved to the sheet. Other people see them within about a minute.</span>
+            <span className="text-emerald-700">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>
             <button className="font-semibold underline" disabled={reloading} onClick={async () => { setReloading(true); await reloadData(true); setReloading(false); }}>{reloading ? "Reloading…" : "Reload from sheet"}</button>
             {(sourceMeta?.warningCount ?? 0) > 0 || (sourceMeta?.missingTabs.length ?? 0) > 0 ? <button className="font-semibold underline" onClick={() => setShowWarn((v) => !v)}>{sourceMeta?.warningCount} data warning(s) {showWarn ? "▲" : "▼"}</button> : <span>No data warnings</span>}
           </div>
