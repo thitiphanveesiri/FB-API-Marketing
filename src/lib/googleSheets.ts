@@ -1,5 +1,5 @@
 // SERVER ONLY. Reads tabs from a Google Sheet with a service account (no extra dependencies).
-import { createSign } from "crypto";
+import { createPrivateKey, createSign } from "crypto";
 import { readFile } from "fs/promises";
 import { TAB_NAMES } from "./sheetSchema";
 import { RawTabs } from "./sheetMapper";
@@ -14,9 +14,17 @@ export function normalizePrivateKey(raw: string): string {
   t = t.replace(/^["']+|["']+$/g, "").replace(/\\r/g, "").replace(/\\n/g, "\n");
   const m = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(t);
   if (!m) throw new Error("GOOGLE_PRIVATE_KEY must contain the full key, from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----");
+  const label = m[1];
   const body = m[2].replace(/[^A-Za-z0-9+/=]/g, "");
   if (body.length < 700) throw new Error(`GOOGLE_PRIVATE_KEY is incomplete (only ${body.length} characters between BEGIN and END; a real key has about 1600). Copy the whole "private_key" value from the JSON file.`);
-  return `-----BEGIN ${m[1]}-----\n${body.match(/.{1,64}/g)?.join("\n") ?? body}\n-----END ${m[1]}-----\n`;
+  const pem = (b: string) => `-----BEGIN ${label}-----\n${b.match(/.{1,64}/g)?.join("\n") ?? b}\n-----END ${label}-----\n`;
+  const valid = (b: string) => { try { createPrivateKey(pem(b)); return true; } catch { return false; } };
+  const candidates = [body];
+  // The "\n" separators lost their backslash and became the letter n: ...BEGIN PRIVATE KEY-----nMIIE...(64 chars)n(64 chars)n...n-----END
+  const r = body.replace(/^n(?=MII)/, "").replace(/n$/, "");
+  if (r !== body || /^MII/.test(body)) { let out = ""; for (let i = 0; i < r.length; i += 65) out += r.slice(i, i + 64) + (r[i + 64] && r[i + 64] !== "n" ? r[i + 64] : ""); candidates.push(out); }
+  for (const c of candidates) if (valid(c)) return pem(c);
+  throw new Error(`GOOGLE_PRIVATE_KEY is not a valid private key (${body.length} characters, starts with "${body.slice(0, 4)}", length mod 4 = ${body.length % 4}). A real key starts with "MIIE" and its length is a multiple of 4. Copy the "private_key" value again from the JSON file.`);
 }
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 
