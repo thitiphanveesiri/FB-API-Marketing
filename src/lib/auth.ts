@@ -49,19 +49,24 @@ export function authorizeUrl(reqUrl: string, state: string, challenge: string): 
 export interface GoogleIdentity { email: string; name: string }
 /** Exchanges the code and validates the ID token claims. The token comes straight from Google's token endpoint over TLS,
  *  which OIDC Core §3.1.3.7 accepts in place of signature verification. Returns null on any problem. */
-export async function exchangeCode(reqUrl: string, code: string, verifier: string): Promise<GoogleIdentity | null> {
+export type ExchangeResult = { ok: true; who: GoogleIdentity } | { ok: false; reason: string };
+export async function exchangeCode(reqUrl: string, code: string, verifier: string): Promise<ExchangeResult> {
+  const no = (reason: string): ExchangeResult => { console.error("[auth] code exchange failed:", reason); return { ok: false, reason }; };
   const base = env("GOOGLE_OAUTH_BASE_URL") || "https://oauth2.googleapis.com"; // override is for automated tests only
   const res = await fetch(`${base}/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, cache: "no-store",
     body: new URLSearchParams({ code, client_id: env("GOOGLE_CLIENT_ID"), client_secret: env("GOOGLE_CLIENT_SECRET"), redirect_uri: redirectUri(reqUrl), grant_type: "authorization_code", code_verifier: verifier }) });
-  if (!res.ok) return null;
+  if (!res.ok) { const j = (await res.json().catch(() => ({}))) as { error?: string; error_description?: string }; console.error("[auth] google said:", j.error_description ?? ""); return no(/^[a-z_]{1,40}$/.test(j.error ?? "") ? j.error! : `http_${res.status}`); }
   const idToken = ((await res.json()) as { id_token?: string }).id_token;
-  if (!idToken) return null;
+  if (!idToken) return no("no_id_token");
   try {
     const c = JSON.parse(Buffer.from(idToken.split(".")[1], "base64url").toString("utf8")) as { iss: string; aud: string; exp: number; email?: string; email_verified?: boolean; name?: string };
     const okIss = c.iss === "https://accounts.google.com" || c.iss === "accounts.google.com";
-    if (!okIss || c.aud !== env("GOOGLE_CLIENT_ID") || c.exp < Math.floor(Date.now() / 1000) || !c.email || c.email_verified !== true) return null;
-    return { email: c.email.toLowerCase(), name: c.name || c.email };
-  } catch { return null; }
+    if (!okIss) return no("bad_issuer");
+    if (c.aud !== env("GOOGLE_CLIENT_ID")) return no("audience_mismatch");
+    if (c.exp < Math.floor(Date.now() / 1000)) return no("token_expired");
+    if (!c.email || c.email_verified !== true) return no("email_not_verified");
+    return { ok: true, who: { email: c.email.toLowerCase(), name: c.name || c.email } };
+  } catch { return no("bad_token"); }
 }
 
 /* ---------- allow-list ---------- */

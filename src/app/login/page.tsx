@@ -10,15 +10,16 @@ const MESSAGES: Record<string, string> = {
   config: "Sign-in is not set up on this server yet.",
 };
 
-export default function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
+export default function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; detail?: string }> }) {
   return <Suspense fallback={<main className="min-h-screen" />}><LoginCard searchParams={searchParams} /></Suspense>;
 }
 
-async function LoginCard({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
+async function LoginCard({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; detail?: string }> }) {
   await connection();
-  const { error, next } = await searchParams;
+  const { error, next, detail } = await searchParams;
   const ready = authConfigured();
-  const msg = error ? (MESSAGES[error] ?? "Sign-in failed.") : null;
+  const hint = detail && /^[a-z_0-9]{1,40}$/.test(detail) ? ` (${detail})` : "";
+  const msg = error ? (MESSAGES[error] ?? "Sign-in failed.") + hint : null;
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-card">
