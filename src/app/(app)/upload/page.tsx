@@ -14,6 +14,8 @@ const TYPE_INFO: { type: ImportDataType; title: string; from: string; hint: stri
   { type: "Inbox Conversations", title: "แชท/ลูกค้าจาก Inbox เพจ", from: "Meta Business Suite → กล่องข้อความ (หรือไฟล์ส่งออกจากเครื่องมือแชทที่คุณใช้)", hint: "ชื่อลูกค้า วันที่ทัก ข้อความล่าสุด โฆษณาต้นทาง → กลายเป็นการ์ดบน Board" },
   { type: "Ad-Level Performance", title: "สถิติโฆษณา (รายโฆษณา)", from: "Ads Manager → Reports → Export (breakdown: Day, ระดับ Ad)", hint: "ค่าโฆษณา การเข้าถึง การแสดงผล ข้อความที่เริ่มต้น รายวัน รายโฆษณา" },
   { type: "Campaign Performance", title: "สถิติโฆษณา (รายแคมเปญ)", from: "Ads Manager → Reports → Export (ระดับ Campaign)", hint: "ตัวเลขรวมระดับแคมเปญ ใช้เมื่อไม่มีไฟล์รายโฆษณา" },
+  { type: "Chat Messages", title: "ข้อความแชทรายข้อความ (สำหรับตรวจเวลาตอบ)", from: "ไฟล์ส่งออกจากเครื่องมือแชท / Meta Business Suite ที่มีเวลาของแต่ละข้อความ", hint: "ลูกค้าหรือเซลล์ส่ง + วันที่และเวลา ใช้คำนวณ SLA ตอบภายใน 15 นาที — ต้องอัปโหลดแชทของลูกค้าก่อน" },
+  { type: "Post Comments", title: "คอมเมนต์ใต้โพสต์ (สำหรับตรวจเวลาตอบ)", from: "Meta Business Suite → กล่องข้อความ → คอมเมนต์ หรือเครื่องมือจัดการคอมเมนต์", hint: "เวลาที่ลูกค้าคอมเมนต์ + เวลาที่เพจตอบ ใช้คำนวณ SLA ตอบภายใน 1 ชั่วโมง" },
   { type: "Page Insights", title: "Insights ของเพจ", from: "Meta Business Suite → Insights → Export data", hint: "การเข้าถึง การดู การมีส่วนร่วม ผู้ติดตาม รายวัน" },
   { type: "Lead Data", title: "Leads Center / Lead Ads", from: "Meta Business Suite → Leads Center → Download", hint: "ลีดจากฟอร์ม Lead Ads (ชื่อ เบอร์ โฆษณาต้นทาง)" },
   { type: "Sales Performance", title: "ผลงานเซลล์ (อัปเดตลีดเดิม)", from: "ไฟล์ของทีมขาย", hint: "ผู้ดูแล เวลาตอบครั้งแรก จำนวนการติดตาม ของ Lead ID ที่มีอยู่แล้ว" },
@@ -51,6 +53,8 @@ export default function UploadPage() {
     if (step < 5 || rows.length === 0) return null;
     return validate({
       type, mapping, rows, mode, importId: "IMP-PREVIEW", existingPerfKeys, existingAdIds: new Set(data.ads.map((a) => a.id)), existingLeadIds: new Set(data.leads.map((l) => l.id)), existingInsightKeys: new Set(data.insights.map((i) => `${i.pageId}|${i.date}`)),
+      leadIdByName: new Map(data.leads.filter((l) => l.pageId === pageId).map((l) => [l.name.toLowerCase(), l.id])),
+      existingMessageIds: new Set(Object.values(data.messages).flat().map((m) => m.id)), existingCommentIds: new Set(data.comments.map((c) => c.id)),
       pageId, repsByName: new Map(data.users.filter((u) => u.role === "Sales Representative").map((u) => [u.name.toLowerCase(), u.id])), nextLeadNo: data.leads.length + 1,
     });
   }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys]);
@@ -111,7 +115,10 @@ export default function UploadPage() {
     };
     const patches = type === "Sales Performance" ? validation.salesPatches.map((p) => ({ lead_id: p.leadId, set: { assigned_to: p.repName, ...(p.firstResponseMin != null ? { first_response_min: p.firstResponseMin } : {}), ...(p.followUps != null ? { follow_ups: p.followUps } : {}) } })) : [];
     setBusy(true);
-    const ok = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches);
+    const ok = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches, {
+      messages: validation.messages.map((m) => ({ message_id: m.id, lead_id: m.leadId, direction: m.direction, text: m.text, sent_at: m.at.replace("T", " ").slice(0, 16) })),
+      comments: validation.comments.map((c) => ({ comment_id: c.id, page_id: c.pageId, post_id: c.postId, commenter: c.commenter, text: c.text, commented_at: c.at.replace("T", " ").slice(0, 16), replied_at: c.repliedAt ? c.repliedAt.replace("T", " ").slice(0, 16) : "", replied_by: c.repliedBy })),
+    });
     setBusy(false);
     if (!ok) return; // the store already showed why it was not saved; stay on this step so nothing is lost
     setSummary(rec); setStep(7);
@@ -202,7 +209,7 @@ export default function UploadPage() {
             {([["incremental", "เพิ่มเฉพาะแถวใหม่", "ข้ามแถวที่เคยนำเข้าแล้ว (Ad ID + วันที่ / Lead ID / วันที่ของเพจ เดียวกัน) ปลอดภัยที่สุด"], ["replace", "เขียนทับ", "เขียนทับแถวเดิมที่คีย์ตรงกัน วันที่อื่นและประวัติไม่ถูกแตะ"]] as const).map(([v, t, d]) => (
               <label key={v} className={cn("cursor-pointer rounded-xl border p-3 text-sm", mode === v ? "border-brand-2 bg-brand-faint" : "border-line")}><span className="flex items-center gap-2 font-medium"><input type="radio" checked={mode === v} onChange={() => setMode(v)} className="accent-[#087a58]" />{t}</span><span className="mt-1 block text-xs text-muted">{d}</span></label>))}</div>
           <ul className="space-y-1 rounded-xl bg-gray-50 p-3 text-sm"><li><b>{validation.ok}</b> rows will be imported into <b>{data.pages.find((p) => p.id === pageId)?.name}</b> as <b>{type}</b>.</li>
-            {(isAdsType(type) || type === "Page Insights") && validation.periodStart && <li>Period covered: {fmtDate(validation.periodStart)} – {fmtDate(validation.periodEnd)}.</li>}
+            {(isAdsType(type) || type === "Page Insights" || type === "Chat Messages" || type === "Post Comments") && validation.periodStart && <li>Period covered: {fmtDate(validation.periodStart)} – {fmtDate(validation.periodEnd)}.</li>}
             {isAdsType(type) && <li>{validation.newAdIds.length} new ad(s) will be created. {validation.replaceKeys.size > 0 ? `${validation.replaceKeys.size} existing ad/day records will be replaced.` : "No existing records will be changed."}</li>}
             <li>{validation.failed} failed and {validation.duplicates} duplicate rows will be skipped.</li></ul>
           <div className="flex gap-2"><Btn onClick={() => setStep(5)}>Back</Btn><Btn variant="primary" onClick={commit} disabled={validation.ok === 0 || busy}>{busy ? "กำลังบันทึกลง Google Sheet…" : "ยืนยันและบันทึก"}</Btn></div></div>)}
@@ -239,6 +246,17 @@ Napat K.,2026-11-02,ขอบคุณค่ะ จะติดต่อกล�
   "Campaign Performance": `Day,Campaign name,Amount spent (THB),Reach,Impressions,Link clicks,Messaging conversations started,Purchases
 2026-10-20,Sample Always-On,1130,17300,22200,410,59,3
 2026-10-21,Sample Always-On,1138,17600,22400,412,60,3
+`,
+  "Chat Messages": `ชื่อลูกค้า,ผู้ส่ง,เวลา,ข้อความ
+สมชาย ใจดี,ลูกค้า,2026-11-01 10:05,สนใจสอบถามราคาครับ
+สมชาย ใจดี,เพจ,2026-11-01 10:12,ยินดีให้บริการค่ะ
+Napat K.,ลูกค้า,2026-11-02 11:00,ขอรายละเอียดหน่อยค่ะ
+Napat K.,เพจ,2026-11-02 11:40,ส่งให้ทางข้อความแล้วค่ะ
+`,
+  "Post Comments": `โพสต์,ชื่อลูกค้า,ความคิดเห็น,เวลาคอมเมนต์,เวลาที่เพจตอบ
+POST-001,มาลี รักดี,ราคาเท่าไหร่คะ,2026-11-01 10:30,2026-11-01 10:50
+POST-001,Chai W.,สนใจค่ะ,2026-11-01 13:00,2026-11-01 14:30
+POST-002,สมหญิง ศรีสุข,มีสาขาไหนบ้าง,2026-11-02 15:00,
 `,
   "Page Insights": `Date,Reach,Views,Engagements,Followers,New followers,Link clicks
 2026-10-20,5200,8100,410,12840,12,95

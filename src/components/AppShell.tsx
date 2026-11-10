@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck } from "lucide-react";
+import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer } from "lucide-react";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
@@ -16,6 +16,7 @@ const NAV = [
   { key: "upload", label: "Upload", href: "/upload", icon: Upload },
   { key: "settings", label: "Setting", href: "/settings", icon: Settings },
   { key: "quality", label: "Quality", href: "/quality", icon: ClipboardCheck },
+  { key: "sla", label: "SLA", href: "/sla", icon: Timer },
 ];
 
 function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void) {

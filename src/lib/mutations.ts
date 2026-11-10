@@ -30,7 +30,7 @@ export type Op =
   | { t: "lead.note"; id: string; text: string }
   | { t: "eval.add"; row: Record<string, unknown> }
   | { t: "settings.upsert"; tab: string; row: Record<string, unknown> }
-  | { t: "import.commit"; record: Record<string, unknown>; replace: boolean; perf: unknown[]; leads: unknown[]; ads: unknown[]; campaigns: unknown[]; insights: unknown[]; patches: { lead_id: string; set: Record<string, unknown> }[] };
+  | { t: "import.commit"; record: Record<string, unknown>; replace: boolean; perf: unknown[]; leads: unknown[]; ads: unknown[]; campaigns: unknown[]; insights: unknown[]; messages?: unknown[]; comments?: unknown[]; patches: { lead_id: string; set: Record<string, unknown> }[] };
 
 export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
   const lead = (id: string) => { const l = ds.leads.find((x) => x.id === id); if (!l) throw new Denied(404, `Lead ${id} not found`); return l; };
@@ -75,7 +75,7 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
     }
     case "import.commit": {
       if (!roleCan.upload(me.role)) throw new Denied(403, "Your role cannot upload data");
-      for (const a of [op.perf, op.leads, op.ads, op.campaigns, op.insights]) if (!Array.isArray(a) || a.length > MAX_ROWS) throw new Denied(400, `Too many rows (max ${MAX_ROWS} per upload)`);
+      for (const a of [op.perf, op.leads, op.ads, op.campaigns, op.insights, op.messages ?? [], op.comments ?? []]) if (!Array.isArray(a) || a.length > MAX_ROWS) throw new Denied(400, `Too many rows (max ${MAX_ROWS} per upload)`);
       const m = (tab: string, rows: unknown[]) => rows.map((r) => clean(tab, r));
       const w: Write[] = [];
       if (op.campaigns.length) w.push({ tab: "campaigns", keyCols: ["campaign_id"], mode: "insert", rows: m("campaigns", op.campaigns) });
@@ -83,6 +83,8 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       if (op.perf.length) w.push({ tab: "ad_performance", keyCols: ["ad_id", "date"], mode: op.replace ? "upsert" : "insert", rows: m("ad_performance", op.perf) });
       if (op.leads.length) w.push({ tab: "leads", keyCols: ["lead_id"], mode: "insert", rows: m("leads", op.leads) });
       if (op.insights.length) w.push({ tab: "page_insights", keyCols: ["page_id", "date"], mode: op.replace ? "upsert" : "insert", rows: m("page_insights", op.insights) });
+      if (op.messages?.length) w.push({ tab: "messages", keyCols: ["message_id"], mode: "insert", rows: m("messages", op.messages) });
+      if (op.comments?.length) w.push({ tab: "post_comments", keyCols: ["comment_id"], mode: "insert", rows: m("post_comments", op.comments) });
       if (op.patches?.length) w.push({ tab: "leads", keyCols: ["lead_id"], mode: "updateOnly", rows: op.patches.map((p) => ({ lead_id: str(p.lead_id, "lead_id"), ...clean("leads", p.set, ["assigned_to", "first_response_min", "follow_ups"]) })) });
       w.push({ tab: "import_log", keyCols: ["import_id"], mode: "insert", rows: [{ ...clean("import_log", op.record), by: me.name, at: now }] });
       return w;

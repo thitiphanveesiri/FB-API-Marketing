@@ -3,7 +3,7 @@ import type { Dataset } from "./dataset";
 import { parseDate, parseNumber } from "./importer";
 import { SHEET_TABS } from "./sheetSchema";
 import {
-  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User,
+  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User,
 } from "./types";
 
 export type RawTabs = Record<string, string[][]>;
@@ -197,6 +197,15 @@ export function mapSheets(tabs: RawTabs): MapResult {
     insights.push({ pageId: pid, date, reach: n("reach"), views: n("views"), engagements: n("engagements"), followers: n("followers"), newFollowers: n("new_followers"), linkClicks: n("link_clicks") });
   }
   insights.sort((a, b) => a.date.localeCompare(b.date));
+  const comments: PostComment[] = []; const seenCm = new Set<string>();
+  for (const r of tab("post_comments").rows) {
+    const pid = r.get("page_id"), at = dateTime(r.get("commented_at")), id = r.get("comment_id");
+    if (!id || !pageIds.has(pid) || !at) { warn("post_comments", r.n, "comment_id, a known page_id and a valid commented_at are required — row skipped"); continue; }
+    if (seenCm.has(id)) { warn("post_comments", r.n, `Duplicate comment_id ${id} — skipped`); continue; } seenCm.add(id);
+    const rep = r.get("replied_at") ? dateTime(r.get("replied_at")) : null;
+    comments.push({ id, pageId: pid, postId: r.get("post_id"), commenter: r.get("commenter"), text: r.get("text"), at, repliedAt: rep, repliedBy: r.get("replied_by") });
+  }
+  comments.sort((a, b) => a.at.localeCompare(b.at));
   const imports: ImportRecord[] = [];
   for (const r of tab("import_log").rows) {
     imports.push({ id: r.get("import_id"), at: r.get("at"), pageId: r.get("page_id"), dataType: (r.get("data_type") || "Ads Performance") as ImportDataType, fileName: r.get("file_name"), mode: r.get("mode") === "replace" ? "replace" : "incremental",
@@ -208,8 +217,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
   if (!users.some((u) => u.role === "Administrator")) users.unshift({ id: "U-SHEET-ADMIN", name: "Admin (no users tab)", email: "", role: "Administrator", active: true, hue: 160 });
 
   return {
-    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights },
+    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights, comments },
     warnings, missingTabs,
-    counts: { pages: pages.length, agencies: agencies.length, users: users.length, campaigns: campaigns.length, ads: ads.length, ad_performance: perf.length, leads: leads.length, messages: Object.values(messages).reduce((s, m) => s + m.length, 0), page_insights: insights.length, lead_log: logged.size },
+    counts: { pages: pages.length, agencies: agencies.length, users: users.length, campaigns: campaigns.length, ads: ads.length, ad_performance: perf.length, leads: leads.length, messages: Object.values(messages).reduce((s, m) => s + m.length, 0), page_insights: insights.length, post_comments: comments.length, lead_log: logged.size },
   };
 }

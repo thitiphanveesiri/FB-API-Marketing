@@ -1,5 +1,5 @@
 // Pure import logic: column auto-mapping, row validation, dedupe. No React, no store.
-import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, parseStatus } from "./types";
+import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus } from "./types";
 import { ANCHOR } from "./dates";
 
 export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
@@ -49,6 +49,22 @@ const INSIGHT_FIELDS: FieldDef[] = [
   F("newFollowers", "New followers", false, "int", ["new followers", "follows", "page follows", "net follows", "ผู้ติดตามใหม่"]),
   F("linkClicks", "Link clicks", false, "int", ["link clicks", "clicks", "link_clicks", "การคลิกลิงก์"]),
 ];
+const MESSAGE_FIELDS: FieldDef[] = [
+  F("leadId", "Lead / Conversation ID", false, "text", ["lead id", "lead_id", "conversation id", "thread id", "id"]),
+  F("name", "Customer name", false, "text", ["customer name", "customer", "name", "contact", "ชื่อลูกค้า", "ชื่อ"]),
+  F("direction", "Who sent (customer / staff)", true, "text", ["direction", "sender type", "from", "sender", "type", "ผู้ส่ง", "ทิศทาง"]),
+  F("sentAt", "Sent at (date & time)", true, "text", ["sent at", "sent_at", "time", "timestamp", "datetime", "date time", "created time", "เวลา", "วันที่เวลา"]),
+  F("text", "Message text", false, "text", ["text", "message", "content", "ข้อความ"]),
+];
+const COMMENT_FIELDS: FieldDef[] = [
+  F("commentId", "Comment ID", false, "text", ["comment id", "comment_id", "id"]),
+  F("postId", "Post ID / link", false, "text", ["post id", "post_id", "post", "post link", "โพสต์"]),
+  F("commenter", "Customer name", false, "text", ["commenter", "customer", "name", "from", "ชื่อลูกค้า", "ชื่อ"]),
+  F("text", "Comment text", false, "text", ["comment", "text", "message", "content", "ความคิดเห็น", "คอมเมนต์"]),
+  F("commentedAt", "Commented at (date & time)", true, "text", ["commented at", "commented_at", "created time", "created_time", "time", "timestamp", "date", "เวลาคอมเมนต์", "วันที่เวลา"]),
+  F("repliedAt", "Replied at (date & time)", false, "text", ["replied at", "replied_at", "reply time", "first reply time", "response time", "เวลาตอบ", "เวลาที่เพจตอบ", "ตอบเมื่อ"]),
+  F("repliedBy", "Replied by", false, "text", ["replied by", "replied_by", "responder", "ผู้ตอบ"]),
+];
 const SALES_FIELDS: FieldDef[] = [
   F("leadId", "Lead ID", true, "text", ["lead id", "lead_id", "id"]),
   F("repName", "Salesperson", true, "text", ["salesperson", "sales rep", "assigned to", "rep"]),
@@ -63,11 +79,13 @@ export const FIELDS: Record<ImportDataType, FieldDef[]> = {
   "Lead Data": LEAD_FIELDS,
   "Inbox Conversations": INBOX_FIELDS,
   "Page Insights": INSIGHT_FIELDS,
+  "Chat Messages": MESSAGE_FIELDS,
+  "Post Comments": COMMENT_FIELDS,
   "Sales Performance": SALES_FIELDS,
 };
 export const isAdsType = (t: ImportDataType) => t === "Ads Performance" || t === "Campaign Performance" || t === "Ad-Level Performance";
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ()_]/g, "").trim();
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F ()_]/g, "").trim(); // keep Thai letters so Thai headers can match
 
 /** Best-effort mapping of file headers to system fields. Returns field.key -> header ("" = unmapped). */
 export function autoMap(headers: string[], fields: FieldDef[]): Record<string, string> {
@@ -99,6 +117,21 @@ export function parseDate(raw: string): string | null {
   return iso;
 }
 
+/** "2026-11-01 14:05", "01/11/2026 14:05", "2026-11-01T14:05:00", "2:05 PM" → "YYYY-MM-DDTHH:MM:00" (local, no timezone shift). Date without time → null. */
+export function parseDateTime(raw: string): string | null {
+  const s = String(raw ?? "").trim(); const d = parseDate(s.split(/[T\s]/)[0]); if (!d) return null;
+  const m = s.match(/[T\s](\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?/); if (!m) return null;
+  let h = +m[1]; const mi = +m[2]; if (m[3]) { const pm = /p/i.test(m[3]); if (h < 1 || h > 12) return null; h = (h % 12) + (pm ? 12 : 0); }
+  if (h > 23 || mi > 59) return null;
+  return `${d}T${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}:00`;
+}
+const parseDirection = (v: string): "in" | "out" | null => {
+  const t = v.trim().toLowerCase();
+  if (/^(in|inbound|customer|client|user|received|ลูกค้า|รับ)$/.test(t)) return "in";
+  if (/^(out|outbound|staff|page|agent|admin|sales|rep|sent|เซลล์|เพจ|แอดมิน|ส่ง|ตอบ)$/.test(t)) return "out";
+  return null;
+};
+
 export interface RowIssue { row: number; message: string; level: "error" | "warning" | "duplicate" }
 export interface ValidationResult {
   total: number;
@@ -110,6 +143,8 @@ export interface ValidationResult {
   perf: DailyPerf[];
   leads: Lead[];
   insights: PageInsight[];
+  messages: { id: string; leadId: string; direction: "in" | "out"; text: string; at: string }[];
+  comments: PostComment[];
   replaceInsightKeys: Set<string>;
   newAdIds: { adId: string; adName: string; campaignName: string }[];
   replaceKeys: Set<string>; // existing ad|date keys that a "replace" import would overwrite
@@ -128,6 +163,9 @@ export interface ValidateCtx {
   existingAdIds: Set<string>;
   existingLeadIds: Set<string>;
   existingInsightKeys: Set<string>;
+  leadIdByName?: Map<string, string>; // lower-case customer name → lead id (this page)
+  existingMessageIds?: Set<string>;
+  existingCommentIds?: Set<string>;
   pageId: string;
   repsByName: Map<string, string>;
   nextLeadNo: number;
@@ -135,7 +173,7 @@ export interface ValidateCtx {
 
 export function validate(ctx: ValidateCtx): ValidationResult {
   const fields = FIELDS[ctx.type];
-  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
+  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
   const get = (row: Record<string, string>, key: string) => { const h = ctx.mapping[key]; return h ? String(row[h] ?? "").trim() : ""; };
   const seen = new Set<string>();
   const campByAd = new Map<string, string>();
@@ -199,6 +237,27 @@ export function validate(ctx: ValidateCtx): ValidationResult {
         lastContactAt: `${parseDate(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, source: "import",
       });
+      res.ok++;
+    } else if (ctx.type === "Chat Messages") {
+      const at = parseDateTime(vals.sentAt); const dir = parseDirection(vals.direction);
+      if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.sentAt}" — the time of day is required (e.g. 2026-11-01 14:05)`, level: "error" }); return; }
+      if (!dir) { res.failed++; res.issues.push({ row: n, message: `Cannot tell who sent "${vals.direction}" — use customer/staff (ลูกค้า/เพจ)`, level: "error" }); return; }
+      const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId) ? vals.leadId : ctx.leadIdByName?.get(vals.name.toLowerCase()) ?? "";
+      if (!leadId) { res.failed++; res.issues.push({ row: n, message: `Chat not found for "${vals.leadId || vals.name || "—"}" — upload the Inbox conversations first, or fix the ID/name`, level: "error" }); return; }
+      const id = `MSG-${leadId}-${at.replace(/\D/g, "")}-${dir}`;
+      if (seen.has(id) || ctx.existingMessageIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Already have this ${dir === "in" ? "customer" : "staff"} message at ${at.replace("T", " ").slice(0, 16)}`, level: "duplicate" }); return; }
+      seen.add(id); res.messages.push({ id, leadId, direction: dir, text: vals.text, at });
+      const d = at.slice(0, 10); if (!res.periodStart || d < res.periodStart) res.periodStart = d; if (!res.periodEnd || d > res.periodEnd) res.periodEnd = d;
+      res.ok++;
+    } else if (ctx.type === "Post Comments") {
+      const at = parseDateTime(vals.commentedAt); const rep = vals.repliedAt ? parseDateTime(vals.repliedAt) : null;
+      if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.commentedAt}" — the time of day is required`, level: "error" }); return; }
+      if (vals.repliedAt && !rep) { res.failed++; res.issues.push({ row: n, message: `Invalid reply time "${vals.repliedAt}"`, level: "error" }); return; }
+      if (rep && rep < at) { res.failed++; res.issues.push({ row: n, message: "Reply time is earlier than the comment time", level: "error" }); return; }
+      const id = vals.commentId || `CM-${ctx.pageId}-${at.replace(/\D/g, "")}-${vals.commenter.toLowerCase().replace(/[^a-z0-9ก-๙]+/g, "").slice(0, 12)}`;
+      if (seen.has(id) || ctx.existingCommentIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate comment ${id}`, level: "duplicate" }); return; }
+      seen.add(id); res.comments.push({ id, pageId: ctx.pageId, postId: vals.postId, commenter: vals.commenter, text: vals.text, at, repliedAt: rep, repliedBy: vals.repliedBy });
+      const d = at.slice(0, 10); if (!res.periodStart || d < res.periodStart) res.periodStart = d; if (!res.periodEnd || d > res.periodEnd) res.periodEnd = d;
       res.ok++;
     } else if (ctx.type === "Page Insights") {
       const date = parseDate(vals.date)!;

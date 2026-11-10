@@ -54,6 +54,17 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 - Rows with problems are skipped, not guessed, and listed under **data warnings** in the banner (unknown IDs, bad dates, duplicates, rounded IDs…). A lead is counted once (duplicate `lead_id`s and duplicate `ad_id + date` rows are skipped).
 - Dates are read as unambiguous Sheets dates, so regional formats (1/10 vs 10/1) do not matter. "Today" is the real date.
 
+## 6b. ตรวจการตอบแชท (SLA)
+หน้า **SLA** ตรวจเวลาตอบของเซลล์จากแท็บ `messages` (ต้องมี `sent_at` เป็นวันที่+เวลา) และ `post_comments` (`commented_at`, `replied_at`) — อัปโหลดได้ที่หน้า Upload ชนิด "ข้อความแชทรายข้อความ" และ "คอมเมนต์ใต้โพสต์" (ต้องอัปโหลดแชทของลูกค้าก่อน)
+
+- เวลาที่ลูกค้าส่งข้อความเป็นตัวกำหนดช่วงเวลา และเริ่มนับตั้งแต่ตอนนั้น
+- 10:00–19:00: ตอบเกิน 15 นาที หัก 1 แต้ม ทุกครั้งที่ช้า (ต่อแชท ต่อเพจ)
+- 08:00–10:00 และ 19:00–22:00: ช้าแล้วไม่หัก เก็บเป็นสถิติตอบล่าช้า
+- 22:00–08:00: ไม่หัก ถ้ามีการตอบเก็บเป็นสถิติ
+- คอมเมนต์ (เฉพาะ 10:00–19:00) ตอบเกิน 60 นาที หัก 0.5 แต้ม จากเซลล์ทุกคนในทีมของเพจ (`sales_team`)
+- แชท/คอมเมนต์ที่ยังไม่ตอบ นับเป็นช้าเมื่อเกินเวลา; ค่าต่าง ๆ แก้ที่ `SLA_RULES` ใน `src/lib/sla.ts`
+- ผู้ดูแลของแชท = คอลัมน์ `assigned_to` ของ lead; แชทที่ยังไม่มีผู้ดูแลไม่ถูกนับให้ใคร
+
 ## 7. Before real customer data goes live
 - Known limits of the sign-in: no rate limiting or brute-force protection (Google handles the password); the ID token is read straight from Google's token endpoint over TLS rather than signature-verified; a removed user can still hold a valid cookie for up to ~1 minute (blocked as soon as the sheet cache refreshes); sessions can't be revoked individually (rotate `AUTH_SECRET` to sign everyone out).
 - Without Google sign-in configured, the demo build is open to anyone with the URL. Never connect real data without it.

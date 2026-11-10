@@ -230,5 +230,5 @@ export function buildDemoDataset(): Dataset {
 
   const evaluations: Evaluation[] = [];
   const imports: ImportRecord[] = [];
-  return { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights: [] };
+  return { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights: [], comments: [] };
 }

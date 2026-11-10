@@ -43,6 +43,9 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "page_insights", required: false, purpose: "Daily Page Insights from Meta Business Suite (Upload page writes here)", cols: [
     C("page_id", "→ pages.page_id", true), C("date", "YYYY-MM-DD", true), C("reach", "Reach"), C("views", "Page views / impressions"), C("engagements", "Post engagements"),
     C("followers", "Total followers"), C("new_followers", "New followers"), C("link_clicks", "Link clicks") ] },
+  { tab: "post_comments", required: false, purpose: "Customer comments under page posts, with the time the page replied (used by the response-check page)", cols: [
+    C("comment_id", "Unique", true), C("page_id", "→ pages.page_id", true), C("post_id", "Post ID / link"), C("commenter", "Customer name"), C("text", "Comment text"),
+    C("commented_at", "YYYY-MM-DD HH:MM", true), C("replied_at", "YYYY-MM-DD HH:MM (blank = not replied yet)"), C("replied_by", "→ users.user_id or name") ] },
   { tab: "import_log", required: false, purpose: "One row per Upload (written by the app)", cols: [
     C("import_id", "e.g. IMP-001", true), C("at", "When"), C("page_id", "→ pages.page_id"), C("data_type", "Type of file"), C("file_name", "File name"), C("mode", "incremental | replace"),
     C("total", "Rows in file"), C("imported", "Rows imported"), C("failed", "Rows failed"), C("duplicates", "Rows skipped as duplicates"), C("by", "Who uploaded") ] },

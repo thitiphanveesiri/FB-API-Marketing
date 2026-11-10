@@ -59,7 +59,7 @@ interface Store {
   saveUser: (u: User) => void;
   assignCampaigns: (agencyId: string, campaignIds: string[]) => void;
   // imports
-  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[]) => Promise<boolean>;
+  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[], extra?: { messages?: unknown[]; comments?: unknown[] }) => Promise<boolean>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -266,7 +266,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void (async () => { for (const id of ids) { if (!(await persist({ t: "settings.upsert", tab: "campaigns", row: { campaign_id: id, agency_id: agencyId } }, true))) break; } })();
     },
 
-    commitImport: async (rec, perf, leads, replaceKeys, newAds = [], newCampaigns = [], insights = [], patches = []) => {
+    commitImport: async (rec, perf, leads, replaceKeys, newAds = [], newCampaigns = [], insights = [], patches = [], extra = {}) => {
       const ok = await persist({
         t: "import.commit", replace: !!replaceKeys,
         record: { import_id: rec.id, page_id: rec.pageId, data_type: rec.dataType, file_name: rec.fileName, mode: rec.mode, total: rec.total, imported: rec.imported, failed: rec.failed, duplicates: rec.duplicates },
@@ -275,6 +275,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         perf: perf.map((p) => ({ date: p.date, ad_id: p.adId, spend: p.spend, reach: p.reach, impressions: p.impressions, clicks: p.clicks, messages: p.messages, purchases: p.purchases })),
         leads: leads.map(leadToRow),
         insights: insights.map((i) => ({ page_id: i.pageId, date: i.date, reach: i.reach, views: i.views, engagements: i.engagements, followers: i.followers, new_followers: i.newFollowers, link_clicks: i.linkClicks })),
+        messages: extra.messages ?? [], comments: extra.comments ?? [],
         patches,
       });
       if (ok) await reloadData(true); // show exactly what the sheet now holds

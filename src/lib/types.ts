@@ -65,6 +65,9 @@ export function parseStatus(v: string): LeadStatus | undefined {
   return STATUSES.find((x) => x.toLowerCase() === t || STATUS_TH[x] === v.trim());
 }
 
+/** A customer comment under a page post. repliedAt = when the page first replied (null = not yet). */
+export interface PostComment { id: string; pageId: string; postId: string; commenter: string; text: string; at: string; repliedAt: string | null; repliedBy: string }
+
 export interface PageInsight { pageId: string; date: string; reach: number; views: number; engagements: number; followers: number; newFollowers: number; linkClicks: number }
 
 export type DropReason = (typeof DROP_REASONS)[number];
@@ -191,6 +194,8 @@ export type ImportDataType =
   | "Lead Data"
   | "Inbox Conversations"
   | "Page Insights"
+  | "Chat Messages"
+  | "Post Comments"
   | "Sales Performance";
 export interface ImportRecord {
   id: string;
