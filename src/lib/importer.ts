@@ -137,22 +137,41 @@ export function parseNumber(raw: string): number | null {
   if (s === "" || !/^-?\d+(\.\d+)?$/.test(s)) return null;
   return Number(s);
 }
-export function parseDate(raw: string): string | null {
+export type DateOrder = "dmy" | "mdy";
+const SLASH = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[T\s,].*)?$/;
+/** 31/12/2026 vs 12/31/2026: a value whose first part is > 12 can only be D/M, whose second part is > 12 can only be M/D.
+ *  Ambiguous values (e.g. 03/04/2026) follow `order`, which validate() decides for the whole file with detectDateOrder. */
+export function parseDate(raw: string, order: DateOrder = "dmy"): string | null {
   const s = String(raw ?? "").trim();
   let y: number, m: number, d: number;
   let mt = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (mt) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
-  else if ((mt = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) { d = +mt[1]; m = +mt[2]; y = +mt[3]; } // D/M/YYYY (Ads Manager TH/EU locale)
+  else if ((mt = s.match(SLASH))) {
+    const a = +mt[1], b = +mt[2]; y = +mt[3];
+    const mdy = a > 12 ? false : b > 12 ? true : order === "mdy";
+    if (mdy) { m = a; d = b; } else { d = a; m = b; }
+  }
   else return null;
   const dt = new Date(Date.UTC(y, m - 1, d));
   if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
-  const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  return iso;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+/** Look at every slash date in a file. Any "25/10/2026" proves D/M, any "10/25/2026" proves M/D. If nothing proves it,
+ *  a 12-hour clock with am/pm (how Meta's US-style exports write "10/03/2026 9:09pm") means M/D, otherwise D/M (Thai/EU Ads Manager). */
+export function detectDateOrder(values: string[]): DateOrder {
+  let ampm = false;
+  for (const v of values) {
+    const mt = String(v ?? "").trim().match(SLASH); if (!mt) continue;
+    if (+mt[1] > 12) return "dmy";
+    if (+mt[2] > 12) return "mdy";
+    if (/\d\s*[ap]m\b/i.test(v)) ampm = true;
+  }
+  return ampm ? "mdy" : "dmy";
 }
 
 /** "2026-11-01 14:05", "01/11/2026 14:05", "2026-11-01T14:05:00", "2:05 PM" → "YYYY-MM-DDTHH:MM:00" (local, no timezone shift). Date without time → null. */
-export function parseDateTime(raw: string): string | null {
-  const s = String(raw ?? "").trim(); const d = parseDate(s.split(/[T\s]/)[0]); if (!d) return null;
+export function parseDateTime(raw: string, order: DateOrder = "dmy"): string | null {
+  const s = String(raw ?? "").trim(); const d = parseDate(s.split(/[T\s]/)[0], order); if (!d) return null;
   const m = s.match(/[T\s](\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?/); if (!m) return null;
   let h = +m[1]; const mi = +m[2]; if (m[3]) { const pm = /p/i.test(m[3]); if (h < 1 || h > 12) return null; h = (h % 12) + (pm ? 12 : 0); }
   if (h > 23 || mi > 59) return null;
@@ -208,6 +227,11 @@ export function validate(ctx: ValidateCtx): ValidationResult {
   const fields = FIELDS[ctx.type];
   const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
   const get = (row: Record<string, string>, key: string) => { const h = ctx.mapping[key]; return h ? String(row[h] ?? "").trim() : ""; };
+  // One date order for the whole file, decided from all mapped date columns (see detectDateOrder).
+  const dateKeys = fields.filter((f) => f.kind === "date" || ["sentAt", "commentedAt", "repliedAt"].includes(f.key)).map((f) => ctx.mapping[f.key]).filter(Boolean);
+  const order = detectDateOrder(ctx.rows.flatMap((r) => dateKeys.map((h) => String(r[h] ?? ""))));
+  const pd = (v: string) => parseDate(v, order);
+  const pdt = (v: string) => parseDateTime(v, order);
   const seen = new Set<string>();
   const campByAd = new Map<string, string>();
   const newAds = new Map<string, { adId: string; adName: string; campaignName: string }>();
@@ -221,13 +245,13 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const v = get(row, f.key);
       vals[f.key] = v;
       if (!v) { if (f.required) errs.push(`Missing required field "${f.label}"`); continue; }
-      if (f.kind === "date" && !parseDate(v)) errs.push(`Invalid date "${v}" in "${f.label}" (use YYYY-MM-DD or DD/MM/YYYY)`);
+      if (f.kind === "date" && !pd(v)) errs.push(`Invalid date "${v}" in "${f.label}" (use YYYY-MM-DD, DD/MM/YYYY or MM/DD/YYYY)`);
       if ((f.kind === "number" || f.kind === "int") && parseNumber(v) == null) errs.push(`Incorrect number format "${v}" in "${f.label}"`);
       if (f.kind === "int" && parseNumber(v) != null && !Number.isInteger(parseNumber(v))) errs.push(`"${f.label}" must be a whole number, got "${v}"`);
       if ((f.kind === "number" || f.kind === "int") && (parseNumber(v) ?? 0) < 0) errs.push(`Negative value "${v}" in "${f.label}"`);
     }
     if (isAdsType(ctx.type)) {
-      const date = parseDate(vals.date);
+      const date = pd(vals.date);
       if (date && date > ANCHOR) errs.push(`Date ${date} is in the future`);
       if (!vals.adId && ctx.type !== "Campaign Performance" && !errs.some((e) => e.includes("Ad ID"))) errs.push("Missing Ad ID");
       const imp = parseNumber(vals.impressions), clk = parseNumber(vals.clicks);
@@ -236,7 +260,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
     if (errs.length) { res.failed++; res.issues.push(...errs.map((m) => ({ row: n, message: m, level: "error" as const }))); return; }
 
     if (isAdsType(ctx.type)) {
-      const date = parseDate(vals.date)!;
+      const date = pd(vals.date)!;
       // Campaign-level files have no Ad ID: use a synthetic stable key per campaign
       const adId = vals.adId || `CMP-${vals.campaignName.toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}`;
       const key = `${adId}|${date}`;
@@ -257,7 +281,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const id = vals.leadId || "";
       if (id && (ctx.existingLeadIds.has(id) || seen.has(id))) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
       if (id) seen.add(id);
-      const date = parseDate(vals.date)!;
+      const date = pd(vals.date)!;
       const st = parseStatus(vals.status);
       if (vals.status && !st) { res.issues.push({ row: n, message: `Unknown status "${vals.status}" — set to Not Responded`, level: "warning" }); res.warnings++; }
       const status: LeadStatus = st ?? "Not Responded";
@@ -267,12 +291,12 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
         id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || null, repId, status, quality, valid: true, createdAt: date,
-        lastContactAt: `${parseDate(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
+        lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, source: "import",
       });
       res.ok++;
     } else if (ctx.type === "Chat Messages") {
-      const at = parseDateTime(vals.sentAt); const dir = parseDirection(vals.direction);
+      const at = pdt(vals.sentAt); const dir = parseDirection(vals.direction);
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.sentAt}" — the time of day is required (e.g. 2026-11-01 14:05)`, level: "error" }); return; }
       if (!dir) { res.failed++; res.issues.push({ row: n, message: `Cannot tell who sent "${vals.direction}" — use customer/staff (ลูกค้า/เพจ)`, level: "error" }); return; }
       const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId) ? vals.leadId : ctx.leadIdByName?.get(vals.name.toLowerCase()) ?? "";
@@ -283,7 +307,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const d = at.slice(0, 10); if (!res.periodStart || d < res.periodStart) res.periodStart = d; if (!res.periodEnd || d > res.periodEnd) res.periodEnd = d;
       res.ok++;
     } else if (ctx.type === "Post Comments") {
-      const at = parseDateTime(vals.commentedAt); const rep = vals.repliedAt ? parseDateTime(vals.repliedAt) : null;
+      const at = pdt(vals.commentedAt); const rep = vals.repliedAt ? pdt(vals.repliedAt) : null;
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.commentedAt}" — the time of day is required`, level: "error" }); return; }
       if (vals.repliedAt && !rep) { res.failed++; res.issues.push({ row: n, message: `Invalid reply time "${vals.repliedAt}"`, level: "error" }); return; }
       if (rep && rep < at) { res.failed++; res.issues.push({ row: n, message: "Reply time is earlier than the comment time", level: "error" }); return; }
@@ -293,7 +317,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const d = at.slice(0, 10); if (!res.periodStart || d < res.periodStart) res.periodStart = d; if (!res.periodEnd || d > res.periodEnd) res.periodEnd = d;
       res.ok++;
     } else if (ctx.type === "Page Insights") {
-      const date = parseDate(vals.date)!;
+      const date = pd(vals.date)!;
       if (date > ANCHOR) { res.failed++; res.issues.push({ row: n, message: `Date ${date} is in the future`, level: "error" }); return; }
       const key = `${ctx.pageId}|${date}`;
       if (seen.has(key)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate date ${date} in file`, level: "duplicate" }); return; }
