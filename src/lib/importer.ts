@@ -8,8 +8,10 @@ const F = (key: string, label: string, required: boolean, kind: FieldDef["kind"]
 
 const AD_FIELDS: FieldDef[] = [
   F("date", "Date", true, "date", ["day", "date", "reporting starts", "reporting_starts", "start date", "วัน", "วันที่", "วันที่เริ่มรายงาน"]),
-  F("campaignName", "Campaign name", true, "text", ["campaign name", "campaign", "ชื่อแคมเปญ", "แคมเปญ"]),
-  F("adId", "Ad ID", true, "text", ["ad id", "ad_id", "adid", "รหัสโฆษณา"]),
+  F("campaignName", "Campaign name", false, "text", ["campaign name", "campaign", "ชื่อแคมเปญ", "แคมเปญ"]),
+  F("adSetName", "Ad set name (used when there is no campaign name)", false, "text", ["ad set name", "adset name", "ชื่อชุดโฆษณา"]),
+  F("dateEnd", "Reporting ends", false, "date", ["reporting ends", "reporting_ends", "วันที่สิ้นสุดรายงาน"]),
+  F("adId", "Ad ID", false, "text", ["ad id", "ad_id", "adid", "รหัสโฆษณา"]),
   F("adName", "Ad name", false, "text", ["ad name", "ad", "ชื่อโฆษณา"]),
   F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)", "จำนวนเงินที่ใช้จ่าย", "ยอดใช้จ่าย"]),
   F("reach", "Reach", false, "int", ["reach", "การเข้าถึง"]),
@@ -27,7 +29,8 @@ const LEAD_FIELDS: FieldDef[] = [
   F("date", "Created date", true, "date", ["date", "created", "created date", "created at", "created_time", "created time", "วันที่"]),
   F("status", "Lead status", false, "text", ["status", "lead status", "stage", "lead_status", "สถานะ"]),
   F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone_number", "phone number", "เบอร์", "เบอร์โทร"]),
-  F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep"]),
+  F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "owner", "owner name", "เจ้าของ", "ผู้ดูแล"]),
+  F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
 ];
 const INBOX_FIELDS: FieldDef[] = [
   F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "contact", "contact name", "sender", "ชื่อ", "ชื่อลูกค้า"]),
@@ -37,8 +40,9 @@ const INBOX_FIELDS: FieldDef[] = [
   F("lastContactAt", "Last message date", false, "date", ["last message date", "last message time", "last contact", "last activity", "updated", "updated time", "วันที่ล่าสุด"]),
   F("adId", "Source Ad ID", false, "text", ["ad id", "ad_id", "source ad", "source ad id", "referral ad id"]),
   F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone number", "เบอร์", "เบอร์โทร"]),
-  F("status", "Chat type / status", false, "text", ["status", "stage", "label", "labels", "chat type", "สถานะ", "ประเภท"]),
-  F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "assignee"]),
+  F("status", "Chat type / status", false, "text", ["status", "stage", "chat type", "สถานะ", "ประเภท"]),
+  F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "assignee", "owner", "owner name", "เจ้าของ", "ผู้ดูแล"]),
+  F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
 ];
 const INSIGHT_FIELDS: FieldDef[] = [
   F("date", "Date", true, "date", ["date", "day", "วันที่"]),
@@ -137,6 +141,8 @@ export function parseNumber(raw: string): number | null {
   if (s === "" || !/^-?\d+(\.\d+)?$/.test(s)) return null;
   return Number(s);
 }
+/** Meta Business Suite writes the source ad into Labels, e.g. "Oct 31 ad id 120252274822160116". */
+export const adIdFromLabels = (labels: string): string => (String(labels ?? "").match(/ad[\s_-]*id[\s:_-]*(\d{6,})/i) ?? [])[1] ?? "";
 export type DateOrder = "dmy" | "mdy";
 const SLASH = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[T\s,].*)?$/;
 /** 31/12/2026 vs 12/31/2026: a value whose first part is > 12 can only be D/M, whose second part is > 12 can only be M/D.
@@ -233,6 +239,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
   const pd = (v: string) => parseDate(v, order);
   const pdt = (v: string) => parseDateTime(v, order);
   const seen = new Set<string>();
+  let aggregateWarned = false;
   const campByAd = new Map<string, string>();
   const newAds = new Map<string, { adId: string; adName: string; campaignName: string }>();
   let leadNo = ctx.nextLeadNo;
@@ -253,7 +260,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
     if (isAdsType(ctx.type)) {
       const date = pd(vals.date);
       if (date && date > ANCHOR) errs.push(`Date ${date} is in the future`);
-      if (!vals.adId && ctx.type !== "Campaign Performance" && !errs.some((e) => e.includes("Ad ID"))) errs.push("Missing Ad ID");
+      if (!vals.adId && !vals.adName && ctx.type !== "Campaign Performance") errs.push("Need an Ad ID or an Ad name to tell the ads apart");
       const imp = parseNumber(vals.impressions), clk = parseNumber(vals.clicks);
       if (imp != null && clk != null && clk > imp) errs.push("Clicks exceed impressions");
     }
@@ -262,7 +269,11 @@ export function validate(ctx: ValidateCtx): ValidationResult {
     if (isAdsType(ctx.type)) {
       const date = pd(vals.date)!;
       // Campaign-level files have no Ad ID: use a synthetic stable key per campaign
-      const adId = vals.adId || `CMP-${vals.campaignName.toUpperCase().replace(/[^A-Z0-9]+/g, "-").slice(0, 24)}`;
+      const campaign = vals.campaignName || vals.adSetName || "ไม่ระบุแคมเปญ";
+      const slug = (x: string) => x.toUpperCase().replace(/[^A-Z0-9\u0E00-\u0E7F]+/g, "-").slice(0, 40);
+      // No Ad ID in the file: a stable key from the ad name (ad-level) or the campaign name (campaign-level)
+      const adId = vals.adId || (vals.adName ? `AD-${slug(vals.adName)}` : `CMP-${slug(campaign)}`);
+      if (vals.dateEnd && pd(vals.dateEnd) && pd(vals.dateEnd) !== date && !aggregateWarned) { aggregateWarned = true; res.warnings++; res.issues.push({ row: n, message: `This file is one total for the whole period (${date} → ${pd(vals.dateEnd)}), not one row per day. Every row will be saved on ${date}, so daily charts will be wrong. For daily data, re-export from Ads Manager with Breakdown → Time → Day.`, level: "warning" }); }
       const key = `${adId}|${date}`;
       if (seen.has(key)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate row inside the file: ${adId} on ${date}`, level: "duplicate" }); return; }
       seen.add(key);
@@ -270,8 +281,8 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (exists && ctx.mode === "incremental") { res.duplicates++; res.issues.push({ row: n, message: `Already imported: ${adId} on ${date} (skipped in incremental mode)`, level: "duplicate" }); return; }
       if (exists) res.replaceKeys.add(key);
       const prev = campByAd.get(adId);
-      if (prev && prev !== vals.campaignName) { res.warnings++; res.issues.push({ row: n, message: `Inconsistent campaign name for ${adId}: "${vals.campaignName}" vs "${prev}" — using "${prev}"`, level: "warning" }); }
-      else if (!prev) campByAd.set(adId, vals.campaignName);
+      if (prev && prev !== campaign) { res.warnings++; res.issues.push({ row: n, message: `Inconsistent campaign name for ${adId}: "${campaign}" vs "${prev}" — using "${prev}"`, level: "warning" }); }
+      else if (!prev) campByAd.set(adId, campaign);
       if (!ctx.existingAdIds.has(adId) && !newAds.has(adId)) newAds.set(adId, { adId, adName: vals.adName || adId, campaignName: campByAd.get(adId)! });
       res.perf.push({ adId, date, spend: parseNumber(vals.spend)!, reach: parseNumber(vals.reach) ?? 0, impressions: parseNumber(vals.impressions)!, clicks: parseNumber(vals.clicks) ?? 0, messages: parseNumber(vals.messages) ?? 0, purchases: parseNumber(vals.purchases) ?? 0, source: "import", importId: ctx.importId });
       if (!res.periodStart || date < res.periodStart) res.periodStart = date;
@@ -290,7 +301,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (vals.repName && !repId) { res.issues.push({ row: n, message: `Salesperson "${vals.repName}" not found — left unassigned`, level: "warning" }); res.warnings++; }
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
-        id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || null, repId, status, quality, valid: true, createdAt: date,
+        id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
         lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, source: "import",
       });
