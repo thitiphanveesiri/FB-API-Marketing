@@ -7,16 +7,16 @@ export interface FieldDef { key: string; label: string; required: boolean; kind:
 const F = (key: string, label: string, required: boolean, kind: FieldDef["kind"], synonyms: string[]): FieldDef => ({ key, label, required, kind, synonyms });
 
 const AD_FIELDS: FieldDef[] = [
-  F("date", "Date", true, "date", ["day", "date", "reporting starts", "reporting_starts", "start date"]),
-  F("campaignName", "Campaign name", true, "text", ["campaign name", "campaign"]),
-  F("adId", "Ad ID", true, "text", ["ad id", "ad_id", "adid"]),
-  F("adName", "Ad name", false, "text", ["ad name", "ad"]),
-  F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)"]),
-  F("reach", "Reach", false, "int", ["reach"]),
-  F("impressions", "Impressions", true, "int", ["impressions"]),
-  F("clicks", "Clicks", false, "int", ["clicks", "link clicks", "clicks (all)"]),
-  F("messages", "Messaging conversations started", false, "int", ["messaging conversations started", "messages", "results", "new messaging contacts"]),
-  F("purchases", "Purchases", false, "int", ["purchases", "website purchases", "purchase"]),
+  F("date", "Date", true, "date", ["day", "date", "reporting starts", "reporting_starts", "start date", "วัน", "วันที่", "วันที่เริ่มรายงาน"]),
+  F("campaignName", "Campaign name", true, "text", ["campaign name", "campaign", "ชื่อแคมเปญ", "แคมเปญ"]),
+  F("adId", "Ad ID", true, "text", ["ad id", "ad_id", "adid", "รหัสโฆษณา"]),
+  F("adName", "Ad name", false, "text", ["ad name", "ad", "ชื่อโฆษณา"]),
+  F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)", "จำนวนเงินที่ใช้จ่าย", "ยอดใช้จ่าย"]),
+  F("reach", "Reach", false, "int", ["reach", "การเข้าถึง"]),
+  F("impressions", "Impressions", true, "int", ["impressions", "การแสดงผล"]),
+  F("clicks", "Clicks", false, "int", ["clicks", "link clicks", "clicks (all)", "การคลิกลิงก์", "คลิกลิงก์"]),
+  F("messages", "Messaging conversations started", false, "int", ["messaging conversations started", "messages", "results", "new messaging contacts", "การสนทนาทางข้อความที่เริ่มต้น", "ผลลัพธ์"]),
+  F("purchases", "Purchases", false, "int", ["purchases", "website purchases", "purchase", "การซื้อ"]),
 ];
 const CAMPAIGN_FIELDS = AD_FIELDS.map((f) => (f.key === "adId" ? { ...f, required: false } : f));
 
@@ -87,16 +87,49 @@ export const isAdsType = (t: ImportDataType) => t === "Ads Performance" || t ===
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F ()_]/g, "").trim(); // keep Thai letters so Thai headers can match
 
-/** Best-effort mapping of file headers to system fields. Returns field.key -> header ("" = unmapped). */
+// Compare headers loosely: "Lead_Status", "lead-status" and "lead status" are the same.
+const key = (s: string) => norm(s).replace(/[_\-\s]+/g, " ").trim();
+
+/** Best-effort mapping of file headers to system fields. Returns field.key -> header ("" = unmapped).
+ *  Pass 1: exact match on a known synonym. Pass 2: the header merely *contains* a known synonym (length >= 4),
+ *  e.g. "Amount spent (THB) - total" -> spend. Pass 2 only fills fields and headers that pass 1 left unused. */
 export function autoMap(headers: string[], fields: FieldDef[]): Record<string, string> {
   const used = new Set<string>();
   const out: Record<string, string> = {};
+  const hk = new Map(headers.map((h) => [h, key(h)]));
   for (const f of fields) {
-    const hit = headers.find((h) => !used.has(h) && f.synonyms.includes(norm(h)));
+    const syn = new Set(f.synonyms.map(key));
+    const hit = headers.find((h) => !used.has(h) && syn.has(hk.get(h)!));
     out[f.key] = hit ?? "";
     if (hit) used.add(hit);
   }
+  for (const f of fields) {
+    if (out[f.key]) continue;
+    const syn = f.synonyms.map(key).filter((x) => x.length >= 4);
+    let best = ""; let bestLen = 0;
+    for (const h of headers) {
+      if (used.has(h)) continue;
+      for (const x of syn) if (hk.get(h)!.includes(x) && x.length > bestLen) { best = h; bestLen = x.length; }
+    }
+    if (best) { out[f.key] = best; used.add(best); }
+  }
   return out;
+}
+
+const DETECT_ORDER: ImportDataType[] = ["Ad-Level Performance", "Campaign Performance", "Lead Data", "Inbox Conversations", "Page Insights", "Chat Messages", "Post Comments", "Sales Performance"];
+
+/** Guess the file type from its headers. A type qualifies only if every required field maps; the best share of mapped fields wins
+ *  (ties go to DETECT_ORDER). Returns null when nothing qualifies, so the caller can ask the person to choose. */
+export function detectType(headers: string[]): { type: ImportDataType; mapping: Record<string, string> } | null {
+  let best: { type: ImportDataType; mapping: Record<string, string>; score: number } | null = null;
+  for (const type of DETECT_ORDER) {
+    const fields = FIELDS[type];
+    const mapping = autoMap(headers, fields);
+    if (fields.some((f) => f.required && !mapping[f.key])) continue;
+    const score = fields.filter((f) => mapping[f.key]).length / fields.length;
+    if (!best || score > best.score) best = { type, mapping, score };
+  }
+  return best ? { type: best.type, mapping: best.mapping } : null;
 }
 
 export function parseNumber(raw: string): number | null {

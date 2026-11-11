@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { AlertTriangle, Check, CheckCircle2, Download, FileSpreadsheet, RefreshCw, UploadCloud } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
-import { autoMap, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
+import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
 import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
@@ -43,6 +43,7 @@ export default function UploadPage() {
   const [summary, setSummary] = useState<ImportRecord | null>(null);
   const [viewErr, setViewErr] = useState<ImportRecord | null>(null);
   const [drag, setDrag] = useState(false);
+  const [auto, setAuto] = useState(true); // detect file type + map columns automatically
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fields = FIELDS[type];
@@ -81,7 +82,19 @@ export default function UploadPage() {
       }
       hdr = hdr.filter((h) => h && h.trim() !== "");
       if (hdr.length === 0 || recs.length === 0) throw new Error("The file has no header row or no data rows.");
-      setFileName(file.name); setHeaders(hdr); setRows(recs); setMapping(autoMap(hdr, fields)); setStep(3);
+      setFileName(file.name); setHeaders(hdr); setRows(recs);
+      const det = auto ? detectType(hdr) : null;
+      if (det) {
+        // Recognised: switch to the detected type and, when every required field is mapped, go straight to validation.
+        setType(det.type); setMapping(det.mapping);
+        const label = TYPE_INFO.find((t) => t.type === det.type)?.title ?? det.type;
+        toast(`ตรวจพบประเภทไฟล์: ${label} · จับคู่คอลัมน์ให้อัตโนมัติแล้ว กรุณาตรวจสอบก่อนยืนยัน`, "info");
+        setStep(5);
+      } else {
+        setMapping(autoMap(hdr, fields));
+        if (auto) toast("ระบบเดาประเภทไฟล์ไม่ได้ กรุณาเลือกประเภทและจับคู่คอลัมน์เอง", "info");
+        setStep(auto ? 4 : 3);
+      }
     } catch (e) { setErr(e instanceof Error ? e.message : "Could not read the file."); }
     finally { setBusy(false); }
   };
@@ -159,7 +172,7 @@ export default function UploadPage() {
       <Card>
         {step === 0 && (<div className="max-w-md space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ Facebook</h2>
           <Select label="เพจ Facebook" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
-          <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<Btn variant="primary" disabled={!pageId} onClick={() => setStep(1)}>ต่อไป</Btn></div>)}
+          <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
 
         {step === 1 && (<div className="max-w-3xl space-y-4"><h2 className="font-semibold">ขั้นที่ 2 · เลือกประเภทไฟล์ที่จะอัปโหลด</h2>
           <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.map((t) => (
@@ -169,6 +182,7 @@ export default function UploadPage() {
           <div className="flex gap-2"><Btn onClick={() => setStep(0)}>ย้อนกลับ</Btn><Btn variant="primary" onClick={() => setStep(2)}>ต่อไป</Btn></div></div>)}
 
         {step === 2 && (<div className="space-y-4"><h2 className="font-semibold">ขั้นที่ 3 · อัปโหลดไฟล์</h2>
+          <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-line p-3 text-sm"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="mt-1 accent-[#087a58]" /><span><span className="block font-medium">ตรวจประเภทไฟล์และจับคู่คอลัมน์อัตโนมัติ</span><span className="block text-xs text-muted">ระบบดูจากหัวคอลัมน์ ถ้าช่องที่จำเป็นครบจะข้ามไปขั้นตรวจสอบเลย (เลือกประเภทในขั้นก่อนหน้าไว้เป็นค่าตั้งต้นเท่านั้น) ปิดช่องนี้ถ้าอยากจับคู่เอง</span></span></label>
           <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
             className={cn("flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed p-10 text-center", drag ? "border-brand-2 bg-brand-faint" : "border-line")}>
             <UploadCloud size={30} className="text-brand" /><p className="text-sm font-medium">ลากไฟล์มาวางที่นี่ หรือ</p>

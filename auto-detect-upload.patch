@@ -1,0 +1,144 @@
+diff --git a/src/app/(app)/upload/page.tsx b/src/app/(app)/upload/page.tsx
+index 80e5f7e..f0b3204 100644
+--- a/src/app/(app)/upload/page.tsx
++++ b/src/app/(app)/upload/page.tsx
+@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
+ import { AlertTriangle, Check, CheckCircle2, Download, FileSpreadsheet, RefreshCw, UploadCloud } from "lucide-react";
+ import { useStore } from "@/lib/store";
+ import { roleCan } from "@/lib/queries";
+-import { autoMap, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
++import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
+ import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
+ import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
+ import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
+@@ -43,6 +43,7 @@ export default function UploadPage() {
+   const [summary, setSummary] = useState<ImportRecord | null>(null);
+   const [viewErr, setViewErr] = useState<ImportRecord | null>(null);
+   const [drag, setDrag] = useState(false);
++  const [auto, setAuto] = useState(true); // detect file type + map columns automatically
+   const fileRef = useRef<HTMLInputElement>(null);
+ 
+   const fields = FIELDS[type];
+@@ -81,7 +82,19 @@ export default function UploadPage() {
+       }
+       hdr = hdr.filter((h) => h && h.trim() !== "");
+       if (hdr.length === 0 || recs.length === 0) throw new Error("The file has no header row or no data rows.");
+-      setFileName(file.name); setHeaders(hdr); setRows(recs); setMapping(autoMap(hdr, fields)); setStep(3);
++      setFileName(file.name); setHeaders(hdr); setRows(recs);
++      const det = auto ? detectType(hdr) : null;
++      if (det) {
++        // Recognised: switch to the detected type and, when every required field is mapped, go straight to validation.
++        setType(det.type); setMapping(det.mapping);
++        const label = TYPE_INFO.find((t) => t.type === det.type)?.title ?? det.type;
++        toast(`ตรวจพบประเภทไฟล์: ${label} · จับคู่คอลัมน์ให้อัตโนมัติแล้ว กรุณาตรวจสอบก่อนยืนยัน`, "info");
++        setStep(5);
++      } else {
++        setMapping(autoMap(hdr, fields));
++        if (auto) toast("ระบบเดาประเภทไฟล์ไม่ได้ กรุณาเลือกประเภทและจับคู่คอลัมน์เอง", "info");
++        setStep(auto ? 4 : 3);
++      }
+     } catch (e) { setErr(e instanceof Error ? e.message : "Could not read the file."); }
+     finally { setBusy(false); }
+   };
+@@ -159,7 +172,7 @@ export default function UploadPage() {
+       <Card>
+         {step === 0 && (<div className="max-w-md space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ Facebook</h2>
+           <Select label="เพจ Facebook" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+-          <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<Btn variant="primary" disabled={!pageId} onClick={() => setStep(1)}>ต่อไป</Btn></div>)}
++          <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
+ 
+         {step === 1 && (<div className="max-w-3xl space-y-4"><h2 className="font-semibold">ขั้นที่ 2 · เลือกประเภทไฟล์ที่จะอัปโหลด</h2>
+           <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.map((t) => (
+@@ -169,6 +182,7 @@ export default function UploadPage() {
+           <div className="flex gap-2"><Btn onClick={() => setStep(0)}>ย้อนกลับ</Btn><Btn variant="primary" onClick={() => setStep(2)}>ต่อไป</Btn></div></div>)}
+ 
+         {step === 2 && (<div className="space-y-4"><h2 className="font-semibold">ขั้นที่ 3 · อัปโหลดไฟล์</h2>
++          <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-line p-3 text-sm"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} className="mt-1 accent-[#087a58]" /><span><span className="block font-medium">ตรวจประเภทไฟล์และจับคู่คอลัมน์อัตโนมัติ</span><span className="block text-xs text-muted">ระบบดูจากหัวคอลัมน์ ถ้าช่องที่จำเป็นครบจะข้ามไปขั้นตรวจสอบเลย (เลือกประเภทในขั้นก่อนหน้าไว้เป็นค่าตั้งต้นเท่านั้น) ปิดช่องนี้ถ้าอยากจับคู่เอง</span></span></label>
+           <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
+             className={cn("flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed p-10 text-center", drag ? "border-brand-2 bg-brand-faint" : "border-line")}>
+             <UploadCloud size={30} className="text-brand" /><p className="text-sm font-medium">ลากไฟล์มาวางที่นี่ หรือ</p>
+diff --git a/src/lib/importer.ts b/src/lib/importer.ts
+index 2f30698..3cfb35f 100644
+--- a/src/lib/importer.ts
++++ b/src/lib/importer.ts
+@@ -7,16 +7,16 @@ export interface FieldDef { key: string; label: string; required: boolean; kind:
+ const F = (key: string, label: string, required: boolean, kind: FieldDef["kind"], synonyms: string[]): FieldDef => ({ key, label, required, kind, synonyms });
+ 
+ const AD_FIELDS: FieldDef[] = [
+-  F("date", "Date", true, "date", ["day", "date", "reporting starts", "reporting_starts", "start date"]),
+-  F("campaignName", "Campaign name", true, "text", ["campaign name", "campaign"]),
+-  F("adId", "Ad ID", true, "text", ["ad id", "ad_id", "adid"]),
+-  F("adName", "Ad name", false, "text", ["ad name", "ad"]),
+-  F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)"]),
+-  F("reach", "Reach", false, "int", ["reach"]),
+-  F("impressions", "Impressions", true, "int", ["impressions"]),
+-  F("clicks", "Clicks", false, "int", ["clicks", "link clicks", "clicks (all)"]),
+-  F("messages", "Messaging conversations started", false, "int", ["messaging conversations started", "messages", "results", "new messaging contacts"]),
+-  F("purchases", "Purchases", false, "int", ["purchases", "website purchases", "purchase"]),
++  F("date", "Date", true, "date", ["day", "date", "reporting starts", "reporting_starts", "start date", "วัน", "วันที่", "วันที่เริ่มรายงาน"]),
++  F("campaignName", "Campaign name", true, "text", ["campaign name", "campaign", "ชื่อแคมเปญ", "แคมเปญ"]),
++  F("adId", "Ad ID", true, "text", ["ad id", "ad_id", "adid", "รหัสโฆษณา"]),
++  F("adName", "Ad name", false, "text", ["ad name", "ad", "ชื่อโฆษณา"]),
++  F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)", "จำนวนเงินที่ใช้จ่าย", "ยอดใช้จ่าย"]),
++  F("reach", "Reach", false, "int", ["reach", "การเข้าถึง"]),
++  F("impressions", "Impressions", true, "int", ["impressions", "การแสดงผล"]),
++  F("clicks", "Clicks", false, "int", ["clicks", "link clicks", "clicks (all)", "การคลิกลิงก์", "คลิกลิงก์"]),
++  F("messages", "Messaging conversations started", false, "int", ["messaging conversations started", "messages", "results", "new messaging contacts", "การสนทนาทางข้อความที่เริ่มต้น", "ผลลัพธ์"]),
++  F("purchases", "Purchases", false, "int", ["purchases", "website purchases", "purchase", "การซื้อ"]),
+ ];
+ const CAMPAIGN_FIELDS = AD_FIELDS.map((f) => (f.key === "adId" ? { ...f, required: false } : f));
+ 
+@@ -87,18 +87,51 @@ export const isAdsType = (t: ImportDataType) => t === "Ads Performance" || t ===
+ 
+ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F ()_]/g, "").trim(); // keep Thai letters so Thai headers can match
+ 
+-/** Best-effort mapping of file headers to system fields. Returns field.key -> header ("" = unmapped). */
++// Compare headers loosely: "Lead_Status", "lead-status" and "lead status" are the same.
++const key = (s: string) => norm(s).replace(/[_\-\s]+/g, " ").trim();
++
++/** Best-effort mapping of file headers to system fields. Returns field.key -> header ("" = unmapped).
++ *  Pass 1: exact match on a known synonym. Pass 2: the header merely *contains* a known synonym (length >= 4),
++ *  e.g. "Amount spent (THB) - total" -> spend. Pass 2 only fills fields and headers that pass 1 left unused. */
+ export function autoMap(headers: string[], fields: FieldDef[]): Record<string, string> {
+   const used = new Set<string>();
+   const out: Record<string, string> = {};
++  const hk = new Map(headers.map((h) => [h, key(h)]));
+   for (const f of fields) {
+-    const hit = headers.find((h) => !used.has(h) && f.synonyms.includes(norm(h)));
++    const syn = new Set(f.synonyms.map(key));
++    const hit = headers.find((h) => !used.has(h) && syn.has(hk.get(h)!));
+     out[f.key] = hit ?? "";
+     if (hit) used.add(hit);
+   }
++  for (const f of fields) {
++    if (out[f.key]) continue;
++    const syn = f.synonyms.map(key).filter((x) => x.length >= 4);
++    let best = ""; let bestLen = 0;
++    for (const h of headers) {
++      if (used.has(h)) continue;
++      for (const x of syn) if (hk.get(h)!.includes(x) && x.length > bestLen) { best = h; bestLen = x.length; }
++    }
++    if (best) { out[f.key] = best; used.add(best); }
++  }
+   return out;
+ }
+ 
++const DETECT_ORDER: ImportDataType[] = ["Ad-Level Performance", "Campaign Performance", "Lead Data", "Inbox Conversations", "Page Insights", "Chat Messages", "Post Comments", "Sales Performance"];
++
++/** Guess the file type from its headers. A type qualifies only if every required field maps; the best share of mapped fields wins
++ *  (ties go to DETECT_ORDER). Returns null when nothing qualifies, so the caller can ask the person to choose. */
++export function detectType(headers: string[]): { type: ImportDataType; mapping: Record<string, string> } | null {
++  let best: { type: ImportDataType; mapping: Record<string, string>; score: number } | null = null;
++  for (const type of DETECT_ORDER) {
++    const fields = FIELDS[type];
++    const mapping = autoMap(headers, fields);
++    if (fields.some((f) => f.required && !mapping[f.key])) continue;
++    const score = fields.filter((f) => mapping[f.key]).length / fields.length;
++    if (!best || score > best.score) best = { type, mapping, score };
++  }
++  return best ? { type: best.type, mapping: best.mapping } : null;
++}
++
+ export function parseNumber(raw: string): number | null {
+   const s = String(raw ?? "").trim().replace(/[฿$,\s]/g, "");
+   if (s === "" || !/^-?\d+(\.\d+)?$/.test(s)) return null;
