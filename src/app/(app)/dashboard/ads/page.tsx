@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Clock, MessageSquareOff, TrendingDown } from "lucide-react";
 import { useDash } from "@/lib/useDash";
 import { aggregate, chatQuality, derive, fmtCompact, fmtInt, fmtMoney, fmtPct, leadStats, pctChange, Num } from "@/lib/metrics";
-import { AdThumb, Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, KpiCard, Select, Skeleton, useBrief } from "@/components/ui";
+import CreativeCell from "@/components/CreativeCell";
+import { Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, KpiCard, Select, Skeleton, useBrief } from "@/components/ui";
 import { ChartCard, TimeChart } from "@/components/charts";
 import { Ad } from "@/lib/types";
 import { fmtShort, ANCHOR } from "@/lib/dates";
@@ -88,7 +89,7 @@ export default function AdsPerformance() {
   const cols: Column<Row>[] = [
     { key: "name", header: "Campaign / Ads", sort: (r) => r.ad.name, minW: 230, sticky: true, render: (r) => (
       <div className="min-w-0"><div className="font-medium text-ink">{r.ad.name}</div><div className="text-xs text-muted">{r.campaign} · {r.ad.id}</div></div>) },
-    { key: "creative", header: "Creative", render: (r) => <AdThumb hue={r.ad.creative.hue} type={r.ad.creative.type} /> },
+    { key: "creative", header: "Creative", render: (r) => <CreativeCell ad={r.ad} /> },
     { key: "reach", header: "Reach", align: "right", sort: (r) => r.reach, render: (r) => fmtInt(r.reach) },
     { key: "imp", header: "Impressions", align: "right", sort: (r) => r.impressions, render: (r) => fmtInt(r.impressions) },
     { key: "cpm", header: "CPM", align: "right", tip: "Cost per 1,000 impressions = Spend ÷ Impressions × 1,000", sort: (r) => r.cpm, render: (r) => fmtMoney(r.cpm, 1) },
@@ -193,7 +194,7 @@ function CampaignDetail({ row }: { row: Row }) {
   const ls = leadStats(D.leads.filter((l) => l.adId === row.ad.id));
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3"><AdThumb hue={row.ad.creative.hue} type={row.ad.creative.type} size={56} />
+      <div className="flex items-center gap-3"><CreativeCell ad={row.ad} size={56} />
         <div><p className="text-sm text-muted">{row.campaign} · {row.page}</p><div className="mt-1 flex gap-1.5"><Badge tone={row.ad.status === "Active" ? "green" : row.ad.status === "Paused" ? "amber" : "gray"}>{row.ad.status}</Badge><Badge>{row.ad.id}</Badge><ChatQualityBadge q={row.quality} /></div></div></div>
       <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
         {[["Spend", fmtMoney(row.spend)], ["Messages", fmtInt(row.messages)], ["Cost / msg", fmtMoney(row.costPerMsg, 1)], ["CTR", fmtPct(row.ctr, 2)], ["CPC", fmtMoney(row.cpc, 2)], ["CQC", fmtMoney(row.cqc, 0)]].map(([k, v]) => (

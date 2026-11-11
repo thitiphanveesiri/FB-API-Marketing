@@ -59,7 +59,8 @@ interface Store {
   saveUser: (u: User) => void;
   assignCampaigns: (agencyId: string, campaignIds: string[]) => void;
   // imports
-  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[], extra?: { messages?: unknown[]; comments?: unknown[] }) => Promise<boolean>;
+  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[], extra?: { messages?: unknown[]; comments?: unknown[]; users?: { user_id: string; name: string }[] }) => Promise<boolean>;
+  setCreative: (adId: string, image: string, video: string) => Promise<boolean>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -266,6 +267,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void (async () => { for (const id of ids) { if (!(await persist({ t: "settings.upsert", tab: "campaigns", row: { campaign_id: id, agency_id: agencyId } }, true))) break; } })();
     },
 
+    setCreative: async (adId, image, video) => {
+      const img = image.trim(), vid = video.trim();
+      setData((d) => ({ ...d, ads: d.ads.map((a) => (a.id === adId ? { ...a, creative: { ...a.creative, url: img || undefined, video: vid || undefined, type: vid ? "Video" : a.creative.type } } : a)) }));
+      return persist({ t: "ad.creative", id: adId, image: img, video: vid });
+    },
+
     commitImport: async (rec, perf, leads, replaceKeys, newAds = [], newCampaigns = [], insights = [], patches = [], extra = {}) => {
       const ok = await persist({
         t: "import.commit", replace: !!replaceKeys,
@@ -275,7 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         perf: perf.map((p) => ({ date: p.date, ad_id: p.adId, spend: p.spend, reach: p.reach, impressions: p.impressions, clicks: p.clicks, messages: p.messages, purchases: p.purchases })),
         leads: leads.map(leadToRow),
         insights: insights.map((i) => ({ page_id: i.pageId, date: i.date, reach: i.reach, views: i.views, engagements: i.engagements, followers: i.followers, new_followers: i.newFollowers, link_clicks: i.linkClicks })),
-        messages: extra.messages ?? [], comments: extra.comments ?? [],
+        messages: extra.messages ?? [], comments: extra.comments ?? [], users: extra.users ?? [],
         patches,
       });
       if (ok) await reloadData(true); // show exactly what the sheet now holds

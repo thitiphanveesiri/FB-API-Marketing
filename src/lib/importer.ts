@@ -143,6 +143,8 @@ export function parseNumber(raw: string): number | null {
 }
 /** Meta Business Suite writes the source ad into Labels, e.g. "Oct 31 ad id 120252274822160116". */
 export const adIdFromLabels = (labels: string): string => (String(labels ?? "").match(/ad[\s_-]*id[\s:_-]*(\d{6,})/i) ?? [])[1] ?? "";
+/** Stable id for a salesperson created from a name in a file (same name → same id on every upload). */
+export const repIdFor = (name: string): string => { let h = 5381; for (const ch of name.trim().toLowerCase()) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0; return `U-S${h.toString(36).toUpperCase()}`; };
 export type DateOrder = "dmy" | "mdy";
 const SLASH = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[T\s,].*)?$/;
 /** 31/12/2026 vs 12/31/2026: a value whose first part is > 12 can only be D/M, whose second part is > 12 can only be M/D.
@@ -201,6 +203,7 @@ export interface ValidationResult {
   perf: DailyPerf[];
   leads: Lead[];
   insights: PageInsight[];
+  newReps: { id: string; name: string }[];
   messages: { id: string; leadId: string; direction: "in" | "out"; text: string; at: string }[];
   comments: PostComment[];
   replaceInsightKeys: Set<string>;
@@ -231,7 +234,7 @@ export interface ValidateCtx {
 
 export function validate(ctx: ValidateCtx): ValidationResult {
   const fields = FIELDS[ctx.type];
-  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
+  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], newReps: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
   const get = (row: Record<string, string>, key: string) => { const h = ctx.mapping[key]; return h ? String(row[h] ?? "").trim() : ""; };
   // One date order for the whole file, decided from all mapped date columns (see detectDateOrder).
   const dateKeys = fields.filter((f) => f.kind === "date" || ["sentAt", "commentedAt", "repliedAt"].includes(f.key)).map((f) => ctx.mapping[f.key]).filter(Boolean);
@@ -240,6 +243,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
   const pdt = (v: string) => parseDateTime(v, order);
   const seen = new Set<string>();
   let aggregateWarned = false;
+  const newReps = new Map<string, { id: string; name: string }>(); // salespeople named in the file but not in the users tab → created on commit
   const campByAd = new Map<string, string>();
   const newAds = new Map<string, { adId: string; adName: string; campaignName: string }>();
   let leadNo = ctx.nextLeadNo;
@@ -297,8 +301,12 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (vals.status && !st) { res.issues.push({ row: n, message: `Unknown status "${vals.status}" — set to Not Responded`, level: "warning" }); res.warnings++; }
       const status: LeadStatus = st ?? "Not Responded";
       const quality: LeadQuality = (QUALITIES as readonly string[]).includes(status) ? (status as LeadQuality) : "Qualified";
-      const repId = vals.repName ? ctx.repsByName.get(vals.repName.toLowerCase()) ?? null : null;
-      if (vals.repName && !repId) { res.issues.push({ row: n, message: `Salesperson "${vals.repName}" not found — left unassigned`, level: "warning" }); res.warnings++; }
+      let repId = vals.repName ? ctx.repsByName.get(vals.repName.toLowerCase()) ?? null : null;
+      if (vals.repName && !repId) {
+        const k = vals.repName.toLowerCase(); let nr = newReps.get(k);
+        if (!nr) { nr = { id: repIdFor(vals.repName), name: vals.repName }; newReps.set(k, nr); res.newReps.push(nr); res.issues.push({ row: n, message: `New salesperson "${vals.repName}" will be added (name only — add an email in Settings if they need to sign in)`, level: "warning" }); res.warnings++; }
+        repId = nr.id;
+      }
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
         id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,

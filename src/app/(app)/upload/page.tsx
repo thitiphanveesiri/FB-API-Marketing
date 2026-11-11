@@ -129,6 +129,7 @@ export default function UploadPage() {
     const patches = type === "Sales Performance" ? validation.salesPatches.map((p) => ({ lead_id: p.leadId, set: { assigned_to: p.repName, ...(p.firstResponseMin != null ? { first_response_min: p.firstResponseMin } : {}), ...(p.followUps != null ? { follow_ups: p.followUps } : {}) } })) : [];
     setBusy(true);
     const ok = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches, {
+      users: validation.newReps.map((r) => ({ user_id: r.id, name: r.name })),
       messages: validation.messages.map((m) => ({ message_id: m.id, lead_id: m.leadId, direction: m.direction, text: m.text, sent_at: m.at.replace("T", " ").slice(0, 16) })),
       comments: validation.comments.map((c) => ({ comment_id: c.id, page_id: c.pageId, post_id: c.postId, commenter: c.commenter, text: c.text, commented_at: c.at.replace("T", " ").slice(0, 16), replied_at: c.repliedAt ? c.repliedAt.replace("T", " ").slice(0, 16) : "", replied_by: c.repliedBy })),
     });

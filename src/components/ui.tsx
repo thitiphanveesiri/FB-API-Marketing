@@ -428,10 +428,20 @@ export function ChatQualityBadge({ q }: { q: ChatQuality }) {
   const tone: Record<ChatQuality, Tone> = { Excellent: "green", Good: "blue", Average: "amber", Poor: "red", "No data": "gray" };
   return <Badge tone={tone[q]}>{q}</Badge>;
 }
-export function AdThumb({ hue, type, size = 40 }: { hue: number; type: string; size?: number }) {
+/** Google Drive share links don't work in <img>; turn them into the thumbnail endpoint. Anything else is used as is. */
+export function imageSrc(url?: string): string | undefined {
+  if (!url) return undefined;
+  const m = url.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^#]*&)?id=|thumbnail\?(?:[^#]*&)?id=)([\w-]+)/);
+  return m ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w800` : url;
+}
+export function AdThumb({ hue, type, size = 40, src, hasVideo }: { hue: number; type: string; size?: number; src?: string; hasVideo?: boolean }) {
+  const [bad, setBad] = useState(false);
+  const img = bad ? undefined : imageSrc(src);
   return (
-    <span className="relative inline-flex shrink-0 items-end justify-end rounded-lg" style={{ width: size, height: size, background: `linear-gradient(135deg, hsl(${hue} 55% 78%), hsl(${(hue + 40) % 360} 50% 62%))` }} title={`${type} creative (placeholder)`}>
-      <span className="m-0.5 rounded bg-surface/80 px-1 text-[9px] font-semibold text-gray-700">{type[0]}</span>
+    <span className="relative inline-flex shrink-0 items-end justify-end overflow-hidden rounded-lg" style={{ width: size, height: size, background: `linear-gradient(135deg, hsl(${hue} 55% 78%), hsl(${(hue + 40) % 360} 50% 62%))` }} title={img ? type : `${type} — ยังไม่ได้ใส่รูป/วิดีโอ`}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- links are pasted by the user and can point anywhere */}
+      {img && <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className="absolute inset-0 h-full w-full object-cover" />}
+      <span className="relative m-0.5 rounded bg-surface/80 px-1 text-[9px] font-semibold text-gray-700">{hasVideo ? "▶" : type[0]}</span>
     </span>
   );
 }

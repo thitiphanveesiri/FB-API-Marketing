@@ -25,6 +25,7 @@ function serialParts(t: string): { date: string; hh: number; mm: number } | null
 const dateOnly = (v: string) => { const t = v.trim(); if (!t) return null; const sp = serialParts(t); return sp ? sp.date : parseDate(t); };
 /** Large IDs typed as numbers in Sheets get rounded (e.g. 1.2021E+17). Detect that so the user can fix the column. */
 const idHint = (v: string) => (/^\d(\.\d+)?e\+?\d+$/i.test(v.trim()) ? " — it looks like a rounded number; format the ID columns as Plain text (Format → Number → Plain text) and paste again" : "");
+const httpsUrl = (v: string): string | undefined => (/^https:\/\//i.test(v.trim()) ? v.trim() : undefined);
 function dateTime(v: string): string | null {
   const t = v.trim(); if (!t) return null;
   const sp = serialParts(t);
@@ -109,7 +110,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
     const st = pick<AdStatus>(["Active", "Paused", "Learning", "Ended"], r.get("status"));
     if (r.get("status") && !st) warn("ads", r.n, `Unknown status "${r.get("status")}" — set to Active`);
     const ct = pick(["Image", "Video", "Carousel"] as const, r.get("creative_type")) ?? "Image";
-    ads.push({ id, name: name || id, campaignId: cid, status: st ?? "Active", creative: { type: ct, hue: hue(id) }, updatedAt: dateOnly(r.get("updated_at")) ?? "" });
+    ads.push({ id, name: name || id, campaignId: cid, status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, updatedAt: dateOnly(r.get("updated_at")) ?? "" });
   }
   const adIds = new Set(ads.map((a) => a.id));
 

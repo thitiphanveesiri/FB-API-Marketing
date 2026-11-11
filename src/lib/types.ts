@@ -110,7 +110,7 @@ export interface Ad {
   name: string;
   campaignId: string;
   status: AdStatus;
-  creative: { type: "Image" | "Video" | "Carousel"; hue: number };
+  creative: { type: "Image" | "Video" | "Carousel"; hue: number; url?: string; video?: string };
   updatedAt: string;
 }
 export interface DailyPerf {

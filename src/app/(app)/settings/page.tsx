@@ -124,8 +124,9 @@ function UsersTab({ canManage }: { canManage: boolean }) {
     if (!edit) return;
     const e: Record<string, string> = {};
     if (edit.name.trim().length < 2) e.name = "Enter a name";
-    if (!emailOk(edit.email)) e.email = "Enter a valid email";
-    if (data.users.some((u) => u.id !== edit.id && u.email.toLowerCase() === edit.email.toLowerCase())) e.email = "Email already in use";
+    const needsEmail = edit.role !== "Sales Representative"; // a salesperson can be a name only (assigned leads, no sign-in)
+    if (edit.email.trim() ? !emailOk(edit.email) : needsEmail) e.email = needsEmail ? "Enter a valid email" : "Enter a valid email or leave it blank";
+    if (edit.email.trim() && data.users.some((u) => u.id !== edit.id && u.email.toLowerCase() === edit.email.toLowerCase())) e.email = "Email already in use";
     if (edit.role === "Agency" && !edit.agencyId) e.agency = "Choose the agency this user belongs to";
     setErr(e); if (Object.keys(e).length) return;
     saveUser({ ...edit, agencyId: edit.role === "Agency" ? edit.agencyId : undefined }); toast(isNew ? "User added" : "User updated"); setEdit(null);
@@ -141,7 +142,7 @@ function UsersTab({ canManage }: { canManage: boolean }) {
     <Card title="Users" subtitle="People who can sign in with Google. Saved to the users tab of your sheet; the email must match their Google account." right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `U-${Date.now().toString(36)}`, name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
       <DataTable columns={cols} rows={data.users} rowKey={(u) => u.id} searchText={(u) => `${u.name} ${u.email} ${u.role}`} searchPlaceholder="Search users…" caption="Users" />
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add user" : "Edit user"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
-        {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label="Email *" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} />
+        {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label={edit.role === "Sales Representative" ? "Email (optional — only needed to sign in)" : "Email *"} value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} />
           <Select label="Role" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as Role })} options={ROLES.map((r) => ({ value: r, label: r }))} />
           {edit.role === "Agency" && <><Select label="Agency *" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v })} options={[{ value: "", label: "— select —" }, ...data.agencies.map((a) => ({ value: a.id, label: a.name }))]} />{err.agency && <p className="text-xs text-red-500">{err.agency}</p>}</>}</div>}
       </Modal>

@@ -29,8 +29,9 @@ export type Op =
   | { t: "lead.set"; id: string; set: Record<string, unknown>; log?: { from?: string; to?: string; text?: string } }
   | { t: "lead.note"; id: string; text: string }
   | { t: "eval.add"; row: Record<string, unknown> }
+  | { t: "ad.creative"; id: string; image: string; video: string }
   | { t: "settings.upsert"; tab: string; row: Record<string, unknown> }
-  | { t: "import.commit"; record: Record<string, unknown>; replace: boolean; perf: unknown[]; leads: unknown[]; ads: unknown[]; campaigns: unknown[]; insights: unknown[]; messages?: unknown[]; comments?: unknown[]; patches: { lead_id: string; set: Record<string, unknown> }[] };
+  | { t: "import.commit"; record: Record<string, unknown>; replace: boolean; perf: unknown[]; leads: unknown[]; ads: unknown[]; campaigns: unknown[]; insights: unknown[]; messages?: unknown[]; comments?: unknown[]; users?: { user_id: string; name: string }[]; patches: { lead_id: string; set: Record<string, unknown> }[] };
 
 export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
   const lead = (id: string) => { const l = ds.leads.find((x) => x.id === id); if (!l) throw new Denied(404, `Lead ${id} not found`); return l; };
@@ -66,6 +67,12 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       const row = clean("evaluations", op.row); lead(String(row.lead_id));
       return [{ tab: "evaluations", keyCols: ["eval_id"], mode: "insert", rows: [{ ...row, reviewer_id: me.id, at: now }] }];
     }
+    case "ad.creative": {
+      if (!roleCan.upload(me.role)) throw new Denied(403, "Your role cannot change ad creatives");
+      const ad = ds.ads.find((a) => a.id === str(op.id, "id")); if (!ad) throw new Denied(404, "Ad not found");
+      const url = (v: unknown, what: string) => { const s = String(v ?? "").trim(); if (s && (!/^https:\/\//i.test(s) || s.length > 800)) throw new Denied(400, `${what} must be a full https:// link`); return s; };
+      return [{ tab: "ads", keyCols: ["ad_id"], mode: "updateOnly", rows: [{ ad_id: ad.id, creative_url: url(op.image, "Image link"), video_url: url(op.video, "Video link") }] }];
+    }
     case "settings.upsert": {
       if (!roleCan.manageSettings(me.role)) throw new Denied(403, "Only an Administrator can change settings");
       const keys: Record<string, string> = { users: "user_id", pages: "page_id", agencies: "agency_id", campaigns: "campaign_id" };
@@ -78,6 +85,8 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       for (const a of [op.perf, op.leads, op.ads, op.campaigns, op.insights, op.messages ?? [], op.comments ?? []]) if (!Array.isArray(a) || a.length > MAX_ROWS) throw new Denied(400, `Too many rows (max ${MAX_ROWS} per upload)`);
       const m = (tab: string, rows: unknown[]) => rows.map((r) => clean(tab, r));
       const w: Write[] = [];
+      // Salespeople named in the file: created as name-only Sales Representatives (no email → cannot sign in)
+      if (op.users?.length) w.push({ tab: "users", keyCols: ["user_id"], mode: "insert", rows: op.users.slice(0, 200).map((u) => ({ user_id: str(u.user_id, "user_id"), name: str(u.name, "name").slice(0, 120), email: "", role: "Sales Representative", agency_id: "", active: true })) });
       if (op.campaigns.length) w.push({ tab: "campaigns", keyCols: ["campaign_id"], mode: "insert", rows: m("campaigns", op.campaigns) });
       if (op.ads.length) w.push({ tab: "ads", keyCols: ["ad_id"], mode: "insert", rows: m("ads", op.ads) });
       if (op.perf.length) w.push({ tab: "ad_performance", keyCols: ["ad_id", "date"], mode: op.replace ? "upsert" : "insert", rows: m("ad_performance", op.perf) });
