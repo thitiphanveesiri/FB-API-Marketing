@@ -15,9 +15,17 @@ const FILTERS: { id: F; label: string }[] = [
 ];
 
 export default function InboxPage() {
-  const { data, user, markRead, sendMessage, patchLead, addNote, toast, filters } = useStore();
+  const { data, user, markRead, sendMessage, patchLead, addNote, toast, filters, reloadData, source } = useStore();
   const act = useLeadActions();
   const [f, setF] = useState<F>("all");
+  // "Live": Meta's webhook writes new messages into the sheet within seconds; this re-reads the sheet while the tab is open and visible.
+  // 30 s keeps well inside Google Sheets' read quota (every viewer shares one service account).
+  const [live, setLive] = useState(true);
+  useEffect(() => {
+    if (!live || source !== "sheets") return;
+    const id = setInterval(() => { if (document.visibilityState === "visible") void reloadData(true); }, 30_000);
+    return () => clearInterval(id);
+  }, [live, source, reloadData]);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string | null>(null);
   const [mode, setMode] = useState<"reply" | "note">("reply");
@@ -63,7 +71,8 @@ export default function InboxPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Inbox</h1>
         <Badge tone="green">From Google Sheet</Badge>
-        <span className="text-xs text-muted">Messenger API is not connected. Chats come from your sheet; replies typed here are not sent to customers and are not saved. Internal notes are saved.</span>
+        <button onClick={() => setLive((v) => !v)} aria-pressed={live} title="Re-read the sheet every 30 seconds while this tab is open" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", live ? "border-brand-2 bg-brand-faint text-brand" : "border-line text-muted")}><span className={cn("h-1.5 w-1.5 rounded-full", live ? "animate-pulse bg-brand" : "bg-gray-300")} />{live ? "Live · refreshes every 30 s" : "Live off"}</button>
+        <span className="text-xs text-muted">New messages arrive through the Facebook webhook. Replies typed here are not sent to customers (answer in Business Suite) and are not saved. Internal notes are saved.</span>
       </div>
       <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_1fr_300px]">
         {/* LEFT */}
