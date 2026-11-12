@@ -51,7 +51,11 @@ const CHATS_PER_CALL = 8, POSTS_PER_CALL = 4, MSG_PAGES = 5;
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const f = i.fetchFn ?? ((u: string) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>), base = i.base ?? "https://graph.facebook.com";
-  const now = i.now ?? new Date(), since = now.getTime() - i.days * 86400000, fb = i.cfg.fbPageId, tok = i.cfg.token;
+  const now = i.now ?? new Date(), since = now.getTime() - i.days * 86400000, tok = i.cfg.token;
+  // Ask Meta which page this token belongs to: catches the two usual set-up mistakes (a user token instead of a Page token, or the wrong FB_PAGE_ID)
+  const who = (await graph("me", { fields: "id,name,category" }, tok, f, base).catch((e) => { if (e instanceof FbError && !e.rateLimited) throw new FbError(`โทเคนใช้ไม่ได้: ${e.message} — สร้างโทเคนเพจใหม่`, false, e.code); throw e; })) as unknown as { id?: string; name?: string; category?: string };
+  if (!who.id || !who.category) throw new FbError(`FB_PAGE_TOKEN เป็นโทเคนของผู้ใช้${who.name ? ` (${who.name})` : ""} ไม่ใช่โทเคนของเพจ — ใน Graph API Explorer รัน me/accounts แล้วคัดลอก access_token ของเพจที่ต้องการมาใช้แทน`);
+  const fb = who.id; // always the page the token really belongs to (a mismatched FB_PAGE_ID is harmless then)
   const counts: SyncCounts = { chats: 0, newLeads: 0, messages: 0, comments: 0 };
   const writes: SyncWrite[] = [];
   const ms = (iso: string) => new Date(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).getTime();
