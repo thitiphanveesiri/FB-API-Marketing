@@ -1,5 +1,5 @@
 import { connection, NextResponse } from "next/server";
-import { loadChannels } from "@/lib/channels";
+import { defaultVerifyToken, loadChannels } from "@/lib/channels";
 import { buildWrites, parseEvents, signatureOk } from "@/lib/fbWebhook";
 import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
 import { readTabs } from "@/lib/googleSheets";
@@ -15,7 +15,9 @@ export async function GET(req: Request) {
   await connection();
   const q = new URL(req.url).searchParams;
   if (q.get("hub.mode") !== "subscribe") return text("bad request", 400);
-  const t = q.get("hub.verify_token") ?? "", ch = (await loadChannels(true).catch(() => [])).filter((c) => c.channel === "facebook" && c.active && c.verifyToken);
+  const t = q.get("hub.verify_token") ?? "", def = defaultVerifyToken();
+  if (t && def && t === def) return text(q.get("hub.challenge") ?? "", 200); // works before any page is connected
+  const ch = (await loadChannels(true).catch(() => [])).filter((c) => c.channel === "facebook" && c.active && c.verifyToken);
   if (t && ch.some((c) => c.verifyToken === t)) return text(q.get("hub.challenge") ?? "", 200);
   return text("forbidden", 403);
 }

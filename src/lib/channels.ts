@@ -1,5 +1,5 @@
 // SERVER ONLY. Chat-channel connections (tokens live in the Google Sheet "channels" tab; they are never sent to the browser).
-import { randomBytes } from "crypto";
+import { createHmac, randomBytes } from "crypto";
 import { readTabs } from "./googleSheets";
 import { upsertRows } from "./sheetsWrite";
 import { fbConfigs, type FbPageCfg } from "./fbSync";
@@ -32,6 +32,14 @@ export const toPublic = (c: Channel): PublicChannel => ({
 });
 
 export const newVerifyToken = () => `vt_${randomBytes(12).toString("hex")}`;
+
+/** A verify token that exists BEFORE any page is connected, so it can be pasted into Meta first. Same value on every deploy: FB_WEBHOOK_VERIFY_TOKEN
+ *  if set, otherwise derived from AUTH_SECRET (never shown as the secret itself). "" when neither is configured. */
+export function defaultVerifyToken(): string {
+  const env = process.env.FB_WEBHOOK_VERIFY_TOKEN?.trim(); if (env) return env;
+  const s = process.env.AUTH_SECRET?.trim(); if (!s) return "";
+  return `vt_${createHmac("sha256", s).update("fb-webhook-verify").digest("hex").slice(0, 24)}`;
+}
 
 export async function saveChannel(c: Partial<Channel> & { channelId: string; channel: ChannelKind }) {
   const row: Record<string, string | boolean> = { channel_id: c.channelId, channel: c.channel, updated_at: new Date().toISOString() };

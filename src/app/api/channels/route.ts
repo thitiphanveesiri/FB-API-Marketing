@@ -1,7 +1,8 @@
 import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
-import { loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
+import { defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
+import { inspectToken, TokenError } from "@/lib/fbToken";
 import { upsertRows } from "@/lib/sheetsWrite";
 
 export const maxDuration = 30;
@@ -15,11 +16,12 @@ export async function GET(req: Request) {
   const g = await adminOnly(req, false); if ("err" in g) return g.err;
   try {
     const list = (await loadChannels(true)).map(toPublic);
-    return NextResponse.json({ ok: true, channels: list, webhookUrls: { facebook: `${origin(req)}/api/webhook/facebook` } }, noStore);
+    const verifyToken = list.find((c) => c.channel === "facebook" && c.active && c.verifyToken)?.verifyToken || defaultVerifyToken();
+    return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: `${origin(req)}/api/webhook/facebook` } }, noStore);
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect"; channel?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string }
+interface Body { action?: "save" | "disconnect"; channel?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
@@ -43,16 +45,23 @@ export async function POST(req: Request) {
 
     let existing = all.find((x) => x.channelId === b.channelId);
     let accountId = existing?.accountId ?? "", name = existing?.name ?? "", subscribed: boolean | null = null, subscribeMessage = "";
+    let pageToken = token;
     if (token) {
-      // ask Meta which page this token belongs to — catches user tokens and typos before anything is saved
-      const r = await fetch(`${GRAPH()}/me?${new URLSearchParams({ fields: "id,name,category", access_token: token })}`, { cache: "no-store" });
-      const j = (await r.json().catch(() => ({}))) as { id?: string; name?: string; category?: string; error?: { message?: string } };
-      if (!r.ok || j.error) return fail(400, `Meta ไม่ยอมรับโทเคนนี้: ${scrub(j.error?.message ?? `HTTP ${r.status}`)}`);
-      if (!j.id || !j.category) return fail(400, `โทเคนนี้เป็นของผู้ใช้${j.name ? ` (${j.name})` : ""} ไม่ใช่ของเพจ — ใน Graph API Explorer เลือก "Get Page Access Token" แล้วเลือกเพจ จากนั้นคัดลอกโทเคนใหม่`);
+      // ask Meta what this token is. A Page token is used as is; a USER token is exchanged for the token of the page it manages.
+      let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      let j: { id: string; name: string };
+      if (info.kind === "page") j = info;
+      else {
+        const who = info.name ? ` (${info.name})` : "";
+        if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
+        const pick = info.pages.length === 1 ? info.pages[0] : info.pages.find((p) => p.id === b.fbPageId);
+        if (!pick) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} ที่ดูแลหลายเพจ เลือกเพจ Facebook ที่จะเชื่อม`, { pages: info.pages.map((p) => ({ id: p.id, name: p.name })) });
+        pageToken = pick.token; j = pick;
+      }
       accountId = j.id; name = j.name ?? ""; existing = all.find((x) => x.channelId === `facebook:${accountId}`) ?? existing;
       // subscribe the page to this app's webhook (needs the token to have pages_messaging)
       try {
-        const s = await fetch(`${GRAPH()}/${accountId}/subscribed_apps`, { method: "POST", cache: "no-store", body: new URLSearchParams({ subscribed_fields: "messages,message_echoes", access_token: token }) });
+        const s = await fetch(`${GRAPH()}/${accountId}/subscribed_apps`, { method: "POST", cache: "no-store", body: new URLSearchParams({ subscribed_fields: "messages,message_echoes", access_token: pageToken }) });
         const sj = (await s.json().catch(() => ({}))) as { success?: boolean; error?: { message?: string } };
         subscribed = s.ok && sj.success === true; if (!subscribed) subscribeMessage = scrub(sj.error?.message ?? `HTTP ${s.status}`);
       } catch { subscribed = false; subscribeMessage = "เชื่อมต่อ Meta ไม่สำเร็จ"; }
@@ -60,7 +69,7 @@ export async function POST(req: Request) {
     if (!accountId) return fail(400, "วาง Page Access Token ก่อน");
     const channelId = `facebook:${accountId}`;
     if (!secret && !existing?.appSecret) return fail(400, "ใส่ App Secret ด้วย (Meta App → Settings → Basic) — ใช้ตรวจว่าข้อความมาจาก Meta จริง");
-    await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: token, appSecret: secret, verifyToken: existing?.verifyToken || newVerifyToken(), sheetPageId, active: true });
+    await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret: secret, verifyToken: existing?.verifyToken || defaultVerifyToken() || newVerifyToken(), sheetPageId, active: true });
     invalidateCache();
     return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage }, noStore);
   } catch (e) {

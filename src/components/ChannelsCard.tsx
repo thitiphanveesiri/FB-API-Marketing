@@ -19,14 +19,15 @@ function CopyBox({ label, value }: { label: string; value: string }) {
 /** Administrators only: connect chat channels with an access token (stored in the Google Sheet) and a webhook. */
 export default function ChannelsCard() {
   const { data, user, reloadData, toast } = useStore();
-  const [list, setList] = useState<Ch[] | null>(null); const [hook, setHook] = useState("");
+  const [list, setList] = useState<Ch[] | null>(null); const [hook, setHook] = useState(""); const [verify, setVerify] = useState("");
+  const [choices, setChoices] = useState<{ id: string; name: string }[]>([]); const [fbPageId, setFbPageId] = useState("");
   const [token, setToken] = useState(""); const [secret, setSecret] = useState(""); const [pageId, setPageId] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // channelId being updated, "" = new
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
   const admin = user.role === "Administrator";
 
   const load = useCallback(async () => {
-    try { const j = await (await fetch("/api/channels", { cache: "no-store" })).json(); if (j.ok) { setList(j.channels); setHook(j.webhookUrls.facebook); } else setList([]); } catch { setList([]); }
+    try { const j = await (await fetch("/api/channels", { cache: "no-store" })).json(); if (j.ok) { setList(j.channels); setHook(j.webhookUrls.facebook); setVerify(j.verifyToken || ""); } else setList([]); } catch { setList([]); }
   }, []);
   useEffect(() => { if (admin) void load(); }, [admin, load]);
   useEffect(() => { if (!pageId) setPageId(data.pages.find((p) => p.active)?.id ?? ""); }, [data.pages, pageId]);
@@ -38,10 +39,10 @@ export default function ChannelsCard() {
   const save = async () => {
     setBusy(true); setMsg("");
     try {
-      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: pageId }) });
+      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: pageId, fbPageId: fbPageId || undefined }) });
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
-      if (!j.ok) { setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
-      setToken(""); setSecret(""); setEditing(null); await load(); await reloadData(true);
+      if (!j.ok) { setChoices(Array.isArray(j.pages) ? j.pages : []); setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
+      setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setEditing(null); await load(); await reloadData(true);
       toast(j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`, j.subscribed === false ? "info" : undefined);
     } catch { setMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
   };
@@ -67,33 +68,38 @@ export default function ChannelsCard() {
             <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setPageId(c.sheetPageId || pageId); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>))}
 
+        <div className="max-w-xl space-y-3 rounded-xl bg-gray-50 p-3">
+          <h3 className="text-sm font-semibold">ข้อมูล Webhook สำหรับใส่ใน Meta</h3>
+          <CopyBox label="Callback URL" value={hook} />
+          {(fb[0]?.verifyToken || verify)
+            ? <CopyBox label="Verify Token" value={fb[0]?.verifyToken || verify} />
+            : <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่มี Verify Token — ตั้งค่า <b>AUTH_SECRET</b> หรือ <b>FB_WEBHOOK_VERIFY_TOKEN</b> ใน Vercel (Environment Variables) แล้ว Redeploy</p>}
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+            <li>developers.facebook.com → แอปของคุณ → เพิ่มผลิตภัณฑ์ <b>Messenger</b> → <b>Messenger API Settings → Webhooks</b> (หรือ Webhooks → เลือก <b>Page</b>)</li>
+            <li>กด <b>Add Callback URL</b> วาง Callback URL กับ Verify Token ด้านบน แล้ว <b>Verify and Save</b></li>
+            <li>ติ๊ก subscribe ฟิลด์ <b>messages</b> และ <b>message_echoes</b> (echoes = ข้อความที่เซลล์ตอบ)</li>
+            <li>กด <b>Add or remove Pages</b> เลือกเพจของคุณ (หรือกด “บันทึกและเชื่อมต่อ” ด้านบน ระบบจะสมัครเพจเข้าแอปให้เอง)</li>
+            <li>ทดสอบ: ให้ใครสักคนส่งข้อความหาเพจ แล้วดูว่าขึ้นในหน้า Inbox ภายในไม่กี่วินาที</li>
+          </ol>
+          <p className="text-xs text-muted">Webhook ได้เฉพาะข้อความ “ตั้งแต่ตอนนี้เป็นต้นไป” — ของเก่าใช้ปุ่มดึงย้อนหลังด้านล่าง · ถ้าแอป Meta ยังเป็นโหมด Development จะได้รับเฉพาะข้อความจากคนที่มี role ในแอป (Admin/Developer/Tester)</p>
+        </div>
+
         {form ? (
           <div className="max-w-xl space-y-3 rounded-xl border border-line p-3">
             <h3 className="text-sm font-semibold">{editing ? "แก้ไขการเชื่อมต่อ Facebook" : "เชื่อมเพจ Facebook"}</h3>
             <label className="block text-xs font-medium text-muted">Page Access Token{editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
+              <span className="block font-normal">วางโทเคนของเพจ หรือโทเคนผู้ใช้จาก Graph API Explorer ก็ได้ — ระบบจะแลกเป็นโทเคนของเพจให้เอง</span>
               <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
             <label className="block text-xs font-medium text-muted">App Secret (Meta App → Settings → Basic){editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
               <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} className={`${inp} mt-1`} /></label>
             <Select label="เก็บแชทเข้าเพจในระบบ" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+            {choices.length > 0 && <Select label="เลือกเพจ Facebook ที่จะเชื่อม" value={fbPageId} onChange={setFbPageId} options={[{ value: "", label: "— เลือกเพจ —" }, ...choices.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))]} />}
             {msg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{msg}</p>}
-            <div className="flex gap-2"><Btn variant="primary" onClick={save} disabled={busy || (!editing && !token)}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{editing !== null && <Btn onClick={() => { setEditing(null); setMsg(""); }}>ยกเลิก</Btn>}</div>
+            <div className="flex gap-2"><Btn variant="primary" onClick={save} disabled={busy || (!editing && !token) || (choices.length > 0 && !fbPageId)}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{editing !== null && <Btn onClick={() => { setEditing(null); setMsg(""); }}>ยกเลิก</Btn>}</div>
             <p className="text-xs text-amber-700">⚠ Token และ App Secret จะถูกเก็บในแท็บ <b>channels</b> ของ Google Sheet — ใครก็ตามที่เปิดชีตได้จะเห็น ควรตั้งการแชร์ชีตเป็น “จำกัด” (Restricted) เฉพาะคนที่ไว้ใจ ระบบจะไม่ส่งค่าเหล่านี้กลับมาที่เบราว์เซอร์</p>
           </div>
         ) : <Btn size="sm" onClick={() => { setEditing(""); }}>+ เชื่อมเพจเพิ่ม</Btn>}
 
-        {fb.length > 0 && (
-          <div className="max-w-xl space-y-3 rounded-xl bg-gray-50 p-3">
-            <h3 className="text-sm font-semibold">ตั้งค่า Webhook ที่ Meta (ทำครั้งเดียว)</h3>
-            <CopyBox label="Callback URL" value={hook} />
-            <CopyBox label="Verify Token" value={fb[0].verifyToken} />
-            <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-              <li>developers.facebook.com → แอปของคุณ → <b>Messenger → Settings → Webhooks</b> (หรือ Webhooks → Page)</li>
-              <li>กด <b>Add Callback URL</b> วาง Callback URL กับ Verify Token ด้านบน แล้ว Verify and Save</li>
-              <li>ติ๊ก subscribe ฟิลด์ <b>messages</b> และ <b>message_echoes</b> (echoes = ข้อความที่เซลล์ตอบ)</li>
-              <li>ทดสอบ: ให้ใครสักคนส่งข้อความหาเพจ แล้วดูว่าขึ้นในหน้า Inbox ภายในไม่กี่วินาที</li>
-            </ol>
-            <p className="text-xs text-muted">Webhook ได้เฉพาะข้อความ “ตั้งแต่ตอนนี้เป็นต้นไป” — ของเก่าใช้ปุ่มดึงย้อนหลังด้านล่าง</p>
-          </div>)}
       </div>
     </Card>
   );
