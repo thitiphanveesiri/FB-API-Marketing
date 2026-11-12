@@ -99,3 +99,7 @@ Upload page → **เชื่อมช่องทางแชท** (Administra
 
 Security: tokens/secrets are stored in the Google Sheet tab `channels` — **anyone who can open the sheet can read them**; keep sharing "Restricted". The browser only ever receives the last 4 characters. `/api/webhook/facebook` is public and every POST is verified with `X-Hub-Signature-256` (HMAC-SHA256, App Secret).
 Optional: set `APP_URL` if the Callback URL shown is not your public domain.
+
+## 6e. Follow-up page ("ติดตาม")
+
+Built from the chat messages already in the sheet (no extra setup): median first-reply time, share answered within 15 min, chats by time band and hour, a queue of silent customers (our message was last; threshold 3 h / 1 day / 3 days), customers who came back after going quiet, and a hot / warm / cold guess plus interest tags. The keyword lists live at the top of `src/lib/followup.ts` (`INTENT_WORDS`, `SERVICE_TAGS`) — edit them to match your services. It only lists who to follow up; it does not send messages.
