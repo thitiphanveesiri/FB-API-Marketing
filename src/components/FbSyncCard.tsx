@@ -51,7 +51,7 @@ export default function FbSyncCard() {
   return (
     <Card title="ดึงข้อมูลจากเพจ Facebook โดยตรง" subtitle="ได้แชททีละข้อความ + คอมเมนต์ พร้อมเวลา ใช้คิดคะแนน SLA โดยไม่ต้องอัปโหลดไฟล์">
       {pages.length === 0 ? (
-        <p className="text-sm text-muted">ยังไม่ได้ตั้งค่า: เพิ่มตัวแปร <b>FB_PAGE_ID</b> และ <b>FB_PAGE_TOKEN</b> ใน Vercel (Settings → Environment Variables) แล้ว Redeploy — ดูขั้นตอนใน docs/DEPLOY.md หัวข้อ 6c</p>
+        <p className="text-sm text-muted">ยังไม่ได้เชื่อมเพจ: วาง Access Token ในการ์ด “เชื่อมช่องทางแชท” ด้านบน หรือเพิ่มตัวแปร <b>FB_PAGE_ID</b> และ <b>FB_PAGE_TOKEN</b> ใน Vercel (Settings → Environment Variables) แล้ว Redeploy — ดูขั้นตอนใน docs/DEPLOY.md หัวข้อ 6c</p>
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">

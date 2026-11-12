@@ -6,11 +6,13 @@ import { AlertTriangle, Check, CheckCircle2, Download, FileSpreadsheet, RefreshC
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import FbSyncCard from "@/components/FbSyncCard";
+import ChannelsCard from "@/components/ChannelsCard";
 import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
 import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
 
+const PICKER_TYPES: ImportDataType[] = ["Ads Performance", "Ad-Level Performance", "Campaign Performance", "Page Insights"]; // chats / leads come from the connected channels
 const TYPE_INFO: { type: ImportDataType; title: string; from: string; hint: string }[] = [
   { type: "Inbox Conversations", title: "แชท/ลูกค้าจาก Inbox เพจ", from: "Meta Business Suite → กล่องข้อความ (หรือไฟล์ส่งออกจากเครื่องมือแชทที่คุณใช้)", hint: "ชื่อลูกค้า วันที่ทัก ข้อความล่าสุด โฆษณาต้นทาง → กลายเป็นการ์ดบน Board" },
   { type: "Ad-Level Performance", title: "สถิติโฆษณา (รายโฆษณา)", from: "Ads Manager → Reports → Export (breakdown: Day, ระดับ Ad)", hint: "ค่าโฆษณา การเข้าถึง การแสดงผล ข้อความที่เริ่มต้น รายวัน รายโฆษณา" },
@@ -33,7 +35,7 @@ export default function UploadPage() {
   const { data, user, commitImport, toast, confirm } = useStore();
   const [step, setStep] = useState(0);
   const [pageId, setPageId] = useState(data.pages.find((p) => p.active)?.id ?? "");
-  const [type, setType] = useState<ImportDataType>("Inbox Conversations");
+  const [type, setType] = useState<ImportDataType>("Ad-Level Performance");
   const [fileName, setFileName] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, string>[]>([]);
@@ -84,7 +86,9 @@ export default function UploadPage() {
       hdr = hdr.filter((h) => h && h.trim() !== "");
       if (hdr.length === 0 || recs.length === 0) throw new Error("The file has no header row or no data rows.");
       setFileName(file.name); setHeaders(hdr); setRows(recs);
-      const det = auto ? detectType(hdr) : null;
+      const det0 = auto ? detectType(hdr) : null;
+      if (det0 && !PICKER_TYPES.includes(det0.type)) throw new Error("ไฟล์นี้เป็นข้อมูลแชท/ลีด — หน้านี้รับเฉพาะไฟล์โฆษณา/Insights ส่วนแชทให้เชื่อมช่องทางด้านบน (Access Token + Webhook)");
+      const det = det0;
       if (det) {
         // Recognised: switch to the detected type and, when every required field is mapped, go straight to validation.
         setType(det.type); setMapping(det.mapping);
@@ -165,6 +169,7 @@ export default function UploadPage() {
       <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Upload</h1><Badge tone="blue">ข้อมูลเพจ Facebook · CSV / XLSX</Badge>
         <Btn size="sm" className="ml-auto" onClick={() => download(`sample-${type.toLowerCase().replace(/[^a-z]+/g, "-")}.csv`, SAMPLES[type])}><Download size={14} /> ดาวน์โหลดไฟล์ตัวอย่าง</Btn></div>
 
+      <ChannelsCard />
       <FbSyncCard />
 
       <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
@@ -179,7 +184,7 @@ export default function UploadPage() {
           <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
 
         {step === 1 && (<div className="max-w-3xl space-y-4"><h2 className="font-semibold">ขั้นที่ 2 · เลือกประเภทไฟล์ที่จะอัปโหลด</h2>
-          <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.map((t) => (
+          <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.filter((t) => PICKER_TYPES.includes(t.type)).map((t) => (
             <label key={t.type} className={cn("flex cursor-pointer gap-2 rounded-xl border p-3 text-sm", type === t.type ? "border-brand-2 bg-brand-faint" : "border-line hover:bg-gray-50")}>
               <input type="radio" name="dtype" checked={type === t.type} onChange={() => setType(t.type)} className="mt-1 accent-[#087a58]" />
               <span><span className="block font-medium">{t.title}</span><span className="mt-0.5 block text-xs text-muted">{t.hint}</span><span className="mt-1 block text-[11px] text-muted">ดาวน์โหลดจาก: {t.from}</span></span></label>))}</div>

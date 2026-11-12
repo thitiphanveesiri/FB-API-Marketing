@@ -86,3 +86,16 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 
 ## 8. Testing without Google (developers)
 `SHEETS_LOCAL_JSON=/path/to/tabs.json npm start` reads tabs from a JSON file (`{ "pages": [["page_id","name"],…], … }`) instead of Google. `npx tsx scripts/sheet-roundtrip.ts` checks the mapper; `npx tsx scripts/make-sheet-template.ts` regenerates the workbooks.
+
+
+## 6d. Connect chat channels (Access Token + Webhook)
+
+Upload page → **เชื่อมช่องทางแชท** (Administrators only). Facebook Messenger is live; LINE and WhatsApp are planned (the `channels` tab already has a `channel` column).
+
+1. Meta App → Messenger → generate a **Page Access Token** (must be a Page token; permissions `pages_messaging`, `pages_read_engagement`, `pages_manage_metadata`).
+2. Paste the token and the **App Secret** (App → Settings → Basic) into the card, pick the page in the dashboard, save. The app checks the token against Meta and subscribes the page to `messages` + `message_echoes`.
+3. In Meta App → Webhooks (Page) paste the **Callback URL** and **Verify Token** shown in the card, then subscribe `messages` and `message_echoes`.
+4. New messages are written to `messages` / `leads` within seconds. History before connecting: use the backfill button below the card.
+
+Security: tokens/secrets are stored in the Google Sheet tab `channels` — **anyone who can open the sheet can read them**; keep sharing "Restricted". The browser only ever receives the last 4 characters. `/api/webhook/facebook` is public and every POST is verified with `X-Hub-Signature-256` (HMAC-SHA256, App Secret).
+Optional: set `APP_URL` if the Callback URL shown is not your public domain.
