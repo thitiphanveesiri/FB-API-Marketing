@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { AlertTriangle, Check, CheckCircle2, Download, FileSpreadsheet, RefreshCw, UploadCloud } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
+import FbSyncCard from "@/components/FbSyncCard";
 import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
@@ -163,6 +164,8 @@ export default function UploadPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Upload</h1><Badge tone="blue">ข้อมูลเพจ Facebook · CSV / XLSX</Badge>
         <Btn size="sm" className="ml-auto" onClick={() => download(`sample-${type.toLowerCase().replace(/[^a-z]+/g, "-")}.csv`, SAMPLES[type])}><Download size={14} /> ดาวน์โหลดไฟล์ตัวอย่าง</Btn></div>
+
+      <FbSyncCard />
 
       <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
         {STEPS.map((s, i) => (

@@ -65,6 +65,19 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 - แชท/คอมเมนต์ที่ยังไม่ตอบ นับเป็นช้าเมื่อเกินเวลา; ค่าต่าง ๆ แก้ที่ `SLA_RULES` ใน `src/lib/sla.ts`
 - ผู้ดูแลของแชท = คอลัมน์ `assigned_to` ของ lead; แชทที่ยังไม่มีผู้ดูแลไม่ถูกนับให้ใคร
 
+## 6c. ดึงแชท/คอมเมนต์จากเพจ Facebook โดยตรง (ปุ่มในหน้า Upload)
+ปุ่ม **"ดึงข้อมูลตอนนี้"** (เฉพาะ Administrator) เรียก Graph API ของ Meta จากเซิร์ฟเวอร์ แล้วเขียนแชททีละข้อความลง `messages`, ลีดใหม่ลง `leads`, คอมเมนต์ลง `post_comments`
+
+ตัวแปรใน Vercel (Settings → Environment Variables แล้ว Redeploy):
+- `FB_PAGE_ID` — id ของเพจ Facebook
+- `FB_PAGE_TOKEN` — Page Access Token อายุยาว (ขอผ่าน Graph API Explorer: โทเคนผู้ใช้ → Extend ใน Access Token Debugger → `me/accounts`)
+- `FB_SHEET_PAGE_ID` (ไม่บังคับ) — page_id ในแท็บ `pages` ที่จะเก็บข้อมูล
+- หลายเพจ: ใช้ `FB_PAGES` = `[{"fbPageId":"123","token":"EAA...","sheetPageId":"PG-1"}]` แทน
+
+สิทธิ์ที่โทเคนต้องมี: `pages_show_list`, `pages_messaging`, `pages_read_engagement`, `pages_read_user_content`
+
+พฤติกรรม: ดึงเป็นชุดเล็ก ๆ ต่อครั้ง (ไม่ชนเวลาจำกัดของ Vercel) · ข้อความเดิมไม่ซ้ำ · คอมเมนต์ที่ได้รับการตอบทีหลังจะอัปเดตเวลาตอบเมื่อดึงซ้ำ · แชทจับคู่ลีดเดิมด้วยชื่อลูกค้า ถ้าไม่พบ/ชื่อซ้ำ จะสร้างลีดใหม่ (id = id บทสนทนา) · โทเคนไม่ถูกส่งไปที่เบราว์เซอร์ · Facebook ระบุผู้ตอบเป็น "เพจ" ไม่ระบุตัวเซลล์ คะแนนจึงนับให้เซลล์ที่ถูกมอบหมายแชทนั้น
+
 ## 7. Before real customer data goes live
 - Known limits of the sign-in: no rate limiting or brute-force protection (Google handles the password); the ID token is read straight from Google's token endpoint over TLS rather than signature-verified; a removed user can still hold a valid cookie for up to ~1 minute (blocked as soon as the sheet cache refreshes); sessions can't be revoked individually (rotate `AUTH_SECRET` to sign everyone out).
 - Without Google sign-in configured, the demo build is open to anyone with the URL. Never connect real data without it.
