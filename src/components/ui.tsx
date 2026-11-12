@@ -414,12 +414,12 @@ export function DataTable<T>({
 import { LeadQuality, LeadStatus, statusTh } from "@/lib/types";
 import { ChatQuality } from "@/lib/metrics";
 export const STATUS_TONE: Record<LeadStatus, Tone> = {
-  "Not Responded": "gray", "Very Poor": "red", Average: "amber", Qualified: "green",
-  "Appointment Booked": "blue", "Connection Created": "violet", New: "blue", "In-Process": "amber", Intake: "violet", Converted: "green",
+  "Not Responded": "red", "Very Poor": "red", Average: "green", Qualified: "green",
+  "Appointment Booked": "green", "Connection Created": "violet", New: "blue", "In-Process": "amber", Intake: "violet", Converted: "green",
 };
 export const STATUS_COLOR: Record<LeadStatus, string> = {
-  "Not Responded": "#9ca3af", "Very Poor": "#dc6b6b", Average: "#e0a431", Qualified: "#10b981",
-  "Appointment Booked": "#3b82f6", "Connection Created": "#8b5cf6", New: "#60a5fa", "In-Process": "#f59e0b", Intake: "#a78bfa", Converted: "#087a58",
+  "Not Responded": "#f87171", "Very Poor": "#dc2626", Average: "#6ee7b7", Qualified: "#10b981",
+  "Appointment Booked": "#059669", "Connection Created": "#8b5cf6", New: "#60a5fa", "In-Process": "#f59e0b", Intake: "#a78bfa", Converted: "#087a58",
 };
 export function StatusBadge({ status }: { status: LeadStatus | LeadQuality }) {
   return <Badge tone={STATUS_TONE[status]}>{statusTh(status)}</Badge>;
