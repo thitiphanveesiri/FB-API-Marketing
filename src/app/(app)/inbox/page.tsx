@@ -15,7 +15,7 @@ const FILTERS: { id: F; label: string }[] = [
 ];
 
 export default function InboxPage() {
-  const { data, user, markRead, sendMessage, patchLead, addNote, toast, filters, reloadData, source } = useStore();
+  const { data, user, markRead, sendMessage, sendReply, patchLead, addNote, toast, filters, reloadData, source } = useStore();
   const act = useLeadActions();
   const [f, setF] = useState<F>("all");
   // "Live": Meta's webhook writes new messages into the sheet within seconds; this re-reads the sheet while the tab is open and visible.
@@ -59,8 +59,16 @@ export default function InboxPage() {
   const pageName = (id: string) => data.pages.find((p) => p.id === id)?.name ?? id;
   const ad = lead?.adId ? data.ads.find((a) => a.id === lead.adId) : null;
 
-  const send = () => {
-    if (!lead || (!text.trim() && !attach)) return;
+  const [sending, setSending] = useState(false);
+  const real = source === "sheets"; // connected to the sheet: replies go to Messenger for real
+  const send = async () => {
+    if (!lead || (!text.trim() && !attach) || sending) return;
+    if (mode === "reply" && real) {
+      if (!text.trim()) return;
+      setSending(true); const r = await sendReply(lead.id, text.trim()); setSending(false);
+      if (!r.ok) { toast(r.message, "error"); return; }
+      setText(""); toast("ส่งข้อความถึงลูกค้าแล้ว", "success"); return;
+    }
     sendMessage(lead.id, text.trim(), mode, attach ?? undefined);
     setText(""); setAttach(null);
     toast(mode === "note" ? "Internal note saved" : "Message added to simulated conversation", mode === "note" ? "success" : "info");
@@ -72,7 +80,7 @@ export default function InboxPage() {
         <h1 className="text-xl font-semibold">Inbox</h1>
         <Badge tone="green">From Google Sheet</Badge>
         <button onClick={() => setLive((v) => !v)} aria-pressed={live} title="Re-read the sheet every 30 seconds while this tab is open" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", live ? "border-brand-2 bg-brand-faint text-brand" : "border-line text-muted")}><span className={cn("h-1.5 w-1.5 rounded-full", live ? "animate-pulse bg-brand" : "bg-gray-300")} />{live ? "Live · refreshes every 30 s" : "Live off"}</button>
-        <span className="text-xs text-muted">New messages arrive through the Facebook webhook. Replies typed here are not sent to customers (answer in Business Suite) and are not saved. Internal notes are saved.</span>
+        <span className="text-xs text-muted">New messages arrive through the Facebook webhook. Replies sent here go to the customer on Messenger (within 24 h of their last message) and are recorded under your name for SLA. Replies sent from Business Suite are recorded without a sender. Internal notes are saved.</span>
       </div>
       <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_1fr_300px]">
         {/* LEFT */}
@@ -120,7 +128,7 @@ export default function InboxPage() {
                       {m.direction === "note" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase"><StickyNote size={11} /> Internal note · only your team sees this</p>}
                       {m.text}
                       {m.attachment && <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs">{m.attachment.kind === "image" ? "🖼" : "📎"} {m.attachment.name}</div>}
-                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>{fmtDateTime(m.at)}{m.simulated && " · not sent"}</p>
+                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>{fmtDateTime(m.at)}{m.simulated && " · not sent"}{m.direction === "out" && m.sentBy && ` · ${data.users.find((u) => u.id === m.sentBy)?.name ?? "—"}`}</p>
                     </div>
                   </div>
                 ))}
@@ -129,16 +137,16 @@ export default function InboxPage() {
               {canEdit ? (
                 <div className={cn("border-t border-line p-3", mode === "note" && "bg-amber-50")}>
                   <div className="mb-2 flex gap-1 text-xs">
-                    <button onClick={() => setMode("reply")} className={cn("rounded-md px-2.5 py-1 font-medium", mode === "reply" ? "bg-brand text-white" : "bg-gray-100 text-muted")}>Reply (simulated)</button>
+                    <button onClick={() => setMode("reply")} className={cn("rounded-md px-2.5 py-1 font-medium", mode === "reply" ? "bg-brand text-white" : "bg-gray-100 text-muted")}>{real ? "ตอบลูกค้า (ส่งจริง)" : "Reply (simulated)"}</button>
                     <button onClick={() => setMode("note")} className={cn("rounded-md px-2.5 py-1 font-medium", mode === "note" ? "bg-amber-500 text-white" : "bg-gray-100 text-muted")}>Internal note</button>
                   </div>
                   {attach && <p className="mb-1 flex items-center gap-1 text-xs text-muted">📎 {attach.name} <button className="text-red-500" onClick={() => setAttach(null)}>remove</button></p>}
                   <div className="flex items-end gap-2">
                     <input ref={fileRef} type="file" hidden onChange={(e) => { const fl = e.target.files?.[0]; if (fl) setAttach({ name: fl.name, kind: fl.type.startsWith("image/") ? "image" : "file" }); e.target.value = ""; }} />
-                    <Btn variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={mode === "note"}><Paperclip size={18} /></Btn>
+                    <Btn variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={mode === "note" || real} title={real ? "ส่งไฟล์แนบจากระบบยังไม่รองรับ" : undefined}><Paperclip size={18} /></Btn>
                     <TextArea className="flex-1" rows={2} placeholder={mode === "note" ? "Write an internal note…" : "Type a message…"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Message"
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-                    <Btn variant="primary" onClick={send} disabled={!text.trim() && !attach}><Send size={16} /> {mode === "note" ? "Save" : "Send"}</Btn>
+                    <Btn variant="primary" onClick={send} disabled={(!text.trim() && !attach) || sending}><Send size={16} /> {mode === "note" ? "Save" : sending ? "กำลังส่ง…" : "Send"}</Btn>
                   </div>
                 </div>
               ) : <p className="border-t border-line p-3 text-center text-sm text-muted">Your role has read-only access.</p>}

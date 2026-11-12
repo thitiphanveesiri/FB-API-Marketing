@@ -103,3 +103,8 @@ Optional: set `APP_URL` if the Callback URL shown is not your public domain.
 ## 6e. Follow-up page ("ติดตาม")
 
 Built from the chat messages already in the sheet (no extra setup): median first-reply time, share answered within 15 min, chats by time band and hour, a queue of silent customers (our message was last; threshold 3 h / 1 day / 3 days), customers who came back after going quiet, and a hot / warm / cold guess plus interest tags. The keyword lists live at the top of `src/lib/followup.ts` (`INTENT_WORDS`, `SERVICE_TAGS`) — edit them to match your services. It only lists who to follow up; it does not send messages.
+
+## 6f. Replying from the Inbox + who answered (SLA)
+
+With a Messenger page connected (§6d), the Inbox reply box sends to the customer for real (Send API). Rules: only within 24 h of the customer's last message (Meta's rule); Sales Representatives can reply only to leads assigned to them; text only (no attachments yet). Each reply is saved in `messages` with `sent_by` = the user who sent it, and SLA credits the reply to that salesperson. Replies typed in Business Suite arrive through the webhook with no sender, so SLA credits the lead's assigned rep. A manager/admin replying does not take a rep's chat away: it stays with the assigned rep.
+The page token needs `pages_messaging`. The `messages` tab gets a `sent_by` column automatically.

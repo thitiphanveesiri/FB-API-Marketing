@@ -133,6 +133,7 @@ export interface Message {
   at: string; // ISO local datetime
   attachment?: { name: string; kind: "image" | "file" };
   simulated: boolean;
+  sentBy?: string; // user id of the person who sent this "out" message from the dashboard
 }
 export interface StatusChange {
   at: string;

@@ -30,6 +30,7 @@ export function minutesBetween(a: string, b: string): number {
 
 export interface ChatEvent {
   leadId: string; leadName: string; repId: string | null; pageId: string;
+  repliedBy: string | null; // salesperson who sent the first reply from the dashboard (null = replied elsewhere / not yet)
   inAt: string; outAt: string | null; minutes: number; // minutes waited (to now if still unanswered)
   band: Band; late: boolean; open: boolean;
   deduct: number;      // points taken off the rep
@@ -49,17 +50,19 @@ export interface SlaResult { events: ChatEvent[]; commentEvents: CommentEvent[];
 export interface SlaInput { leads: Lead[]; messages: Record<string, Message[]>; comments: PostComment[]; pages: FbPage[]; users: User[]; start: string; end: string; now: string; pageId?: string; repId?: string }
 
 /** Turn one conversation into reply-time events. A customer message starts the clock; follow-ups before a reply don't restart it. */
-export function chatEvents(lead: Lead, msgs: Message[], now: string): ChatEvent[] {
+/** `isRep` decides whether a replier counts as a salesperson: a manager answering for a rep does not take the rep's chat away from them. */
+export function chatEvents(lead: Lead, msgs: Message[], now: string, isRep: (id: string) => boolean = () => true): ChatEvent[] {
   const out: ChatEvent[] = []; let waiting: string | null = null;
-  const push = (inAt: string, outAt: string | null) => {
+  const push = (inAt: string, outAt: string | null, by: string | null = null) => {
     const band = bandOf(inAt); const minutes = minutesBetween(inAt, outAt ?? now);
     const late = minutes > SLA_RULES.chatMinutes;
-    out.push({ leadId: lead.id, leadName: lead.name, repId: lead.repId, pageId: lead.pageId, inAt, outAt, minutes: Math.max(0, minutes), band, late, open: outAt == null,
+    const replier = by && isRep(by) ? by : null;
+    out.push({ leadId: lead.id, leadName: lead.name, repId: replier ?? lead.repId, repliedBy: replier, pageId: lead.pageId, inAt, outAt, minutes: Math.max(0, minutes), band, late, open: outAt == null,
       deduct: late && band === "work" ? SLA_RULES.chatPenalty : 0, lateStat: late && band === "travel", nightReply: band === "night" && outAt != null });
   };
   for (const m of [...msgs].sort((a, b) => a.at.localeCompare(b.at))) {
     if (m.direction === "in") { if (!waiting) waiting = m.at; }
-    else if (m.direction === "out" && waiting) { push(waiting, m.at); waiting = null; }
+    else if (m.direction === "out" && waiting) { push(waiting, m.at, m.sentBy ?? null); waiting = null; }
   }
   if (waiting) push(waiting, null);
   return out;
@@ -74,10 +77,10 @@ export function commentEvent(c: PostComment, now: string): CommentEvent {
 export function computeSla(i: SlaInput): SlaResult {
   const inRange = (iso: string) => iso.slice(0, 10) >= i.start && iso.slice(0, 10) <= i.end;
   const reps = i.users.filter((u) => u.role === "Sales Representative" && u.active && (!i.repId || i.repId === "all" || u.id === i.repId));
-  const events = i.leads.filter((l) => l.valid && (!i.pageId || i.pageId === "all" || l.pageId === i.pageId))
-    .flatMap((l) => chatEvents(l, i.messages[l.id] ?? [], i.now)).filter((e) => inRange(e.inAt));
-  const commentEvents = i.comments.filter((c) => inRange(c.at) && (!i.pageId || i.pageId === "all" || c.pageId === i.pageId)).map((c) => commentEvent(c, i.now));
   const allReps = i.users.filter((u) => u.role === "Sales Representative" && u.active);
+  const events = i.leads.filter((l) => l.valid && (!i.pageId || i.pageId === "all" || l.pageId === i.pageId))
+    .flatMap((l) => chatEvents(l, i.messages[l.id] ?? [], i.now, (id) => allReps.some((r) => r.id === id))).filter((e) => inRange(e.inAt));
+  const commentEvents = i.comments.filter((c) => inRange(c.at) && (!i.pageId || i.pageId === "all" || c.pageId === i.pageId)).map((c) => commentEvent(c, i.now));
   const teamOf = (pageId: string) => { const t = i.pages.find((p) => p.id === pageId)?.teamIds ?? []; return t.length ? allReps.filter((r) => t.includes(r.id)) : allReps; };
 
   const rows: RepSla[] = reps.map((r) => {

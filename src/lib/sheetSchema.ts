@@ -35,7 +35,7 @@ export const SHEET_TABS: SheetTab[] = [
     C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text") ] },
   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
-    C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any") ] },
+    C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any"), C("sent_by", "→ users.user_id of the salesperson who sent an 'out' message from the dashboard (blank = sent elsewhere)") ] },
   { tab: "lead_log", required: false, purpose: "History of stage changes and internal notes per lead (written by the app)", cols: [
     C("lead_id", "→ leads.lead_id", true), C("at", "YYYY-MM-DD HH:MM", true), C("kind", "status | note", true), C("from", "Previous status"), C("to", "New status"), C("by", "Who did it"), C("text", "Note text / reason") ] },
   { tab: "evaluations", required: false, purpose: "Quality reviews of conversations (written by the app)", cols: [
