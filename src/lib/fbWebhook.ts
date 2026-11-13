@@ -11,7 +11,7 @@ export function signatureOk(raw: string, header: string | null, secret: string):
 }
 
 export interface FbEvent { pageId: string; customerId: string; mid: string; out: boolean; text: string; at: number }
-interface Payload { object?: string; entry?: { id?: string; messaging?: { sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number; message?: { mid?: string; text?: string; is_echo?: boolean; attachments?: unknown[] } }[] }[] }
+interface Payload { object?: string; entry?: { id?: string; messaging?: { sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number; message?: { mid?: string; text?: string; is_echo?: boolean; sticker_id?: number; attachments?: { payload?: { sticker_id?: number } }[] } }[] }[] }
 
 /** Only real messages: skips read receipts / deliveries / postbacks. Echo = the page (a person or the Inbox app) sent it. */
 export function parseEvents(p: Payload): FbEvent[] {
@@ -20,7 +20,7 @@ export function parseEvents(p: Payload): FbEvent[] {
   for (const e of p.entry ?? []) for (const m of e.messaging ?? []) {
     const msg = m.message; if (!msg?.mid || !e.id) continue;
     const echo = !!msg.is_echo, customer = echo ? m.recipient?.id : m.sender?.id; if (!customer) continue;
-    out.push({ pageId: e.id, customerId: customer, mid: msg.mid, out: echo, text: (msg.text || (msg.attachments?.length ? "[ไฟล์แนบ]" : "")).slice(0, 2000), at: m.timestamp ?? Date.now() });
+    out.push({ pageId: e.id, customerId: customer, mid: msg.mid, out: echo, text: (msg.text || (msg.sticker_id || msg.attachments?.some((a) => a.payload?.sticker_id) ? "[สติ๊กเกอร์]" : msg.attachments?.length ? "[ไฟล์แนบ]" : "")).slice(0, 2000), at: m.timestamp ?? Date.now() });
   }
   return out;
 }

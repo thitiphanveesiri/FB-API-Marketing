@@ -86,6 +86,14 @@ export default function FollowupPage() {
           </div>
         </Card>
 
+        <Card title={`แชทค้าง (ลูกค้ารอเกิน ${SLA_RULES.staleHours} ชั่วโมง)`} subtitle="ระบบหาให้อัตโนมัติ ไม่ต้องย้อนเปิดดูแชท · ข้อความปิดบทสนทนา เช่น ขอบคุณ/โอเค/สติกเกอร์ ไม่นับเป็นแชทค้าง" right={<Badge tone={res.stale.length ? "red" : "green"}>{res.stale.length} แชท</Badge>}>
+          {res.stale.length === 0 ? <EmptyState title="ไม่มีแชทค้าง" hint="ลูกค้าทุกคนที่ทักมาได้รับการตอบภายในเวลา" /> : (
+            <ul className="divide-y divide-line text-sm">{res.stale.slice(0, 30).map((e) => (
+              <li key={`${e.leadId}-${e.inAt}`} className="flex flex-wrap items-center gap-2 py-2"><b>{e.leadName}</b><span className="text-muted">{repName(e.repId)} · {pageName(e.pageId)}</span>
+                {e.holiday && <Badge tone="gray">วันหยุด ไม่หักแต้ม</Badge>}
+                <span className="ml-auto text-muted">ลูกค้าทักเมื่อ {e.inAt.slice(0, 10)} {e.inAt.slice(11, 16)} · รอ {hrs(Math.floor(e.minutes / 60))}</span></li>))}</ul>)}
+        </Card>
+
         <Card title="ลูกค้าที่ควรติดตาม" subtitle="เราส่งข้อความล่าสุดแล้วลูกค้าเงียบ · ลีดที่นัดแล้วหรือปิดแล้วไม่นับ · เรียงจากลูกค้าที่พร้อมที่สุดก่อน"
           right={<Select value={temp} onChange={(v) => setTemp(v as "all" | Temp)} options={[{ value: "all", label: `ทั้งหมด (${res.silent.length})` }, { value: "hot", label: `ร้อน (${res.silent.filter((s) => s.temp === "hot").length})` }, { value: "warm", label: `อุ่น (${res.silent.filter((s) => s.temp === "warm").length})` }, { value: "cold", label: `เย็น (${res.silent.filter((s) => s.temp === "cold").length})` }]} />}>
           <DataTable columns={cols} rows={rows} rowKey={(r) => r.lead.id} searchText={(r) => `${r.lead.name} ${r.lastText}`} searchPlaceholder="ค้นหาชื่อหรือข้อความ" pageSize={10} defaultSort={{ key: "t", dir: "asc" }}

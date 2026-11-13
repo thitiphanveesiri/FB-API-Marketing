@@ -9,7 +9,27 @@ export const SLA_RULES = {
   basePoints: 100,        // starting score, for display only
   workStart: 10 * 60, workEnd: 19 * 60,      // 10:00–19:00 → penalties apply
   morningStart: 8 * 60, eveningEnd: 22 * 60, // 08:00–10:00 and 19:00–22:00 → commute: stats only
+  holidayWeekdays: [2],  // 0 = Sunday … 2 = Tuesday: the company's day off — nothing is deducted for customers who write that day
+  staleHours: 3,         // a customer message still unanswered after this long is flagged as a stale chat
 } as const;
+
+/** True when the (local) date of this stamp is a day off: shown in the statistics but never deducted. */
+export function isHoliday(iso: string): boolean {
+  const day = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))).getUTCDay();
+  return (SLA_RULES.holidayWeekdays as readonly number[]).includes(day);
+}
+
+export const STICKER_TEXT = "[สติ๊กเกอร์]";
+const CLOSING = /^(?:(?:ขอบคุณ|ขอบใจ|โอเคร?|โอเค|ตกลง|รับทราบ|เข้าใจแล้ว|ได้เลย|ได้|เรียบร้อย|เดี๋ยวติดต่อกลับ|แล้วจะติดต่อกลับ|แล้วจะทักไป|ไว้ติดต่อ(?:กลับ)?|บาย|ok|okay|thanks?|thank ?you|thx|bye|ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|เลย|มาก|ๆ)+)$/i;
+/** A customer message that only ends the conversation (thanks / ok / sticker / emoji): it must not start the reply clock or count as a stale chat. */
+export function isClosingMessage(text: string): boolean {
+  const t = text.trim();
+  if (!t || t === STICKER_TEXT) return t === STICKER_TEXT;
+  const plain = t.replace(/[\s.!?,~…\-_()]+/g, "");
+  if (!plain) return true;
+  if (!/[\p{L}\p{N}]/u.test(plain)) return true; // only emoji / symbols (👍 ❤️ …)
+  return plain.length <= 40 && CLOSING.test(plain);
+}
 
 export type Band = "work" | "travel" | "night";
 export const BAND_TH: Record<Band, string> = { work: "ช่วงหักคะแนน (10:00–19:00)", travel: "ช่วงเดินทาง (08:00–10:00, 19:00–22:00)", night: "ช่วงดึก (22:00–08:00)" };
@@ -33,11 +53,12 @@ export interface ChatEvent {
   repliedBy: string | null; // salesperson who sent the first reply from the dashboard (null = replied elsewhere / not yet)
   inAt: string; outAt: string | null; minutes: number; // minutes waited (to now if still unanswered)
   band: Band; late: boolean; open: boolean;
+  holiday: boolean;    // customer wrote on a day off → statistic only
   deduct: number;      // points taken off the rep
   lateStat: boolean;   // late in a commute band → statistic only
   nightReply: boolean; // customer wrote in the night band and a reply happened → statistic only
 }
-export interface CommentEvent { comment: PostComment; minutes: number; open: boolean; late: boolean; deduct: number }
+export interface CommentEvent { comment: PostComment; minutes: number; open: boolean; late: boolean; deduct: number; holiday: boolean }
 
 export interface RepSla {
   repId: string; name: string;
@@ -57,11 +78,11 @@ export function chatEvents(lead: Lead, msgs: Message[], now: string, isRep: (id:
     const band = bandOf(inAt); const minutes = minutesBetween(inAt, outAt ?? now);
     const late = minutes > SLA_RULES.chatMinutes;
     const replier = by && isRep(by) ? by : null;
-    out.push({ leadId: lead.id, leadName: lead.name, repId: replier ?? lead.repId, repliedBy: replier, pageId: lead.pageId, inAt, outAt, minutes: Math.max(0, minutes), band, late, open: outAt == null,
-      deduct: late && band === "work" ? SLA_RULES.chatPenalty : 0, lateStat: late && band === "travel", nightReply: band === "night" && outAt != null });
+    out.push({ leadId: lead.id, leadName: lead.name, repId: replier ?? lead.repId, repliedBy: replier, pageId: lead.pageId, inAt, outAt, minutes: Math.max(0, minutes), band, late, open: outAt == null, holiday: isHoliday(inAt),
+      deduct: late && band === "work" && !isHoliday(inAt) ? SLA_RULES.chatPenalty : 0, lateStat: late && band === "travel", nightReply: band === "night" && outAt != null });
   };
   for (const m of [...msgs].sort((a, b) => a.at.localeCompare(b.at))) {
-    if (m.direction === "in") { if (!waiting) waiting = m.at; }
+    if (m.direction === "in") { if (!waiting && !isClosingMessage(m.text)) waiting = m.at; }
     else if (m.direction === "out" && waiting) { push(waiting, m.at, m.sentBy ?? null); waiting = null; }
   }
   if (waiting) push(waiting, null);
@@ -71,7 +92,7 @@ export function chatEvents(lead: Lead, msgs: Message[], now: string, isRep: (id:
 export function commentEvent(c: PostComment, now: string): CommentEvent {
   const minutes = Math.max(0, minutesBetween(c.at, c.repliedAt ?? now));
   const late = minutes > SLA_RULES.commentMinutes;
-  return { comment: c, minutes, open: !c.repliedAt, late, deduct: late && bandOf(c.at) === "work" ? SLA_RULES.commentPenalty : 0 };
+  return { comment: c, minutes, open: !c.repliedAt, late, deduct: late && bandOf(c.at) === "work" && !isHoliday(c.at) ? SLA_RULES.commentPenalty : 0, holiday: isHoliday(c.at) };
 }
 
 export function computeSla(i: SlaInput): SlaResult {

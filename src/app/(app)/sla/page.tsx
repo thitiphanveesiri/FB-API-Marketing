@@ -69,6 +69,7 @@ export default function SlaPage() {
         <ul className="grid gap-2 text-sm md:grid-cols-2">
           <li className="flex gap-2"><Timer size={16} className="mt-0.5 shrink-0 text-brand-2" /><span><b>10:00–19:00</b> ตอบแชทเกิน {SLA_RULES.chatMinutes} นาที → หัก {SLA_RULES.chatPenalty} แต้ม ต่อแชท ต่อครั้ง ต่อเพจ (หักทุกครั้งที่ตอบช้า)</span></li>
           <li className="flex gap-2"><TrafficCone size={16} className="mt-0.5 shrink-0 text-amber-500" /><span><b>08:00–10:00 และ 19:00–22:00</b> (เดินทาง) ตอบเกิน {SLA_RULES.chatMinutes} นาที → ไม่หักคะแนน เก็บเป็นสถิติตอบล่าช้า</span></li>
+          <li className="flex gap-2"><TrafficCone size={16} className="mt-0.5 shrink-0 text-gray-400" /><span><b>วันอังคาร (วันหยุด)</b> ไม่นำมาคิดหักคะแนนทั้งแชทและคอมเมนต์ เก็บเป็นสถิติเท่านั้น · ข้อความปิดบทสนทนาของลูกค้า (ขอบคุณ/โอเค/สติกเกอร์) ไม่เริ่มนับเวลา</span></li>
           <li className="flex gap-2"><Moon size={16} className="mt-0.5 shrink-0 text-violet-500" /><span><b>22:00–08:00</b> ไม่หักคะแนน หากมีการตอบ เก็บเป็นสถิติการตอบแชทของเซลล์</span></li>
           <li className="flex gap-2"><Timer size={16} className="mt-0.5 shrink-0 text-brand-2" /><span><b>คอมเมนต์ใต้โพสต์</b> (เฉพาะ 10:00–19:00) ตอบเกิน {SLA_RULES.commentMinutes} นาที → หัก {SLA_RULES.commentPenalty} แต้ม จากเซลล์ทุกคนในทีมของเพจนั้น</span></li>
         </ul>
