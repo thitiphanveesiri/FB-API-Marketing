@@ -7,6 +7,7 @@ import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import FbSyncCard from "@/components/FbSyncCard";
 import ChannelsCard from "@/components/ChannelsCard";
+import AdsSyncCard from "@/components/AdsSyncCard";
 import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
@@ -171,7 +172,9 @@ export default function UploadPage() {
 
       <ChannelsCard />
       <FbSyncCard />
+      <AdsSyncCard />
 
+      <p className="text-sm text-muted"><b>อัปโหลดไฟล์โฆษณา/Insights (สำรอง)</b> — ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้ เช่น โทเคนหมดอายุ</p>
       <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
         {STEPS.map((s, i) => (
           <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>

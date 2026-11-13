@@ -1,0 +1,524 @@
+diff --git a/src/app/(app)/board/page.tsx b/src/app/(app)/board/page.tsx
+index 93b02a7..b85ccb9 100644
+--- a/src/app/(app)/board/page.tsx
++++ b/src/app/(app)/board/page.tsx
+@@ -7,7 +7,8 @@ import { useLeadActions } from "@/lib/useLeadActions";
+ import { roleCan } from "@/lib/queries";
+ import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, Facebook } from "@/components/ui";
+ import LeadDrawer from "@/components/LeadDrawer";
+-import { BOARD_COLUMNS, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
++import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
++import { BOARD_COLUMNS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
+ import { ANCHOR, fmtShort, NOW_ISO, relTime } from "@/lib/dates";
+ 
+ const COLUMN_HELP: Record<LeadQuality, string> = {
+@@ -15,6 +16,12 @@ const COLUMN_HELP: Record<LeadQuality, string> = {
+   Qualified: "ตรงกลุ่ม มีความตั้งใจจริง", "Appointment Booked": "นัดวันเข้าใช้บริการได้แล้ว", "Connection Created": "ได้ข้อมูลติดต่อ สร้างคอนเนกชันใหม่แล้ว",
+ };
+ /** Which column a chat sits in: its stage if that is a chat type, otherwise (sales-stage leads) its quality grade. */
++// Column background: red = lost / no answer, green = the chat is going well. "Connection Created" keeps the neutral grey.
++const COLUMN_TONE: Record<LeadQuality, string> = {
++  "Not Responded": "border-red-200 bg-red-50", "Very Poor": "border-red-200 bg-red-50",
++  "Average": "border-emerald-200 bg-emerald-50", "Qualified": "border-emerald-200 bg-emerald-50", "Appointment Booked": "border-emerald-200 bg-emerald-50",
++  "Connection Created": "border-line bg-gray-50/70",
++};
+ const columnOf = (l: Lead): LeadQuality => ((BOARD_COLUMNS as readonly string[]).includes(l.status) ? (l.status as LeadQuality) : l.quality);
+ 
+ function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
+@@ -27,7 +34,7 @@ function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
+     <div className={cn("rounded-xl border border-line bg-surface p-3 text-left shadow-card", dragging && "rotate-1 shadow-pop ring-2 ring-brand-2")}>
+       <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
+       <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
+-      <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray"><Facebook size={10} /> {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
++      <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+       <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
+         <span className="flex items-center gap-1">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] rounded-full border border-dashed border-gray-300" />}{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span>
+         <span>{relTime(lead.lastContactAt, NOW_ISO)}</span>
+@@ -52,7 +59,7 @@ function Column({ status, leads, onOpen, enabled }: { status: LeadQuality; leads
+   const overdue = leads.filter((l) => l.followUpDate && l.followUpDate < ANCHOR).length;
+   const unassigned = leads.filter((l) => !l.repId).length;
+   return (
+-    <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border bg-gray-50/70 transition-colors", isOver ? "border-brand-2 bg-brand-faint" : "border-line")} aria-label={statusTh(status)}>
++    <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border transition-colors", isOver ? "border-brand-2 bg-brand-faint" : COLUMN_TONE[status])} aria-label={statusTh(status)}>
+       <header className="border-b border-line px-3 py-2.5">
+         <div className="flex items-center justify-between"><h3 className="flex items-center gap-1.5 text-sm font-semibold"><span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[status] }} />{statusTh(status)}</h3><span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold tabnum ring-1 ring-line">{leads.length}</span></div>
+         <p className="mt-0.5 text-[11px] text-muted">{COLUMN_HELP[status]}</p>
+@@ -72,19 +79,22 @@ export default function Board() {
+   const act = useLeadActions();
+   const [q, setQ] = useState("");
+   const [rep, setRep] = useState("all");
++  const [ch, setCh] = useState<ChatChannel | "all">("all");
+   const [active, setActive] = useState<Lead | null>(null);
+   const [openId, setOpenId] = useState<string | null>(null);
+   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }));
+   const canEdit = roleCan.editLeads(user.role);
+ 
++  const scoped = useMemo(() => data.leads.filter((l) => l.valid && !l.dropped
++    && (user.role !== "Sales Representative" || l.repId === user.id)
++    && (filters.pageId === "all" || l.pageId === filters.pageId)), [data.leads, user, filters.pageId]);
++  const perChannel = useMemo(() => countByChannel(scoped), [scoped]);
+   const leads = useMemo(() => {
+     const needle = q.trim().toLowerCase();
+-    return data.leads.filter((l) => l.valid && !l.dropped
+-      && (user.role !== "Sales Representative" || l.repId === user.id)
+-      && (filters.pageId === "all" || l.pageId === filters.pageId)
++    return scoped.filter((l) => (ch === "all" || channelOf(l) === ch)
+       && (rep === "all" || (rep === "none" ? !l.repId : l.repId === rep))
+       && (!needle || `${l.name} ${l.id} ${l.adId ?? ""}`.toLowerCase().includes(needle)));
+-  }, [data.leads, q, rep, user, filters.pageId]);
++  }, [scoped, q, rep, ch]);
+ 
+   const grouped = useMemo(() => {
+     const m = Object.fromEntries(BOARD_COLUMNS.map((s) => [s, [] as Lead[]])) as Record<LeadQuality, Lead[]>;
+@@ -110,6 +120,7 @@ export default function Board() {
+           {user.role !== "Sales Representative" && <Select value={rep} onChange={setRep} options={[{ value: "all", label: "เซลล์ทุกคน" }, { value: "none", label: "ยังไม่มีผู้ดูแล" }, ...data.users.filter((u) => u.role === "Sales Representative").map((u) => ({ value: u.id, label: u.name }))]} />}
+         </div>
+       </div>
++      <ChannelFilter value={ch} onChange={setCh} counts={perChannel} />
+       <p className="text-xs text-muted">ลากการ์ดด้วยไอคอนจับ (⋮⋮) ไปวางในกล่องที่ต้องการ หรือเปิดการ์ดแล้วเปลี่ยนสถานะจากเมนู การย้ายที่มีความเสี่ยงจะขอให้ยืนยันก่อน และทุกการย้ายถูกบันทึกลง Google Sheet {!canEdit && "· บทบาทของคุณดูได้อย่างเดียว"}</p>
+       {data.leads.length === 0 && <p className="rounded-xl border border-dashed border-line bg-surface px-4 py-6 text-center text-sm text-muted">ยังไม่มีแชทในระบบ — ไปที่หน้า <b>Upload</b> เพื่อนำเข้าข้อมูลแชท/ลูกค้าจากเพจ Facebook</p>}
+       <DndContext sensors={sensors} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>
+diff --git a/src/app/(app)/inbox/page.tsx b/src/app/(app)/inbox/page.tsx
+index e0a5c4b..cec49cb 100644
+--- a/src/app/(app)/inbox/page.tsx
++++ b/src/app/(app)/inbox/page.tsx
+@@ -6,7 +6,8 @@ import { useLeadActions } from "@/lib/useLeadActions";
+ import { roleCan } from "@/lib/queries";
+ import { Avatar, Badge, Btn, EmptyState, Facebook, Select, SearchBox, StatusBadge, TextArea, TextInput, cn, hueOf } from "@/components/ui";
+ import { fmtDate, fmtDateTime, NOW_ISO, relTime } from "@/lib/dates";
+-import { Lead, LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
++import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
++import { CHANNELS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
+ import { ANCHOR } from "@/lib/dates";
+ 
+ type F = "all" | "unread" | "mine" | "unassigned" | "follow";
+@@ -27,6 +28,8 @@ export default function InboxPage() {
+     return () => clearInterval(id);
+   }, [live, source, reloadData]);
+   const [q, setQ] = useState("");
++  const [ch, setCh] = useState<ChatChannel | "all">("all");
++  const [sending, setSending] = useState(false);
+   const [sel, setSel] = useState<string | null>(null);
+   const [mode, setMode] = useState<"reply" | "note">("reply");
+   const [text, setText] = useState("");
+@@ -38,16 +41,20 @@ export default function InboxPage() {
+   const canEdit = roleCan.editLeads(user.role);
+ 
+   const mine = (l: Lead) => (user.role === "Sales Representative" ? l.repId === user.id : true);
++  const visible = useMemo(
++    () => data.leads.filter((l) => !l.dropped && l.valid && mine(l) && (filters.pageId === "all" || l.pageId === filters.pageId)),
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++    [data.leads, user.id, filters.pageId]);
++  const perChannel = useMemo(() => countByChannel(visible), [visible]);
+   const list = useMemo(() => {
+     const needle = q.trim().toLowerCase();
+-    return data.leads
+-      .filter((l) => !l.dropped && l.valid && mine(l) && (filters.pageId === "all" || l.pageId === filters.pageId))
++    return visible
++      .filter((l) => ch === "all" || channelOf(l) === ch)
+       .filter((l) => (f === "unread" ? l.unread : f === "mine" ? l.repId === user.id : f === "unassigned" ? !l.repId : f === "follow" ? !!l.followUpDate && l.followUpDate <= ANCHOR : true))
+       .filter((l) => !needle || `${l.name} ${l.lastMessage} ${l.id}`.toLowerCase().includes(needle))
+       .sort((a, b) => b.lastContactAt.localeCompare(a.lastContactAt))
+       .slice(0, 120);
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [data.leads, f, q, user.id, filters.pageId]);
++  }, [visible, ch, f, q, user.id]);
+ 
+   const lead = data.leads.find((l) => l.id === sel) ?? null;
+   const msgs = lead ? data.messages[lead.id] ?? [] : [];
+@@ -59,11 +66,30 @@ export default function InboxPage() {
+   const pageName = (id: string) => data.pages.find((p) => p.id === id)?.name ?? id;
+   const ad = lead?.adId ? data.ads.find((a) => a.id === lead.adId) : null;
+ 
+-  const send = () => {
+-    if (!lead || (!text.trim() && !attach)) return;
+-    sendMessage(lead.id, text.trim(), mode, attach ?? undefined);
++  // Real sending: Administrators only, Facebook only, and only against a connected sheet. Everyone else keeps notes (demo data keeps the simulated reply).
++  const live_ = source === "sheets";
++  const canSendReal = live_ && user.role === "Administrator" && !!lead && channelOf(lead) === "facebook";
++  const replyOk = !live_ || canSendReal;
++  const m = replyOk ? mode : "note";
++  const send = async () => {
++    if (!lead || (!text.trim() && !attach) || sending) return;
++    if (m === "reply" && canSendReal) {
++      if (attach) { toast("ส่งไฟล์แนบจากแอปยังไม่รองรับ — ส่งได้เฉพาะข้อความ (เอาไฟล์ที่แนบออกก่อน)", "info"); return; }
++      setSending(true);
++      try {
++        const r = await fetch("/api/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ leadId: lead.id, text: text.trim() }) });
++        const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
++        if (!j.ok) { toast(j.message || "ส่งไม่สำเร็จ", "error"); return; } // keep the text so nothing is lost
++        setText("");
++        toast(j.saved === false ? "ส่งข้อความถึงลูกค้าแล้ว แต่บันทึกลงชีตไม่สำเร็จ (จะเข้าชีตเองผ่าน Webhook)" : "ส่งข้อความแล้ว", j.saved === false ? "info" : "success");
++        await reloadData(true);
++      } catch { toast("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ ข้อความยังไม่ถูกส่ง", "error"); }
++      finally { setSending(false); }
++      return;
++    }
++    sendMessage(lead.id, text.trim(), m, attach ?? undefined);
+     setText(""); setAttach(null);
+-    toast(mode === "note" ? "Internal note saved" : "Message added to simulated conversation", mode === "note" ? "success" : "info");
++    toast(m === "note" ? "Internal note saved" : "Message added to simulated conversation", m === "note" ? "success" : "info");
+   };
+ 
+   return (
+@@ -79,12 +105,13 @@ export default function InboxPage() {
+         <div className={cn("flex min-h-0 flex-col border-r border-line", mobileView === "chat" && "hidden lg:flex")}>
+           <div className="space-y-2 border-b border-line p-3">
+             <SearchBox value={q} onChange={setQ} placeholder="Search conversations…" />
++            <ChannelFilter value={ch} onChange={setCh} counts={perChannel} />
+             <div className="flex flex-wrap gap-1">
+               {FILTERS.map((x) => <button key={x.id} aria-pressed={f === x.id} onClick={() => setF(x.id)} className={cn("rounded-full px-2.5 py-1 text-xs font-medium", f === x.id ? "bg-brand text-white" : "bg-gray-100 text-muted hover:bg-gray-200")}>{x.label}</button>)}
+             </div>
+           </div>
+           <ul className="min-h-0 flex-1 overflow-y-auto">
+-            {list.length === 0 && <EmptyState title="No conversations" hint="Nothing matches this filter." />}
++            {list.length === 0 && <EmptyState title="No conversations" hint={ch !== "all" && ch !== "facebook" && perChannel[ch] === 0 ? `ยังไม่มีแชท ${CHANNELS.find((c) => c.id === ch)?.label} — ช่องทางนี้ยังไม่ได้เชื่อมต่อ (ตอนนี้เชื่อมได้เฉพาะ Facebook)` : "Nothing matches this filter."} />}
+             {list.map((l) => (
+               <li key={l.id}>
+                 <button onClick={() => open(l)} className={cn("flex w-full gap-2.5 border-b border-line/60 px-3 py-2.5 text-left hover:bg-gray-50", sel === l.id && "bg-brand-faint")}>
+@@ -93,7 +120,7 @@ export default function InboxPage() {
+                     <span className="flex items-center justify-between gap-2"><span className={cn("truncate text-sm", l.unread ? "font-semibold" : "font-medium")}>{l.name}</span><span className="shrink-0 text-[11px] text-muted">{relTime(l.lastContactAt, NOW_ISO)}</span></span>
+                     <span className={cn("block truncate text-xs", l.unread ? "text-ink" : "text-muted")}>{l.lastMessage}</span>
+                     <span className="mt-1 flex flex-wrap items-center gap-1"><StatusBadge status={l.status} />
+-                      <span className="truncate text-[11px] text-muted">{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
++                      <span className="inline-flex min-w-0 items-center gap-1 truncate text-[11px] text-muted"><ChannelDot id={channelOf(l)} size={7} />{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
+                   </span>
+                   {l.unread && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-brand-2" aria-label="Unread" />}
+                 </button>
+@@ -127,18 +154,20 @@ export default function InboxPage() {
+                 <div ref={endRef} />
+               </div>
+               {canEdit ? (
+-                <div className={cn("border-t border-line p-3", mode === "note" && "bg-amber-50")}>
++                <div className={cn("border-t border-line p-3", m === "note" && "bg-amber-50")}>
+                   <div className="mb-2 flex gap-1 text-xs">
+-                    <button onClick={() => setMode("reply")} className={cn("rounded-md px-2.5 py-1 font-medium", mode === "reply" ? "bg-brand text-white" : "bg-gray-100 text-muted")}>Reply (simulated)</button>
+-                    <button onClick={() => setMode("note")} className={cn("rounded-md px-2.5 py-1 font-medium", mode === "note" ? "bg-amber-500 text-white" : "bg-gray-100 text-muted")}>Internal note</button>
++                    <button onClick={() => setMode("reply")} disabled={!replyOk} title={replyOk ? undefined : "ส่งข้อความจากแอปได้เฉพาะผู้ดูแลระบบ (Facebook)"} className={cn("rounded-md px-2.5 py-1 font-medium disabled:cursor-not-allowed disabled:opacity-50", m === "reply" ? "bg-brand text-white" : "bg-gray-100 text-muted")}>{!live_ ? "Reply (simulated)" : "Reply (Messenger)"}</button>
++                    <button onClick={() => setMode("note")} className={cn("rounded-md px-2.5 py-1 font-medium", m === "note" ? "bg-amber-500 text-white" : "bg-gray-100 text-muted")}>Internal note</button>
+                   </div>
++                  {live_ && m === "reply" && <p className="mb-2 text-[11px] text-muted">ส่งถึงลูกค้าจริงผ่าน Messenger ในนามเพจ · ตอบได้ภายใน 24 ชม. หลังข้อความล่าสุดของลูกค้า · ส่งได้เฉพาะข้อความ (ไม่มีไฟล์แนบ)</p>}
++                  {live_ && !replyOk && <p className="mb-2 text-[11px] text-amber-700">{user.role !== "Administrator" ? "ส่งข้อความจากแอปได้เฉพาะผู้ดูแลระบบ — ตอนนี้ตอบแชทใน Business Suite และใช้โน้ตภายในที่นี่" : "ส่งข้อความจากแอปได้เฉพาะแชท Facebook — ช่องทางนี้ยังไม่เชื่อมต่อ"}</p>}
+                   {attach && <p className="mb-1 flex items-center gap-1 text-xs text-muted">📎 {attach.name} <button className="text-red-500" onClick={() => setAttach(null)}>remove</button></p>}
+                   <div className="flex items-end gap-2">
+                     <input ref={fileRef} type="file" hidden onChange={(e) => { const fl = e.target.files?.[0]; if (fl) setAttach({ name: fl.name, kind: fl.type.startsWith("image/") ? "image" : "file" }); e.target.value = ""; }} />
+-                    <Btn variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={mode === "note"}><Paperclip size={18} /></Btn>
+-                    <TextArea className="flex-1" rows={2} placeholder={mode === "note" ? "Write an internal note…" : "Type a message…"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Message"
+-                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+-                    <Btn variant="primary" onClick={send} disabled={!text.trim() && !attach}><Send size={16} /> {mode === "note" ? "Save" : "Send"}</Btn>
++                    <Btn variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={m === "note" || canSendReal}><Paperclip size={18} /></Btn>
++                    <TextArea className="flex-1" rows={2} placeholder={m === "note" ? "Write an internal note…" : "Type a message…"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Message"
++                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} />
++                    <Btn variant="primary" onClick={() => void send()} disabled={(!text.trim() && !attach) || sending}><Send size={16} /> {m === "note" ? "Save" : sending ? "Sending…" : "Send"}</Btn>
+                   </div>
+                 </div>
+               ) : <p className="border-t border-line p-3 text-center text-sm text-muted">Your role has read-only access.</p>}
+diff --git a/src/app/api/send/route.ts b/src/app/api/send/route.ts
+new file mode 100644
+index 0000000..ec7e941
+--- /dev/null
++++ b/src/app/api/send/route.ts
+@@ -0,0 +1,49 @@
++import { connection, NextResponse } from "next/server";
++import { adminOnly, fail, noStore } from "@/lib/adminGate";
++import { invalidateCache } from "@/lib/sheetCache";
++import { loadChannels } from "@/lib/channels";
++import { sendMessengerText, SendError } from "@/lib/fbSend";
++import { localStamp } from "@/lib/fbSync";
++import { upsertRows } from "@/lib/sheetsWrite";
++import { channelOf } from "@/lib/types";
++
++export const maxDuration = 30;
++
++/** Administrators only. Sends a text through Messenger as the Page, then records it in the sheet's messages tab.
++ *  (Meta also echoes it to the webhook with the same message id; the "insert" mode makes that a harmless duplicate.) */
++export async function POST(req: Request) {
++  await connection();
++  const g = await adminOnly(req, true); if ("err" in g) return g.err;
++  try {
++    const b = (await req.json().catch(() => ({}))) as { leadId?: string; text?: string };
++    const text = (b.text ?? "").trim();
++    if (!b.leadId) return fail(400, "ไม่พบรหัสลูกค้า");
++    if (!text) return fail(400, "พิมพ์ข้อความก่อนส่ง");
++    if (text.length > 2000) return fail(400, "ข้อความยาวเกิน 2,000 ตัวอักษร (ข้อจำกัดของ Messenger)");
++    const lead = g.mapped.dataset.leads.find((l) => l.id === b.leadId);
++    if (!lead) return fail(404, "ไม่พบลูกค้านี้ในชีต — กด Reload from sheet แล้วลองใหม่");
++    if (channelOf(lead) !== "facebook") return fail(400, "ตอนนี้ส่งข้อความได้เฉพาะ Facebook Messenger");
++    // customers that arrived through the webhook carry the Facebook user id in their lead id; older/synced ones in fb_user_id
++    const psid = lead.fbUserId || (lead.id.startsWith("FB-") ? lead.id.slice(3) : "");
++    if (!/^\d{5,25}$/.test(psid)) return fail(400, "ยังไม่มีรหัสผู้ใช้ Facebook ของลูกค้าคนนี้ — ไปหน้า Upload กด “ดึงข้อมูลตอนนี้” อีกครั้ง หรือรอให้ลูกค้าทักมาใหม่ แล้วลองส่ง");
++    const ch = (await loadChannels(true)).find((c) => c.channel === "facebook" && c.active && c.accessToken && c.sheetPageId === lead.pageId);
++    if (!ch) return fail(400, "ยังไม่ได้เชื่อมเพจ Facebook ของลูกค้าคนนี้ — เชื่อมที่หน้า Upload ก่อน");
++
++    let sent;
++    try { sent = await sendMessengerText(ch.accessToken, psid, text, process.env.FB_GRAPH_BASE || undefined); }
++    catch (e) { if (e instanceof SendError) return fail(e.kind === "other" ? 502 : 422, e.message, { kind: e.kind }); throw e; }
++
++    // From here the customer HAS the message. A sheet failure must not look like a failed send.
++    let saved = true;
++    const at = localStamp(new Date().toISOString(), process.env.APP_TZ || "Asia/Bangkok");
++    try {
++      await upsertRows("messages", ["message_id"], [{ message_id: sent.messageId, lead_id: lead.id, direction: "out", text, sent_at: at, attachment_name: "" }], "insert");
++      await upsertRows("leads", ["lead_id"], [{ lead_id: lead.id, last_contact_at: at, last_message: text.slice(0, 300), unread: false, fb_user_id: psid, channel: "facebook" }], "updateOnly");
++      invalidateCache();
++    } catch (e) { saved = false; console.error("[api/send] sheet write failed", e instanceof Error ? e.message.replace(/EAA[\w-]{20,}/g, "…") : "error"); }
++    return NextResponse.json({ ok: true, messageId: sent.messageId, at, saved }, noStore);
++  } catch (e) {
++    console.error("[api/send]", e instanceof Error ? e.message.replace(/EAA[\w-]{20,}/g, "…") : "error");
++    return fail(502, "ส่งข้อความไม่สำเร็จ ลองใหม่อีกครั้ง");
++  }
++}
+diff --git a/src/components/ChannelFilter.tsx b/src/components/ChannelFilter.tsx
+new file mode 100644
+index 0000000..6631080
+--- /dev/null
++++ b/src/components/ChannelFilter.tsx
+@@ -0,0 +1,30 @@
++"use client";
++import { CHANNELS, ChatChannel } from "@/lib/types";
++import { cn } from "@/components/ui";
++
++export function ChannelDot({ id, size = 8 }: { id: ChatChannel; size?: number }) {
++  return <span aria-hidden className="inline-block shrink-0 rounded-full" style={{ width: size, height: size, background: CHANNELS.find((c) => c.id === id)?.color }} />;
++}
++
++/** Chips that split chats by channel (Facebook / Instagram / LINE / WhatsApp). `counts` = chats per channel in the current view. */
++export default function ChannelFilter({ value, onChange, counts, className }: { value: ChatChannel | "all"; onChange: (v: ChatChannel | "all") => void; counts: Record<ChatChannel, number>; className?: string }) {
++  const total = CHANNELS.reduce((n, c) => n + counts[c.id], 0);
++  const base = "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium";
++  return (
++    <div className={cn("flex flex-wrap gap-1", className)} role="group" aria-label="ช่องทางแชท">
++      <button aria-pressed={value === "all"} onClick={() => onChange("all")} className={cn(base, value === "all" ? "border-brand bg-brand-faint text-brand" : "border-line text-muted hover:bg-gray-50")}>ทุกช่องทาง <span className="opacity-70">{total}</span></button>
++      {CHANNELS.map((c) => (
++        <button key={c.id} aria-pressed={value === c.id} onClick={() => onChange(c.id)} title={counts[c.id] === 0 && c.id !== "facebook" ? "ช่องทางนี้ยังไม่ได้เชื่อมต่อ" : undefined}
++          className={cn(base, value === c.id ? "border-brand bg-brand-faint text-brand" : counts[c.id] === 0 ? "border-line text-gray-400 hover:bg-gray-50" : "border-line text-muted hover:bg-gray-50")}>
++          <ChannelDot id={c.id} />{c.label} <span className="opacity-70">{counts[c.id]}</span>
++        </button>
++      ))}
++    </div>
++  );
++}
++
++export const countByChannel = (leads: { channel?: ChatChannel }[]): Record<ChatChannel, number> => {
++  const n: Record<ChatChannel, number> = { facebook: 0, instagram: 0, line: 0, whatsapp: 0 };
++  for (const l of leads) n[l.channel ?? "facebook"]++;
++  return n;
++};
+diff --git a/src/lib/fbSend.ts b/src/lib/fbSend.ts
+new file mode 100644
+index 0000000..6b2538e
+--- /dev/null
++++ b/src/lib/fbSend.ts
+@@ -0,0 +1,34 @@
++// SERVER ONLY. Send one text message to a customer through the Messenger Send API, as the Page.
++// Pure apart from the injected fetch, so the error handling can be tested without Meta.
++type FetchFn = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
++interface GErr { error?: { message?: string; code?: number; error_subcode?: number } }
++interface GOk { recipient_id?: string; message_id?: string }
++
++export type SendFailure = "window" | "permission" | "token" | "user" | "other";
++export class SendError extends Error { constructor(msg: string, public kind: SendFailure = "other", public code?: number) { super(msg); } }
++
++const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
++
++/** Meta's error → what the admin should do about it. */
++export function explainSendError(e: NonNullable<GErr["error"]>, status: number): SendError {
++  const code = e.code, sub = e.error_subcode, msg = scrub(e.message ?? `HTTP ${status}`);
++  if (code === 190) return new SendError("โทเคนของเพจหมดอายุหรือถูกเพิกถอน — เชื่อมเพจใหม่ที่หน้า Upload (วางโทเคนอายุยาว)", "token", code);
++  if (sub === 2018278 || (code === 10 && /window|24/i.test(msg))) return new SendError("ส่งไม่ได้: เกิน 24 ชั่วโมงนับจากข้อความล่าสุดของลูกค้า (Facebook ไม่อนุญาตให้ส่งข้อความหลังพ้นกรอบนี้) — ให้ลูกค้าทักมาใหม่ หรือตอบผ่าน Business Suite", "window", code);
++  if (code === 551 || sub === 1545041 || /not available|not.*found.*user|No matching user/i.test(msg)) return new SendError("ส่งไม่ได้: ไม่พบผู้ใช้นี้หรือเขาไม่รับข้อความจากเพจ (รหัสผู้ใช้อาจไม่ถูกต้อง)", "user", code);
++  if (code === 10 || code === 200 || code === 230 || code === 299) return new SendError(`ส่งไม่ได้: แอปยังไม่มีสิทธิ์ส่งข้อความหาผู้ใช้คนนี้ — ถ้าแอป Meta ยังเป็นโหมด Development จะส่งได้เฉพาะคนที่มี role ในแอป และต้องมีสิทธิ์ pages_messaging (${msg})`, "permission", code);
++  return new SendError(`Meta ตอบ ${status}: ${msg}`, "other", code);
++}
++
++export async function sendMessengerText(token: string, psid: string, text: string, base = "https://graph.facebook.com", f: FetchFn = (u, i) => fetch(u, { ...i, cache: "no-store" }) as ReturnType<FetchFn>): Promise<{ messageId: string; recipientId: string }> {
++  let r: Awaited<ReturnType<FetchFn>>;
++  try {
++    r = await f(`${base}/v21.0/me/messages?${new URLSearchParams({ access_token: token })}`, {
++      method: "POST", headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ recipient: { id: psid }, messaging_type: "RESPONSE", message: { text } }),
++    });
++  } catch { throw new SendError("เชื่อมต่อ Meta ไม่สำเร็จ ลองใหม่อีกครั้ง"); }
++  const j = ((await r.json().catch(() => ({}))) ?? {}) as GErr & GOk;
++  if (!r.ok || j.error) throw explainSendError(j.error ?? {}, r.status);
++  if (!j.message_id) throw new SendError("Meta ไม่ส่งรหัสข้อความกลับมา — ตรวจในกล่องข้อความของเพจว่าส่งแล้วหรือยัง");
++  return { messageId: j.message_id, recipientId: j.recipient_id ?? psid };
++}
+diff --git a/src/lib/fbSync.ts b/src/lib/fbSync.ts
+index 0618b2a..b30fc4b 100644
+--- a/src/lib/fbSync.ts
++++ b/src/lib/fbSync.ts
+@@ -71,7 +71,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
+     const byName = new Map<string, string | null>(); // lower-cased name → lead id (null when two leads share the name)
+     for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
+ 
+-    const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = [];
++    const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = []; const psidRows = new Map<string, SyncWrite["rows"][number]>();
+     const lists = await Promise.all(fresh.map(async (c) => {
+       const all: FbMsg[] = []; let after: string | undefined;
+       for (let p = 0; p < MSG_PAGES; p++) {
+@@ -91,13 +91,14 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
+         leadId = c.id; byId.add(leadId); counts.newLeads++;
+         const last = list[list.length - 1], repliedByPage = list.some((m) => m.from?.id === fb);
+         leadRows.push({ lead_id: leadId, name, page_id: i.sheetPageId, ad_id: "", assigned_to: "", status: repliedByPage ? "Average" : "Not Responded", quality: repliedByPage ? "Average" : "Not Responded", valid: true,
+-          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false });
+-      }
++          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false, channel: "facebook", fb_user_id: customer?.id ?? "" });
++      } else if (customer?.id && !mine.find((l) => l.id === leadId)?.fbUserId) psidRows.set(leadId, { lead_id: leadId, fb_user_id: customer.id, channel: "facebook" }); // older lead: remember who to message
+       for (const m of list) msgRows.push({ message_id: m.id, lead_id: leadId, direction: m.from?.id === fb ? "out" : "in", text: (m.message || (m.attachments ? "[ไฟล์แนบ]" : "")).slice(0, 2000), sent_at: localStamp(m.created_time, i.tz), attachment_name: "" });
+     });
+     counts.messages = msgRows.length;
+     if (leadRows.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leadRows, mode: "insert" });
+     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
++    if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
+     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
+     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after } : { phase: "comments" }, writes, counts };
+   }
+diff --git a/src/lib/fbWebhook.ts b/src/lib/fbWebhook.ts
+index 98f557a..eecb063 100644
+--- a/src/lib/fbWebhook.ts
++++ b/src/lib/fbWebhook.ts
+@@ -34,6 +34,7 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
+   const mine = ds.leads.filter((l) => l.pageId === ch.sheetPageId);
+   const ids = new Set(mine.map((l) => l.id)), byName = new Map<string, string | null>();
+   for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
++  const hasPsid = new Set(mine.filter((l) => l.fbUserId).map((l) => l.id)); // leads whose Facebook user id is already stored
+   const leadOf = new Map<string, string>(); // psid → lead id (this batch)
+   const sorted = [...events].sort((a, b) => a.at - b.at);
+   const latest = new Map<string, Row>();
+@@ -45,13 +46,13 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
+       else {
+         const name = ((await nameOf(ev.customerId).catch(() => "")) || "").trim() || "ลูกค้า Facebook";
+         id = byName.get(name.toLowerCase()) ?? "";           // an earlier import/sync of the same person (unique name only)
+-        if (!id) { id = mineId; ids.add(id); w.newLeads.push({ lead_id: id, name, page_id: ch.sheetPageId, ad_id: "", assigned_to: "", status: ev.out ? "Average" : "Not Responded", quality: ev.out ? "Average" : "Not Responded", valid: true, created_at: localStamp(new Date(ev.at).toISOString(), tz).slice(0, 10), phone: "", email: "", unread: !ev.out }); }
++        if (!id) { id = mineId; ids.add(id); w.newLeads.push({ lead_id: id, name, page_id: ch.sheetPageId, ad_id: "", assigned_to: "", status: ev.out ? "Average" : "Not Responded", quality: ev.out ? "Average" : "Not Responded", valid: true, created_at: localStamp(new Date(ev.at).toISOString(), tz).slice(0, 10), phone: "", email: "", unread: !ev.out, channel: "facebook", fb_user_id: ev.customerId }); }
+       }
+       leadOf.set(ev.customerId, id);
+     }
+     const stamp = localStamp(new Date(ev.at).toISOString(), tz);
+     w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", text: ev.text, sent_at: stamp, attachment_name: "" });
+-    latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out });
++    latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) });
+   }
+   w.leadUpdates.push(...latest.values());
+   return w;
+diff --git a/src/lib/importer.ts b/src/lib/importer.ts
+index f838de0..19834d0 100644
+--- a/src/lib/importer.ts
++++ b/src/lib/importer.ts
+@@ -1,5 +1,5 @@
+ // Pure import logic: column auto-mapping, row validation, dedupe. No React, no store.
+-import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus } from "./types";
++import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
+ import { ANCHOR } from "./dates";
+ 
+ export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
+@@ -23,6 +23,7 @@ const AD_FIELDS: FieldDef[] = [
+ const CAMPAIGN_FIELDS = AD_FIELDS.map((f) => (f.key === "adId" ? { ...f, required: false } : f));
+ 
+ const LEAD_FIELDS: FieldDef[] = [
++  F("channel", "Channel (fb / ig / line / whatsapp)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
+   F("leadId", "Lead ID", false, "text", ["lead id", "lead_id", "id"]),
+   F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "full_name", "ชื่อ", "ชื่อลูกค้า"]),
+   F("adId", "Source Ad ID", false, "text", ["ad id", "source ad", "source ad id", "ad_id", "adid"]),
+@@ -33,6 +34,7 @@ const LEAD_FIELDS: FieldDef[] = [
+   F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
+ ];
+ const INBOX_FIELDS: FieldDef[] = [
++  F("channel", "Channel (fb / ig / line / whatsapp)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
+   F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "contact", "contact name", "sender", "ชื่อ", "ชื่อลูกค้า"]),
+   F("date", "First contact date", true, "date", ["date", "created", "created date", "first contact", "first message", "first message date", "started", "conversation started", "วันที่"]),
+   F("leadId", "Conversation / Lead ID", false, "text", ["lead id", "lead_id", "id", "conversation id", "thread id"]),
+@@ -311,7 +313,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
+       res.leads.push({
+         id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
+         lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
+-        history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, source: "import",
++        history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel: parseChannel(vals.channel), source: "import",
+       });
+       res.ok++;
+     } else if (ctx.type === "Chat Messages") {
+diff --git a/src/lib/sheetMapper.ts b/src/lib/sheetMapper.ts
+index 5121e13..be159f0 100644
+--- a/src/lib/sheetMapper.ts
++++ b/src/lib/sheetMapper.ts
+@@ -3,8 +3,7 @@ import type { Dataset } from "./dataset";
+ import { parseDate, parseNumber } from "./importer";
+ import { SHEET_TABS } from "./sheetSchema";
+ import {
+-  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User,
+-} from "./types";
++  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User, parseChannel } from "./types";
+ 
+ export type RawTabs = Record<string, string[][]>;
+ export interface SheetWarning { tab: string; row: number; message: string }
+@@ -153,7 +152,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
+       history: [{ at: `${created}T09:00:00`, from: null, to: st, by: "Google Sheet", note: "Loaded from sheet" }],
+       dropped: reason ? { reason, at: dateOnly(r.get("dropped_at")) ?? last.slice(0, 10), previousStatus: parseStatus(r.get("previous_status")) ?? st,
+         recovery: (pick<RecoveryStatus>(["Not Started", "In Progress", "Recovered", "Lost"], r.get("recovery_status")) ?? "Not Started"), lastActivity: r.get("last_activity") } : null,
+-      source: "import",
++      source: "import", channel: parseChannel(r.get("channel")), fbUserId: r.get("fb_user_id") || undefined,
+     });
+     if (rep && !userIds.has(rep)) { users.push({ id: rep, name: rep, email: "", role: "Sales Representative", active: true, hue: hue(rep) }); userIds.add(rep); }
+   }
+diff --git a/src/lib/sheetSchema.ts b/src/lib/sheetSchema.ts
+index 1e24593..88620c6 100644
+--- a/src/lib/sheetSchema.ts
++++ b/src/lib/sheetSchema.ts
+@@ -32,7 +32,8 @@ export const SHEET_TABS: SheetTab[] = [
+     C("last_contact_at", "YYYY-MM-DD or YYYY-MM-DD HH:MM"), C("last_message", "Last message text"), C("follow_up_date", "YYYY-MM-DD"), C("phone", "Phone"), C("email", "Email"),
+     C("first_response_min", "Minutes until first reply (blank = never replied)"), C("follow_ups", "Number of follow-ups"), C("avg_follow_up_hrs", "Average hours between follow-ups"),
+     C("unread", "TRUE / FALSE"), C("drop_reason", "Fill only for dropped leads: No Response | Not Interested | Price Too High | Chose Competitor | Rejected After Qualification | No Follow-up | Postponed"),
+-    C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text") ] },
++    C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text"),
++    C("channel", "facebook | instagram | line | whatsapp (blank = facebook)"), C("fb_user_id", "Facebook user id (PSID) — filled in by the app; needed to send messages") ] },
+   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
+     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
+     C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any") ] },
+diff --git a/src/lib/store.tsx b/src/lib/store.tsx
+index 40f86b0..74407d9 100644
+--- a/src/lib/store.tsx
++++ b/src/lib/store.tsx
+@@ -90,7 +90,7 @@ const leadPatchToSet = (p: Partial<Lead>): Record<string, string | number | bool
+   return o;
+ };
+ const leadToRow = (l: Lead) => ({ lead_id: l.id, name: l.name, page_id: l.pageId, ad_id: l.adId ?? "", assigned_to: l.repId ?? "", status: l.status, quality: l.quality, valid: l.valid, created_at: l.createdAt,
+-  last_contact_at: l.lastContactAt.replace("T", " ").slice(0, 16), last_message: l.lastMessage, phone: l.phone, email: l.email, unread: l.unread });
++  last_contact_at: l.lastContactAt.replace("T", " ").slice(0, 16), last_message: l.lastMessage, phone: l.phone, email: l.email, unread: l.unread, ...(l.channel ? { channel: l.channel } : {}) });
+ 
+ export function StoreProvider({ children }: { children: ReactNode }) {
+   const [data, setData] = useState<Dataset>(() => emptyDataset());
+diff --git a/src/lib/types.ts b/src/lib/types.ts
+index 4b9d3e5..33afbd6 100644
+--- a/src/lib/types.ts
++++ b/src/lib/types.ts
+@@ -125,6 +125,20 @@ export interface DailyPerf {
+   source: "demo" | "import";
+   importId?: string;
+ }
++export type ChatChannel = "facebook" | "instagram" | "line" | "whatsapp";
++export const CHANNELS: { id: ChatChannel; label: string; color: string }[] = [
++  { id: "facebook", label: "Facebook", color: "#1877f2" }, { id: "instagram", label: "Instagram", color: "#e1306c" },
++  { id: "line", label: "LINE", color: "#06c755" }, { id: "whatsapp", label: "WhatsApp", color: "#25d366" },
++];
++/** Sheet / export value → channel. Meta's lead export writes "fb" / "ig". Blank or unknown = facebook (the only channel connected so far). */
++export function parseChannel(raw: string | null | undefined): ChatChannel {
++  const t = String(raw ?? "").trim().toLowerCase();
++  if (/^(ig|insta|instagram)\b|instagram/.test(t)) return "instagram";
++  if (/^line\b|line oa|ไลน์/.test(t)) return "line";
++  if (/^(wa|whatsapp)\b|whatsapp/.test(t)) return "whatsapp";
++  return "facebook";
++}
++export const channelOf = (l: { channel?: ChatChannel }): ChatChannel => l.channel ?? "facebook";
+ export interface Message {
+   id: string;
+   leadId: string;
+@@ -175,6 +189,8 @@ export interface Lead {
+     lastActivity: string;
+   };
+   source: "demo" | "import";
++  channel?: ChatChannel; // blank in the sheet = facebook
++  fbUserId?: string; // Facebook user id (PSID): what the Send API needs
+ }
+ export interface Evaluation {
+   id: string;

@@ -1,6 +1,8 @@
 import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
+import { checkAdAccount, actId } from "@/lib/adsSync";
+import { FbError } from "@/lib/fbSync";
 import { defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
 import { inspectToken, TokenError } from "@/lib/fbToken";
 import { upsertRows } from "@/lib/sheetsWrite";
@@ -21,14 +23,14 @@ export async function GET(req: Request) {
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect"; channel?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; fbPageId?: string }
+interface Body { action?: "save" | "disconnect"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
   try {
     const b = (await req.json()) as Body;
-    if (b.channel && b.channel !== "facebook") return fail(400, "ช่องทางนี้ยังไม่เปิดให้ใช้ (ตอนนี้รองรับเฉพาะ Facebook Messenger)");
+    if (b.channel && b.channel !== "facebook" && b.channel !== "ads") return fail(400, "ช่องทางนี้ยังไม่เปิดให้ใช้ (ตอนนี้รองรับเฉพาะ Facebook Messenger)");
     const all = await loadChannels(true);
 
     if (b.action === "disconnect") {
@@ -42,6 +44,20 @@ export async function POST(req: Request) {
     const token = (b.accessToken ?? "").trim(), secret = (b.appSecret ?? "").trim();
     if (token && !/^[\w-]{20,400}$/.test(token)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
     if (secret && !/^[\w-]{8,100}$/.test(secret)) return fail(400, "รูปแบบ App Secret ไม่ถูกต้อง");
+
+    if (b.channel === "ads") { // Meta ad account (Marketing API): needs the account id + a token with ads_read
+      const digits = (b.accountId ?? "").replace(/\D/g, "");
+      if (digits.length < 5) return fail(400, "ใส่ Ad Account ID (ตัวเลข เช่น 1234567890 หรือ act_1234567890)");
+      const channelId = `ads:${digits}`, prev = all.find((x) => x.channelId === channelId);
+      if (!token && !prev?.accessToken) return fail(400, "วาง Access Token ที่มีสิทธิ์ ads_read ก่อน");
+      let info = { name: prev?.name ?? "", currency: "", timezone: "" };
+      try {
+        info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u) => fetch(u, { cache: "no-store" }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
+      } catch (e) { return fail(400, e instanceof FbError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      await saveChannel({ channelId, channel: "ads", accountId: digits, name: info.name || prev?.name || `act_${digits}`, accessToken: token, sheetPageId, active: true });
+      invalidateCache();
+      return NextResponse.json({ ok: true, channelId, name: info.name, currency: info.currency, timezone: info.timezone }, noStore);
+    }
 
     let existing = all.find((x) => x.channelId === b.channelId);
     let accountId = existing?.accountId ?? "", name = existing?.name ?? "", subscribed: boolean | null = null, subscribeMessage = "";

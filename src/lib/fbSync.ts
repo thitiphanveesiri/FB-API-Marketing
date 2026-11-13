@@ -20,14 +20,14 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
   return env.FB_PAGE_ID && env.FB_PAGE_TOKEN ? [{ fbPageId: env.FB_PAGE_ID, token: env.FB_PAGE_TOKEN, sheetPageId: env.FB_SHEET_PAGE_ID }] : [];
 }
 
-type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
-interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number } }
+export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number } }
 
-async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string): Promise<Graph> {
+export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string): Promise<Graph> {
   const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
   const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
   if (r.ok && !j.error) return j;
-  const code = j.error?.code; const rate = code != null && [4, 17, 32, 613].includes(code);
+  const code = j.error?.code; const rate = code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)); // 800xx = Marketing API call limits
   throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}`, rate, code);
 }
 
