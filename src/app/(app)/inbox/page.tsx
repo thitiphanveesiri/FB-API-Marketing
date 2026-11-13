@@ -6,7 +6,8 @@ import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
 import { Avatar, Badge, Btn, EmptyState, Facebook, Select, SearchBox, StatusBadge, TextArea, TextInput, cn, hueOf } from "@/components/ui";
 import { fmtDate, fmtDateTime, NOW_ISO, relTime } from "@/lib/dates";
-import { Lead, LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
+import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
+import { CHANNELS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
 import { ANCHOR } from "@/lib/dates";
 
 type F = "all" | "unread" | "mine" | "unassigned" | "follow";
@@ -27,6 +28,7 @@ export default function InboxPage() {
     return () => clearInterval(id);
   }, [live, source, reloadData]);
   const [q, setQ] = useState("");
+  const [ch, setCh] = useState<ChatChannel | "all">("all");
   const [sel, setSel] = useState<string | null>(null);
   const [mode, setMode] = useState<"reply" | "note">("reply");
   const [text, setText] = useState("");
@@ -38,16 +40,20 @@ export default function InboxPage() {
   const canEdit = roleCan.editLeads(user.role);
 
   const mine = (l: Lead) => (user.role === "Sales Representative" ? l.repId === user.id : true);
+  const visible = useMemo(
+    () => data.leads.filter((l) => !l.dropped && l.valid && mine(l) && (filters.pageId === "all" || l.pageId === filters.pageId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.leads, user.id, filters.pageId]);
+  const perChannel = useMemo(() => countByChannel(visible), [visible]);
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return data.leads
-      .filter((l) => !l.dropped && l.valid && mine(l) && (filters.pageId === "all" || l.pageId === filters.pageId))
+    return visible
+      .filter((l) => ch === "all" || channelOf(l) === ch)
       .filter((l) => (f === "unread" ? l.unread : f === "mine" ? l.repId === user.id : f === "unassigned" ? !l.repId : f === "follow" ? !!l.followUpDate && l.followUpDate <= ANCHOR : true))
       .filter((l) => !needle || `${l.name} ${l.lastMessage} ${l.id}`.toLowerCase().includes(needle))
       .sort((a, b) => b.lastContactAt.localeCompare(a.lastContactAt))
       .slice(0, 120);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.leads, f, q, user.id, filters.pageId]);
+  }, [visible, ch, f, q, user.id]);
 
   const lead = data.leads.find((l) => l.id === sel) ?? null;
   const msgs = lead ? data.messages[lead.id] ?? [] : [];
@@ -60,7 +66,7 @@ export default function InboxPage() {
   const ad = lead?.adId ? data.ads.find((a) => a.id === lead.adId) : null;
 
   const [sending, setSending] = useState(false);
-  const real = source === "sheets"; // connected to the sheet: replies go to Messenger for real
+  const real = source === "sheets" && !!lead && channelOf(lead) === "facebook"; // connected to the sheet: replies go to Messenger for real
   const send = async () => {
     if (!lead || (!text.trim() && !attach) || sending) return;
     if (mode === "reply" && real) {
@@ -87,12 +93,13 @@ export default function InboxPage() {
         <div className={cn("flex min-h-0 flex-col border-r border-line", mobileView === "chat" && "hidden lg:flex")}>
           <div className="space-y-2 border-b border-line p-3">
             <SearchBox value={q} onChange={setQ} placeholder="Search conversations…" />
+            <ChannelFilter value={ch} onChange={setCh} counts={perChannel} />
             <div className="flex flex-wrap gap-1">
               {FILTERS.map((x) => <button key={x.id} aria-pressed={f === x.id} onClick={() => setF(x.id)} className={cn("rounded-full px-2.5 py-1 text-xs font-medium", f === x.id ? "bg-brand text-white" : "bg-gray-100 text-muted hover:bg-gray-200")}>{x.label}</button>)}
             </div>
           </div>
           <ul className="min-h-0 flex-1 overflow-y-auto">
-            {list.length === 0 && <EmptyState title="No conversations" hint="Nothing matches this filter." />}
+            {list.length === 0 && <EmptyState title="No conversations" hint={ch !== "all" && ch !== "facebook" && perChannel[ch] === 0 ? `ยังไม่มีแชท ${CHANNELS.find((c) => c.id === ch)?.label} — ช่องทางนี้ยังไม่ได้เชื่อมต่อ (ตอนนี้เชื่อมได้เฉพาะ Facebook)` : "Nothing matches this filter."} />}
             {list.map((l) => (
               <li key={l.id}>
                 <button onClick={() => open(l)} className={cn("flex w-full gap-2.5 border-b border-line/60 px-3 py-2.5 text-left hover:bg-gray-50", sel === l.id && "bg-brand-faint")}>
@@ -101,7 +108,7 @@ export default function InboxPage() {
                     <span className="flex items-center justify-between gap-2"><span className={cn("truncate text-sm", l.unread ? "font-semibold" : "font-medium")}>{l.name}</span><span className="shrink-0 text-[11px] text-muted">{relTime(l.lastContactAt, NOW_ISO)}</span></span>
                     <span className={cn("block truncate text-xs", l.unread ? "text-ink" : "text-muted")}>{l.lastMessage}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-1"><StatusBadge status={l.status} />
-                      <span className="truncate text-[11px] text-muted">{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
+                      <span className="inline-flex min-w-0 items-center gap-1 truncate text-[11px] text-muted"><ChannelDot id={channelOf(l)} size={7} />{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
                   </span>
                   {l.unread && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-brand-2" aria-label="Unread" />}
                 </button>

@@ -125,6 +125,20 @@ export interface DailyPerf {
   source: "demo" | "import";
   importId?: string;
 }
+export type ChatChannel = "facebook" | "instagram" | "line" | "whatsapp";
+export const CHANNELS: { id: ChatChannel; label: string; color: string }[] = [
+  { id: "facebook", label: "Facebook", color: "#1877f2" }, { id: "instagram", label: "Instagram", color: "#e1306c" },
+  { id: "line", label: "LINE", color: "#06c755" }, { id: "whatsapp", label: "WhatsApp", color: "#25d366" },
+];
+/** Sheet / export value → channel. Meta's lead export writes "fb" / "ig". Blank or unknown = facebook (the only channel connected so far). */
+export function parseChannel(raw: string | null | undefined): ChatChannel {
+  const t = String(raw ?? "").trim().toLowerCase();
+  if (/^(ig|insta|instagram)\b|instagram/.test(t)) return "instagram";
+  if (/^line\b|line oa|ไลน์/.test(t)) return "line";
+  if (/^(wa|whatsapp)\b|whatsapp/.test(t)) return "whatsapp";
+  return "facebook";
+}
+export const channelOf = (l: { channel?: ChatChannel }): ChatChannel => l.channel ?? "facebook";
 export interface Message {
   id: string;
   leadId: string;
@@ -176,6 +190,8 @@ export interface Lead {
     lastActivity: string;
   };
   source: "demo" | "import";
+  channel?: ChatChannel; // blank in the sheet = facebook
+  fbUserId?: string; // Facebook user id (PSID): what the Send API needs
 }
 export interface Evaluation {
   id: string;

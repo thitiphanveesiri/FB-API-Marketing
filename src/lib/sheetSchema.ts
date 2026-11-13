@@ -32,7 +32,8 @@ export const SHEET_TABS: SheetTab[] = [
     C("last_contact_at", "YYYY-MM-DD or YYYY-MM-DD HH:MM"), C("last_message", "Last message text"), C("follow_up_date", "YYYY-MM-DD"), C("phone", "Phone"), C("email", "Email"),
     C("first_response_min", "Minutes until first reply (blank = never replied)"), C("follow_ups", "Number of follow-ups"), C("avg_follow_up_hrs", "Average hours between follow-ups"),
     C("unread", "TRUE / FALSE"), C("drop_reason", "Fill only for dropped leads: No Response | Not Interested | Price Too High | Chose Competitor | Rejected After Qualification | No Follow-up | Postponed"),
-    C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text") ] },
+    C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text"),
+    C("channel", "facebook | instagram | line | whatsapp (blank = facebook)"), C("fb_user_id", "Facebook user id (PSID) — filled in by the app; used to send replies") ] },
   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
     C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any"), C("sent_by", "→ users.user_id of the salesperson who sent an 'out' message from the dashboard (blank = sent elsewhere)") ] },

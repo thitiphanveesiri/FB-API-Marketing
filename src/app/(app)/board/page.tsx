@@ -7,7 +7,8 @@ import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
 import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, Facebook } from "@/components/ui";
 import LeadDrawer from "@/components/LeadDrawer";
-import { BOARD_COLUMNS, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
+import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
+import { BOARD_COLUMNS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
 import { ANCHOR, fmtShort, NOW_ISO, relTime } from "@/lib/dates";
 
 const COLUMN_HELP: Record<LeadQuality, string> = {
@@ -15,6 +16,12 @@ const COLUMN_HELP: Record<LeadQuality, string> = {
   Qualified: "ตรงกลุ่ม มีความตั้งใจจริง", "Appointment Booked": "นัดวันเข้าใช้บริการได้แล้ว", "Connection Created": "ได้ข้อมูลติดต่อ สร้างคอนเนกชันใหม่แล้ว",
 };
 /** Which column a chat sits in: its stage if that is a chat type, otherwise (sales-stage leads) its quality grade. */
+// Column background: red = lost / no answer, green = the chat is going well. "Connection Created" keeps the neutral grey.
+const COLUMN_TONE: Record<LeadQuality, string> = {
+  "Not Responded": "border-red-200 bg-red-50", "Very Poor": "border-red-200 bg-red-50",
+  "Average": "border-emerald-200 bg-emerald-50", "Qualified": "border-emerald-200 bg-emerald-50", "Appointment Booked": "border-emerald-200 bg-emerald-50",
+  "Connection Created": "border-line bg-gray-50/70",
+};
 const columnOf = (l: Lead): LeadQuality => ((BOARD_COLUMNS as readonly string[]).includes(l.status) ? (l.status as LeadQuality) : l.quality);
 
 function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
@@ -27,7 +34,7 @@ function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
     <div className={cn("rounded-xl border border-line bg-surface p-3 text-left shadow-card", dragging && "rotate-1 shadow-pop ring-2 ring-brand-2")}>
       <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
       <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
-      <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray"><Facebook size={10} /> {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+      <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
         <span className="flex items-center gap-1">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] rounded-full border border-dashed border-gray-300" />}{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span>
         <span>{relTime(lead.lastContactAt, NOW_ISO)}</span>
@@ -52,7 +59,7 @@ function Column({ status, leads, onOpen, enabled }: { status: LeadQuality; leads
   const overdue = leads.filter((l) => l.followUpDate && l.followUpDate < ANCHOR).length;
   const unassigned = leads.filter((l) => !l.repId).length;
   return (
-    <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border bg-gray-50/70 transition-colors", isOver ? "border-brand-2 bg-brand-faint" : "border-line")} aria-label={statusTh(status)}>
+    <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border transition-colors", isOver ? "border-brand-2 bg-brand-faint" : COLUMN_TONE[status])} aria-label={statusTh(status)}>
       <header className="border-b border-line px-3 py-2.5">
         <div className="flex items-center justify-between"><h3 className="flex items-center gap-1.5 text-sm font-semibold"><span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[status] }} />{statusTh(status)}</h3><span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold tabnum ring-1 ring-line">{leads.length}</span></div>
         <p className="mt-0.5 text-[11px] text-muted">{COLUMN_HELP[status]}</p>
@@ -72,19 +79,22 @@ export default function Board() {
   const act = useLeadActions();
   const [q, setQ] = useState("");
   const [rep, setRep] = useState("all");
+  const [ch, setCh] = useState<ChatChannel | "all">("all");
   const [active, setActive] = useState<Lead | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }));
   const canEdit = roleCan.editLeads(user.role);
 
+  const scoped = useMemo(() => data.leads.filter((l) => l.valid && !l.dropped
+    && (user.role !== "Sales Representative" || l.repId === user.id)
+    && (filters.pageId === "all" || l.pageId === filters.pageId)), [data.leads, user, filters.pageId]);
+  const perChannel = useMemo(() => countByChannel(scoped), [scoped]);
   const leads = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return data.leads.filter((l) => l.valid && !l.dropped
-      && (user.role !== "Sales Representative" || l.repId === user.id)
-      && (filters.pageId === "all" || l.pageId === filters.pageId)
+    return scoped.filter((l) => (ch === "all" || channelOf(l) === ch)
       && (rep === "all" || (rep === "none" ? !l.repId : l.repId === rep))
       && (!needle || `${l.name} ${l.id} ${l.adId ?? ""}`.toLowerCase().includes(needle)));
-  }, [data.leads, q, rep, user, filters.pageId]);
+  }, [scoped, q, rep, ch]);
 
   const grouped = useMemo(() => {
     const m = Object.fromEntries(BOARD_COLUMNS.map((s) => [s, [] as Lead[]])) as Record<LeadQuality, Lead[]>;
@@ -110,6 +120,7 @@ export default function Board() {
           {user.role !== "Sales Representative" && <Select value={rep} onChange={setRep} options={[{ value: "all", label: "เซลล์ทุกคน" }, { value: "none", label: "ยังไม่มีผู้ดูแล" }, ...data.users.filter((u) => u.role === "Sales Representative").map((u) => ({ value: u.id, label: u.name }))]} />}
         </div>
       </div>
+      <ChannelFilter value={ch} onChange={setCh} counts={perChannel} />
       <p className="text-xs text-muted">ลากการ์ดด้วยไอคอนจับ (⋮⋮) ไปวางในกล่องที่ต้องการ หรือเปิดการ์ดแล้วเปลี่ยนสถานะจากเมนู การย้ายที่มีความเสี่ยงจะขอให้ยืนยันก่อน และทุกการย้ายถูกบันทึกลง Google Sheet {!canEdit && "· บทบาทของคุณดูได้อย่างเดียว"}</p>
       {data.leads.length === 0 && <p className="rounded-xl border border-dashed border-line bg-surface px-4 py-6 text-center text-sm text-muted">ยังไม่มีแชทในระบบ — ไปที่หน้า <b>Upload</b> เพื่อนำเข้าข้อมูลแชท/ลูกค้าจากเพจ Facebook</p>}
       <DndContext sensors={sensors} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>

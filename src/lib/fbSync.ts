@@ -71,7 +71,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const byName = new Map<string, string | null>(); // lower-cased name → lead id (null when two leads share the name)
     for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
 
-    const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = [];
+    const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = []; const psidRows = new Map<string, SyncWrite["rows"][number]>();
     const lists = await Promise.all(fresh.map(async (c) => {
       const all: FbMsg[] = []; let after: string | undefined;
       for (let p = 0; p < MSG_PAGES; p++) {
@@ -91,13 +91,14 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         leadId = c.id; byId.add(leadId); counts.newLeads++;
         const last = list[list.length - 1], repliedByPage = list.some((m) => m.from?.id === fb);
         leadRows.push({ lead_id: leadId, name, page_id: i.sheetPageId, ad_id: "", assigned_to: "", status: repliedByPage ? "Average" : "Not Responded", quality: repliedByPage ? "Average" : "Not Responded", valid: true,
-          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false });
-      }
+          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false, channel: "facebook", fb_user_id: customer?.id ?? "" });
+      } else if (customer?.id && !mine.find((l) => l.id === leadId)?.fbUserId) psidRows.set(leadId, { lead_id: leadId, fb_user_id: customer.id, channel: "facebook" }); // older lead: remember who to message
       for (const m of list) msgRows.push({ message_id: m.id, lead_id: leadId, direction: m.from?.id === fb ? "out" : "in", text: (m.message || (m.attachments ? "[ไฟล์แนบ]" : "")).slice(0, 2000), sent_at: localStamp(m.created_time, i.tz), attachment_name: "" });
     });
     counts.messages = msgRows.length;
     if (leadRows.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leadRows, mode: "insert" });
     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
+    if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after } : { phase: "comments" }, writes, counts };
   }

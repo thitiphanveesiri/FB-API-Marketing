@@ -3,8 +3,7 @@ import type { Dataset } from "./dataset";
 import { parseDate, parseNumber } from "./importer";
 import { SHEET_TABS } from "./sheetSchema";
 import {
-  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User,
-} from "./types";
+  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User, parseChannel } from "./types";
 
 export type RawTabs = Record<string, string[][]>;
 export interface SheetWarning { tab: string; row: number; message: string }
@@ -153,7 +152,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
       history: [{ at: `${created}T09:00:00`, from: null, to: st, by: "Google Sheet", note: "Loaded from sheet" }],
       dropped: reason ? { reason, at: dateOnly(r.get("dropped_at")) ?? last.slice(0, 10), previousStatus: parseStatus(r.get("previous_status")) ?? st,
         recovery: (pick<RecoveryStatus>(["Not Started", "In Progress", "Recovered", "Lost"], r.get("recovery_status")) ?? "Not Started"), lastActivity: r.get("last_activity") } : null,
-      source: "import",
+      source: "import", channel: parseChannel(r.get("channel")), fbUserId: r.get("fb_user_id") || undefined,
     });
     if (rep && !userIds.has(rep)) { users.push({ id: rep, name: rep, email: "", role: "Sales Representative", active: true, hue: hue(rep) }); userIds.add(rep); }
   }

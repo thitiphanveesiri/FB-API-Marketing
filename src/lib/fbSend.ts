@@ -8,7 +8,8 @@ const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_
 export class SendError extends Error { constructor(msg: string, public status = 502) { super(msg); } }
 
 /** The customer's Messenger id: leads made by the webhook are "FB-<psid>"; older ones carry a conversation id (t_…) that Graph can resolve. */
-export async function psidOf(leadId: string, pageId: string, token: string, base: string): Promise<string> {
+export async function psidOf(leadId: string, pageId: string, token: string, base: string, stored?: string): Promise<string> {
+  if (stored && /^\d{5,25}$/.test(stored)) return stored; // saved by the webhook / sync
   if (leadId.startsWith("FB-")) return leadId.slice(3);
   if (/^t_/.test(leadId)) {
     const r = await fetch(`${base}/v21.0/${leadId}?${new URLSearchParams({ fields: "participants", access_token: token })}`, { cache: "no-store" });

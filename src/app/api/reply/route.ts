@@ -1,6 +1,7 @@
 import { connection, NextResponse } from "next/server";
 import { fail, noStore, userGate } from "@/lib/adminGate";
 import { loadChannels } from "@/lib/channels";
+import { channelOf } from "@/lib/types";
 import { psidOf, minutesSinceCustomer, sendText, SendError, WINDOW_HOURS } from "@/lib/fbSend";
 import { localStamp } from "@/lib/fbSync";
 import { invalidateCache } from "@/lib/sheetCache";
@@ -23,13 +24,14 @@ export async function POST(req: Request) {
     const lead = mapped.dataset.leads.find((l) => l.id === b.leadId);
     if (!lead) return fail(404, "ไม่พบลีดนี้");
     if (me.role === "Sales Representative" && lead.repId !== me.id) return fail(403, "ตอบได้เฉพาะลีดที่ได้รับมอบหมาย");
+    if (channelOf(lead) !== "facebook") return fail(400, "ตอนนี้ตอบจากระบบได้เฉพาะ Facebook Messenger");
     const ch = (await loadChannels(true)).find((c) => c.channel === "facebook" && c.active && c.accessToken && c.sheetPageId === lead.pageId);
     if (!ch) return fail(400, "เพจนี้ยังไม่ได้เชื่อม Messenger (ไปที่หน้า Upload → เชื่อมช่องทางแชท)");
 
     const tz = process.env.APP_TZ || "Asia/Bangkok", base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
     const since = minutesSinceCustomer(mapped.dataset.messages[lead.id] ?? [], tz);
     if (since != null && since > WINDOW_HOURS * 60) return fail(400, `ส่งไม่ได้: ลูกค้าทักล่าสุดเกิน ${WINDOW_HOURS} ชั่วโมงแล้ว (กฎของ Meta) — ตอบใน Business Suite หรือรอให้ลูกค้าทักมาใหม่`);
-    const psid = await psidOf(lead.id, ch.accountId, ch.accessToken, base);
+    const psid = await psidOf(lead.id, ch.accountId, ch.accessToken, base, lead.fbUserId);
     const mid = await sendText({ pageId: ch.accountId, token: ch.accessToken, psid, text, base });
 
     const at = localStamp(new Date().toISOString(), tz);

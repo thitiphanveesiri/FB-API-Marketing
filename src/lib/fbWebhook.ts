@@ -34,6 +34,7 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
   const mine = ds.leads.filter((l) => l.pageId === ch.sheetPageId);
   const ids = new Set(mine.map((l) => l.id)), byName = new Map<string, string | null>();
   for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
+  const hasPsid = new Set(mine.filter((l) => l.fbUserId).map((l) => l.id)); // leads whose Facebook user id is already stored
   const leadOf = new Map<string, string>(); // psid → lead id (this batch)
   const sorted = [...events].sort((a, b) => a.at - b.at);
   const latest = new Map<string, Row>();
@@ -45,13 +46,13 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
       else {
         const name = ((await nameOf(ev.customerId).catch(() => "")) || "").trim() || "ลูกค้า Facebook";
         id = byName.get(name.toLowerCase()) ?? "";           // an earlier import/sync of the same person (unique name only)
-        if (!id) { id = mineId; ids.add(id); w.newLeads.push({ lead_id: id, name, page_id: ch.sheetPageId, ad_id: "", assigned_to: "", status: ev.out ? "Average" : "Not Responded", quality: ev.out ? "Average" : "Not Responded", valid: true, created_at: localStamp(new Date(ev.at).toISOString(), tz).slice(0, 10), phone: "", email: "", unread: !ev.out }); }
+        if (!id) { id = mineId; ids.add(id); w.newLeads.push({ lead_id: id, name, page_id: ch.sheetPageId, ad_id: "", assigned_to: "", status: ev.out ? "Average" : "Not Responded", quality: ev.out ? "Average" : "Not Responded", valid: true, created_at: localStamp(new Date(ev.at).toISOString(), tz).slice(0, 10), phone: "", email: "", unread: !ev.out, channel: "facebook", fb_user_id: ev.customerId }); }
       }
       leadOf.set(ev.customerId, id);
     }
     const stamp = localStamp(new Date(ev.at).toISOString(), tz);
     w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", text: ev.text, sent_at: stamp, attachment_name: "" });
-    latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out });
+    latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) });
   }
   w.leadUpdates.push(...latest.values());
   return w;

@@ -92,7 +92,7 @@ const leadPatchToSet = (p: Partial<Lead>): Record<string, string | number | bool
   return o;
 };
 const leadToRow = (l: Lead) => ({ lead_id: l.id, name: l.name, page_id: l.pageId, ad_id: l.adId ?? "", assigned_to: l.repId ?? "", status: l.status, quality: l.quality, valid: l.valid, created_at: l.createdAt,
-  last_contact_at: l.lastContactAt.replace("T", " ").slice(0, 16), last_message: l.lastMessage, phone: l.phone, email: l.email, unread: l.unread });
+  last_contact_at: l.lastContactAt.replace("T", " ").slice(0, 16), last_message: l.lastMessage, phone: l.phone, email: l.email, unread: l.unread, ...(l.channel ? { channel: l.channel } : {}) });
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<Dataset>(() => emptyDataset());
