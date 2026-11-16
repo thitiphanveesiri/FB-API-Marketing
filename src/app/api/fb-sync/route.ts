@@ -31,6 +31,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e.message, { rateLimited: e.rateLimited });
+    const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;
+    if (sheetStatus) {
+      invalidateCache();
+      const rateLimited = sheetStatus === "429";
+      const hint = sheetStatus === "403" ? " ตรวจสิทธิ์ Editor ของ service account ใน Google Sheet" : rateLimited ? " ลองใหม่หลังรอสักครู่" : "";
+      return fail(rateLimited ? 429 : 502, `ดึงข้อมูลจาก Meta ได้แต่บันทึก Google Sheet ไม่สำเร็จ (HTTP ${sheetStatus}).${hint}`, { rateLimited });
+    }
     console.error("[api/fb-sync]", e instanceof Error ? e.message : "error"); invalidateCache();
     return fail(502, "ดึงข้อมูลหรือบันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
   }

@@ -37,7 +37,10 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
     C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any"), C("sent_by", "→ users.user_id of the salesperson who sent an 'out' message from the dashboard (blank = sent elsewhere)"),
-    C("sender_type", "customer | human | automated | unknown; unknown when Meta provides no verified sender source") ] },
+    C("sender_type", "customer | human | automated | unknown; unknown when Meta provides no verified sender source"), C("sender_app", "Meta app id that sent an 'out' message (filled in by the webhook; use it in auto_replies)") ] },
+  { tab: "auto_replies", required: false, purpose: "Rules that recognise the page's AUTOMATIC messages (greeting, away message, bot) so they do not count as a reply in SLA / follow-up. Edit freely: applies to all history", cols: [
+    C("pattern", "Text to look for (case and extra spaces ignored). Use * for changing parts, e.g. สวัสดีค่ะ คุณ*, ขอบคุณที่ติดต่อ. For match=app_id: the sender's app id", true),
+    C("match", "contains (default) | exact | starts_with | app_id"), C("active", "TRUE / FALSE (blank = TRUE)"), C("note", "Free text: where this message comes from") ] },
   { tab: "lead_log", required: false, purpose: "History of stage changes and internal notes per lead (written by the app)", cols: [
     C("lead_id", "→ leads.lead_id", true), C("at", "YYYY-MM-DD HH:MM", true), C("kind", "status | note", true), C("from", "Previous status"), C("to", "New status"), C("by", "Who did it"), C("text", "Note text / reason") ] },
   { tab: "evaluations", required: false, purpose: "Quality reviews of conversations (written by the app)", cols: [

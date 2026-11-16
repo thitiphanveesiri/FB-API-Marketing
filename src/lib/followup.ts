@@ -1,4 +1,5 @@
 // Pure: response-speed stats, silent-customer queue, "came back" count, lead temperature and interest tags. No React, no I/O.
+import { countsAsReply } from "./autoReply";
 import { SLA_RULES, chatEvents, minutesBetween, type Band, type ChatEvent } from "./sla";
 import type { FbPage, Lead, Message } from "./types";
 
@@ -65,17 +66,18 @@ export function computeFollowup(i: FollowupInput): FollowupResult {
       if (e.open) open++; else { replied++; waits.push(e.minutes); byBand[e.band].replied++; if (e.minutes <= SLA_RULES.chatMinutes) { within15++; byBand[e.band].within15++; } }
     }
     // silent: the page spoke last and the customer has not answered for N hours (leads already booked/converted are done)
-    const last = msgs[msgs.length - 1];
+    const spoken = msgs.filter((m) => m.direction !== "out" || countsAsReply(m)); // without the page's automatic messages
+    const last = spoken[spoken.length - 1] ?? msgs[msgs.length - 1];
     const tags = tagsOf(msgs);
     if (last.direction === "out" && !CLOSED.includes(l.status) && !l.dropped) {
       const h = minutesBetween(last.at, i.now) / 60;
       if (h >= i.silentHours) { const t = temperature(l, msgs, i.now); silent.push({ lead: l, silentHours: Math.floor(h), lastOutAt: last.at, temp: t, tags, lastText: last.text }); }
     }
     // came back: the page's last message, a long gap, then the customer wrote again inside the date range
-    for (let k = 1; k < msgs.length; k++) {
-      if (msgs[k].direction === "in" && msgs[k - 1].direction === "out" && inRange(msgs[k].at)) {
-        const g = minutesBetween(msgs[k - 1].at, msgs[k].at) / 60;
-        if (g >= i.silentHours) recovered.push({ lead: l, backAt: msgs[k].at, gapHours: Math.floor(g) });
+    for (let k = 1; k < spoken.length; k++) {
+      if (spoken[k].direction === "in" && spoken[k - 1].direction === "out" && inRange(spoken[k].at)) {
+        const g = minutesBetween(spoken[k - 1].at, spoken[k].at) / 60;
+        if (g >= i.silentHours) recovered.push({ lead: l, backAt: spoken[k].at, gapHours: Math.floor(g) });
       }
     }
     temps[temperature(l, msgs, i.now)]++;

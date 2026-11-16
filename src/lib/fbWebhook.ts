@@ -10,8 +10,8 @@ export function signatureOk(raw: string, header: string | null, secret: string):
   return want.length === got.length && timingSafeEqual(Buffer.from(want), Buffer.from(got));
 }
 
-export interface FbEvent { pageId: string; customerId: string; mid: string; out: boolean; text: string; at: number }
-interface Payload { object?: string; entry?: { id?: string; messaging?: { sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number; message?: { mid?: string; text?: string; is_echo?: boolean; sticker_id?: number; attachments?: { payload?: { sticker_id?: number } }[] } }[] }[] }
+export interface FbEvent { pageId: string; customerId: string; mid: string; out: boolean; text: string; at: number; appId?: string }
+interface Payload { object?: string; entry?: { id?: string; messaging?: { sender?: { id?: string }; recipient?: { id?: string }; timestamp?: number; message?: { mid?: string; text?: string; is_echo?: boolean; app_id?: number | string; sticker_id?: number; attachments?: { payload?: { sticker_id?: number } }[] } }[] }[] }
 
 /** Only real messages: skips read receipts / deliveries / postbacks. Echo = the page (a person or the Inbox app) sent it. */
 export function parseEvents(p: Payload): FbEvent[] {
@@ -20,7 +20,7 @@ export function parseEvents(p: Payload): FbEvent[] {
   for (const e of p.entry ?? []) for (const m of e.messaging ?? []) {
     const msg = m.message; if (!msg?.mid || !e.id) continue;
     const echo = !!msg.is_echo, customer = echo ? m.recipient?.id : m.sender?.id; if (!customer) continue;
-    out.push({ pageId: e.id, customerId: customer, mid: msg.mid, out: echo, text: (msg.text || (msg.sticker_id || msg.attachments?.some((a) => a.payload?.sticker_id) ? "[สติ๊กเกอร์]" : msg.attachments?.length ? "[ไฟล์แนบ]" : "")).slice(0, 2000), at: m.timestamp ?? Date.now() });
+    out.push({ pageId: e.id, customerId: customer, mid: msg.mid, out: echo, text: (msg.text || (msg.sticker_id || msg.attachments?.some((a) => a.payload?.sticker_id) ? "[สติ๊กเกอร์]" : msg.attachments?.length ? "[ไฟล์แนบ]" : "")).slice(0, 2000), at: m.timestamp ?? Date.now(), appId: echo && msg.app_id ? String(msg.app_id) : undefined });
   }
   return out;
 }
@@ -51,7 +51,7 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
       leadOf.set(ev.customerId, id);
     }
     const stamp = localStamp(new Date(ev.at).toISOString(), tz);
-    w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", sender_type: ev.out ? "unknown" : "customer", text: ev.text, sent_at: stamp, attachment_name: "" });
+    w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", sender_type: ev.out ? "unknown" : "customer", sender_app: ev.appId ?? "", text: ev.text, sent_at: stamp, attachment_name: "" });
     latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) });
   }
   w.leadUpdates.push(...latest.values());

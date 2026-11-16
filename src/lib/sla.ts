@@ -1,4 +1,5 @@
 // Pure: response-time checking ("ตรวจการตอบแชท"). No React, no I/O — everything is derived from messages + comments.
+import { countsAsReply } from "./autoReply";
 import type { FbPage, Lead, Message, PostComment, User } from "./types";
 
 export const SLA_RULES = {
@@ -83,7 +84,7 @@ export function chatEvents(lead: Lead, msgs: Message[], now: string, isRep: (id:
   };
   for (const m of [...msgs].sort((a, b) => a.at.localeCompare(b.at))) {
     if (m.direction === "in") { if (!waiting && !isClosingMessage(m.text)) waiting = m.at; }
-    else if (m.direction === "out" && waiting) { push(waiting, m.at, m.sentBy ?? null); waiting = null; }
+    else if (countsAsReply(m) && waiting) { push(waiting, m.at, m.sentBy ?? null); waiting = null; } // automatic replies do not stop the clock
   }
   if (waiting) push(waiting, null);
   return out;

@@ -137,7 +137,7 @@ export default function InboxPage() {
                       {m.attachment && <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs">{m.attachment.kind === "image" ? "🖼" : "📎"} {m.attachment.name}</div>}
                       <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>
                         {fmtDateTime(m.at)}{m.simulated && " · not sent"}
-                        {m.direction === "out" && !m.simulated && ` · ${m.senderType === "human" ? (m.sentBy ? data.users.find((u) => u.id === m.sentBy)?.name ?? "เจ้าหน้าที่" : "เจ้าหน้าที่") : m.senderType === "automated" ? "ตอบอัตโนมัติ" : "ไม่ทราบว่าเป็นคนหรือระบบ"}`}
+                        {m.direction === "out" && !m.simulated && ` · ${m.senderType === "human" ? (m.sentBy ? data.users.find((u) => u.id === m.sentBy)?.name ?? "เจ้าหน้าที่" : "เจ้าหน้าที่") : m.senderType === "automated" ? "ตอบอัตโนมัติ" : "ไม่ทราบว่าเป็นคนหรือระบบ"}${m.senderType !== "human" && m.senderApp ? ` (แอป ${m.senderApp})` : ""}`}
                       </p>
                     </div>
                   </div>

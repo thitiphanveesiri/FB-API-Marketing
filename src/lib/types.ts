@@ -144,6 +144,7 @@ export interface Message {
   leadId: string;
   direction: "in" | "out" | "note";
   senderType?: "customer" | "human" | "automated" | "unknown";
+  senderApp?: string; // Meta app id that sent an "out" message (from the webhook echo); lets an auto-reply rule recognise a bot
   text: string;
   at: string; // ISO local datetime
   attachment?: { name: string; kind: "image" | "file" };
