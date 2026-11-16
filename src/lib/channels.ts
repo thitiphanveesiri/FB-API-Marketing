@@ -61,7 +61,7 @@ export async function fbSyncConfigs(): Promise<FbPageCfg[]> {
   const out = [...fbConfigs()];
   try {
     for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accessToken && c.accountId && !out.some((o) => o.fbPageId === c.accountId))
-      out.push({ fbPageId: c.accountId, token: c.accessToken, sheetPageId: c.sheetPageId || undefined });
+      out.push({ fbPageId: c.accountId, token: c.accessToken, sheetPageId: c.sheetPageId || undefined, name: c.name || undefined });
   } catch { /* sheet unreachable: env pages only */ }
   return out;
 }

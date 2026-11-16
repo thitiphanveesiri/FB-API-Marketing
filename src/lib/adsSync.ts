@@ -82,9 +82,14 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
 
   if (i.state.phase === "insights") {
     const since = day(new Date(now.getTime() - i.days * 86400000)), until = day(now);
-    let j: Graph;
-    try { j = await graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields: "ad_id,spend,reach,impressions,clicks,inline_link_clicks,actions", limit: String(INSIGHT_ROWS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, i.token, f, base); }
-    catch (e) { if (e instanceof FbError) throw new FbError(`ดึงสถิติรายวันไม่สำเร็จ: ${e.message}`, e.rateLimited, e.code); throw e; }
+    // Full field list first; if Meta rejects it (code 100) the same query is retried with the core fields only, and later batches keep using them.
+    const FULL = "ad_id,spend,reach,impressions,clicks,inline_link_clicks,actions", CORE = "ad_id,spend,impressions,clicks,actions";
+    const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_ROWS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, i.token, f, base);
+    let j: Graph, core = i.state.fallback === true;
+    try {
+      try { j = await insights(core ? CORE : FULL); }
+      catch (e) { if (core || !(e instanceof FbError) || e.code !== 100 || i.state.after) throw e; core = true; j = await insights(CORE); }
+    } catch (e) { if (e instanceof FbError) throw new FbError(`ดึงสถิติรายวันไม่สำเร็จ: ${e.message}`, e.rateLimited, e.code); throw e; }
     const rows: SyncWrite["rows"] = [];
     for (const r of (j.data ?? []) as RawInsight[]) {
       if (!r.ad_id || !r.date_start) continue;
@@ -94,7 +99,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     counts.rows = rows.length;
     if (rows.length) writes.push({ tab: "ad_performance", keyCols: ["date", "ad_id"], rows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
-    return { next: more ? { phase: "insights", after: j.paging!.cursors!.after } : { phase: "done" }, writes, counts };
+    return { next: more ? { phase: "insights", after: j.paging!.cursors!.after, ...(core ? { fallback: true } : {}) } : { phase: "done" }, writes, counts, ...(core ? { warning: "Meta ปฏิเสธฟิลด์ reach/คลิกลิงก์ จึงดึงสถิติแบบพื้นฐาน (รีชอาจเป็น 0)" } : {}) };
   }
   return { next: { phase: "done" }, writes, counts };
 }
