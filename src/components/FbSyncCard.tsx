@@ -28,24 +28,37 @@ export default function FbSyncCard() {
   }, [user.role]);
   if (user.role !== "Administrator" || pages === null) return null;
 
-  const run = async () => {
-    if (!sheetPage) { toast("เลือกเพจในระบบที่จะเก็บข้อมูลก่อน"); return; }
+  const pageLabel = (id: string) => data.pages.find((x) => x.id === id)?.name ?? id;
+  /** One page, or every connected page one after another (each one goes in its own batches, so no page can time out another). */
+  const run = async (all = false) => {
+    const targets = all ? pages.filter((p) => p.sheetPageId).map((p) => ({ fb: p.fbPageId, sheet: p.sheetPageId })) : [{ fb, sheet: sheetPage }];
+    if (!targets.length || targets.some((t) => !t.sheet)) { toast(all ? "ยังไม่มีเพจที่ผูกกับเพจในระบบ — เชื่อมในการ์ด “เชื่อมช่องทางแชท” ก่อน" : "เลือกเพจในระบบที่จะเก็บข้อมูลก่อน"); return; }
     stop.current = false; setBusy(true); setDone(null);
     const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0 };
-    let state: { phase: string; after?: string } = { phase: "chats" }, failures = 0;
+    const failed: string[] = [];
     try {
+      for (const [n, t] of targets.entries()) {
+        if (stop.current) break;
+        const tag = targets.length > 1 ? `[${n + 1}/${targets.length}] ${pageLabel(t.sheet)} · ` : "";
+        try { await pull(t.fb, t.sheet, tot, tag); } catch (e) { failed.push(`${pageLabel(t.sheet)}: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
+      }
+      setDone(tot);
+      setLog(failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
+      toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
+    } finally { setBusy(false); await reloadData(true); }
+  };
+  const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string) => {
+    let state: { phase: string; after?: string } = { phase: "chats" }, failures = 0;
+    {
       while (state.phase !== "done" && !stop.current) {
-        setLog(state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.comments} คอมเมนต์)`);
-        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fb, sheetPageId: sheetPage, days: Number(days) || 7, state }) });
+        setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.comments} คอมเมนต์)`));
+        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId, days: Number(days) || 7, state }) });
         const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
         if (j.rateLimited) { for (let s = 60; s > 0 && !stop.current; s--) { setLog(`Meta ขอให้รอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
         if (!j.ok) { if (++failures < 3 && r.status >= 500) { await wait(2000); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
         failures = 0; tot.chats += j.counts.chats; tot.newLeads += j.counts.newLeads; tot.messages += j.counts.messages; tot.comments += j.counts.comments; state = j.next;
       }
-      setDone(tot); setLog(stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
-      toast(stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
-    } catch (e) { setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`); }
-    finally { setBusy(false); await reloadData(true); }
+    }
   };
 
   return (
@@ -58,7 +71,8 @@ export default function FbSyncCard() {
             {pages.length > 1 && <Select label="เพจ Facebook" value={fb} onChange={(v) => { setFb(v); setSheetPage(pages.find((p) => p.fbPageId === v)?.sheetPageId || sheetPage); }} options={pages.map((p) => ({ value: p.fbPageId, label: p.fbPageId }))} disabled={busy} />}
             <Select label="เก็บเข้าเพจในระบบ" value={sheetPage} onChange={setSheetPage} options={[{ value: "", label: "— เลือก —" }, ...data.pages.map((p) => ({ value: p.id, label: p.name }))]} disabled={busy} />
             <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "3", label: "3 วัน" }, { value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }]} disabled={busy} />
-            <Btn variant="primary" onClick={run} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : "ดึงข้อมูลตอนนี้"}</Btn>
+            <Btn variant="primary" onClick={() => void run()} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : "ดึงข้อมูลตอนนี้"}</Btn>
+            {pages.length > 1 && <Btn onClick={() => void run(true)} disabled={busy}>ดึงทุกเพจ ({pages.length})</Btn>}
             {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
           </div>
           {log && <p className="text-sm" role="status">{log}</p>}
