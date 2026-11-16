@@ -61,7 +61,7 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "channels", required: false, purpose: "Chat channel connections (Facebook now; LINE / WhatsApp later). SECRET: holds access tokens — anyone who can open the sheet can read them", cols: [
     C("channel_id", "e.g. facebook:123456", true), C("channel", "facebook | line | whatsapp", true), C("account_id", "Facebook Page ID / LINE channel ID / WhatsApp phone-number ID"), C("name", "Account name"),
     C("access_token", "Page access token (secret)"), C("app_secret", "App secret, used to verify webhook signatures (secret)"), C("verify_token", "Text you paste into Meta's webhook set-up"),
-    C("sheet_page_id", "→ pages.page_id where the chats are stored"), C("active", "TRUE / FALSE"), C("updated_at", "When it was last saved") ] },
+    C("sheet_page_id", "→ pages.page_id where the chats are stored"), C("force_sheet_page", "For ads: TRUE to store every ad in sheet_page_id instead of using a connected Facebook Page mapping"), C("active", "TRUE / FALSE"), C("updated_at", "When it was last saved") ] },
   { tab: "import_log", required: false, purpose: "One row per Upload (written by the app)", cols: [
     C("import_id", "e.g. IMP-001", true), C("at", "When"), C("page_id", "→ pages.page_id"), C("data_type", "Type of file"), C("file_name", "File name"), C("mode", "incremental | replace"),
     C("total", "Rows in file"), C("imported", "Rows imported"), C("failed", "Rows failed"), C("duplicates", "Rows skipped as duplicates"), C("by", "Who uploaded") ] },

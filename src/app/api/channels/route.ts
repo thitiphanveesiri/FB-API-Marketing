@@ -5,6 +5,7 @@ import { checkAdAccount, actId, listAdAccounts } from "@/lib/adsSync";
 import { FbError } from "@/lib/fbSync";
 import { type Channel, defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
 import { inspectToken, TokenError } from "@/lib/fbToken";
+import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { upsertRows } from "@/lib/sheetsWrite";
 
 export const maxDuration = 30;
@@ -43,7 +44,7 @@ export async function GET(req: Request) {
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; fbPageId?: string }
+interface Body { action?: "save" | "disconnect"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
@@ -70,11 +71,16 @@ export async function POST(req: Request) {
       if (digits.length < 5) return fail(400, "ใส่ Ad Account ID (ตัวเลข เช่น 1234567890 หรือ act_1234567890)");
       const channelId = `ads:${digits}`, prev = all.find((x) => x.channelId === channelId);
       if (!token && !prev?.accessToken) return fail(400, "วาง Access Token ที่มีสิทธิ์ ads_read ก่อน");
+      if (!token && prev?.accessToken) {
+        await saveChannel({ channelId, channel: "ads", accountId: digits, name: prev.name, sheetPageId, forceSheetPage: b.forceSheetPage === true, active: true });
+        invalidateCache();
+        return NextResponse.json({ ok: true, channelId, name: prev.name, mappingUpdated: true }, noStore);
+      }
       let info = { name: prev?.name ?? "", currency: "", timezone: "" };
       try {
         info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u) => fetch(u, { cache: "no-store" }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
-      } catch (e) { return fail(400, e instanceof FbError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
-      await saveChannel({ channelId, channel: "ads", accountId: digits, name: info.name || prev?.name || `act_${digits}`, accessToken: token, sheetPageId, active: true });
+      } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e instanceof FbError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      await saveChannel({ channelId, channel: "ads", accountId: digits, name: info.name || prev?.name || `act_${digits}`, accessToken: token, sheetPageId, forceSheetPage: b.forceSheetPage === true, active: true });
       invalidateCache();
       return NextResponse.json({ ok: true, channelId, name: info.name, currency: info.currency, timezone: info.timezone }, noStore);
     }
@@ -84,7 +90,7 @@ export async function POST(req: Request) {
     let pageToken = token, viaUserToken = false;
     if (token) {
       // ask Meta what this token is. A Page token is used as is; a USER token is exchanged for the token of the page it manages.
-      let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
       let j: { id: string; name: string };
       if (info.kind === "page") j = info;
       else {
