@@ -36,7 +36,8 @@ export const SHEET_TABS: SheetTab[] = [
     C("channel", "facebook | instagram | line | whatsapp (blank = facebook)"), C("fb_user_id", "Facebook user id (PSID) — filled in by the app; used to send replies") ] },
   { tab: "messages", required: false, purpose: "Optional chat history shown in Inbox / lead drawer", cols: [
     C("message_id", "Unique"), C("lead_id", "→ leads.lead_id", true), C("direction", "in (customer) | out (staff) | note (internal)", true), C("text", "Message text"),
-    C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any"), C("sent_by", "→ users.user_id of the salesperson who sent an 'out' message from the dashboard (blank = sent elsewhere)") ] },
+    C("sent_at", "YYYY-MM-DD HH:MM", true), C("attachment_name", "File name, if any"), C("sent_by", "→ users.user_id of the salesperson who sent an 'out' message from the dashboard (blank = sent elsewhere)"),
+    C("sender_type", "customer | human | automated | unknown; unknown when Meta provides no verified sender source") ] },
   { tab: "lead_log", required: false, purpose: "History of stage changes and internal notes per lead (written by the app)", cols: [
     C("lead_id", "→ leads.lead_id", true), C("at", "YYYY-MM-DD HH:MM", true), C("kind", "status | note", true), C("from", "Previous status"), C("to", "New status"), C("by", "Who did it"), C("text", "Note text / reason") ] },
   { tab: "evaluations", required: false, purpose: "Quality reviews of conversations (written by the app)", cols: [
@@ -48,8 +49,15 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "post_comments", required: false, purpose: "Customer comments under page posts, with the time the page replied (used by the response-check page)", cols: [
     C("comment_id", "Unique", true), C("page_id", "→ pages.page_id", true), C("post_id", "Post ID / link"), C("commenter", "Customer name"), C("text", "Comment text"),
     C("commented_at", "YYYY-MM-DD HH:MM", true), C("replied_at", "YYYY-MM-DD HH:MM (blank = not replied yet)"), C("replied_by", "→ users.user_id or name") ] },
-  { tab: "push_subs", required: false, purpose: "Phones / browsers that receive alerts (written by the app when someone presses \u201cเปิดแจ้งเตือน\u201d)", cols: [
-    C("endpoint", "Push service address (unique)", true), C("user_id", "→ users.user_id", true), C("p256dh", "Public key"), C("auth", "Auth secret"), C("created_at", "ISO time"), C("active", "TRUE / FALSE") ] },
+  { tab: "push_subs", required: false, purpose: "Encrypted phones / browsers that receive alerts", cols: [
+    C("endpoint", "SHA-256 key for encrypted subscription (unique)", true), C("user_id", "→ users.user_id", true),
+    C("encrypted_subscription", "AES-256-GCM encrypted endpoint and keys"), C("created_at", "ISO time"), C("active", "TRUE / FALSE"),
+    C("p256dh", "Legacy column; blank after migration"), C("auth", "Legacy column; blank after migration") ] },
+  { tab: "notification_log", required: false, purpose: "Deduplication and audit trail for inbound-message and manual follow-up push notifications", cols: [
+    C("notification_id", "Stable deduplication key", true), C("kind", "inbound | followup", true), C("lead_id", "→ leads.lead_id", true),
+    C("message_ids", "Comma-separated Messenger message IDs, if inbound"), C("state_key", "Follow-up state fingerprint, if manual"),
+    C("recipient_id", "→ users.user_id", true), C("actor_id", "Admin user_id for manual notifications"),
+    C("sent_at", "ISO time"), C("status", "pending | sent | failed", true), C("sent_count", "Devices reached"), C("failed_count", "Device delivery failures"), C("detail", "Sanitized status detail") ] },
   { tab: "channels", required: false, purpose: "Chat channel connections (Facebook now; LINE / WhatsApp later). SECRET: holds access tokens — anyone who can open the sheet can read them", cols: [
     C("channel_id", "e.g. facebook:123456", true), C("channel", "facebook | line | whatsapp", true), C("account_id", "Facebook Page ID / LINE channel ID / WhatsApp phone-number ID"), C("name", "Account name"),
     C("access_token", "Page access token (secret)"), C("app_secret", "App secret, used to verify webhook signatures (secret)"), C("verify_token", "Text you paste into Meta's webhook set-up"),

@@ -1,12 +1,13 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Download, MessageCircleReply, Moon } from "lucide-react";
+import { BellRing, Download, MessageCircleReply, Moon } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { Badge, Card, DataTable, EmptyState, KpiCard, Select, Column } from "@/components/ui";
 import FilterBar from "@/components/FilterBar";
 import { BAND_TH, SLA_RULES } from "@/lib/sla";
 import { computeFollowup, SILENT_OPTIONS, SilentLead, Temp, TEMP_TH } from "@/lib/followup";
 import { nowStamp } from "@/lib/dates";
+import type { Lead } from "@/lib/types";
 
 const dur = (m: number) => (m >= 120 ? `${Math.floor(m / 60)} ชม. ${m % 60} นาที` : m < 1 ? "< 1 นาที" : `${m} นาที`);
 const hrs = (h: number) => (h >= 48 ? `${Math.floor(h / 24)} วัน` : `${h} ชม.`);
@@ -20,9 +21,11 @@ function download(name: string, rows: (string | number)[][]) {
 }
 
 export default function FollowupPage() {
-  const { data, user, filters } = useStore();
+  const { data, user, filters, toast } = useStore();
   const [silentHours, setSilentHours] = useState("24"); const [repId, setRepId] = useState("all"); const [temp, setTemp] = useState<"all" | Temp>("all");
+  const [notifying, setNotifying] = useState<string | null>(null); const [notified, setNotified] = useState<Set<string>>(() => new Set());
   const isRep = user.role === "Sales Representative";
+  const isAdmin = user.role === "Administrator";
   const now = useMemo(() => nowStamp().slice(0, 16), []);
   const res = useMemo(() => computeFollowup({ leads: data.leads, messages: data.messages, pages: data.pages, start: filters.start, end: filters.end, now, pageId: filters.pageId, silentHours: Number(silentHours), repId: isRep ? user.id : repId === "all" ? undefined : repId }),
     [data, filters.start, filters.end, filters.pageId, silentHours, repId, isRep, user.id, now]);
@@ -31,6 +34,23 @@ export default function FollowupPage() {
   const hasData = Object.values(data.messages).some((m) => m.length > 0);
   const rows = res.silent.filter((s) => temp === "all" || s.temp === temp);
   const maxH = Math.max(1, ...res.hourly);
+  const notificationKey = (l: Lead) => [l.id, l.status, l.followUpDate ?? "", l.repId ?? "", l.lastContactAt].join("|");
+  const notifySales = async (l: Lead) => {
+    const key = notificationKey(l);
+    if (notifying) return;
+    setNotifying(l.id);
+    try {
+      const response = await fetch("/api/notify/followup", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadId: l.id, silentHours: Number(silentHours) }),
+      });
+      const result = await response.json().catch(() => ({ ok: false }));
+      if (!response.ok || !result.ok) { toast(result.message || "ส่งการแจ้งเตือนไม่สำเร็จ", "error"); return; }
+      setNotified((previous) => new Set(previous).add(key));
+      toast(result.duplicate ? "แจ้งเซลล์แล้วสำหรับสถานะติดตามนี้" : "ส่งแจ้งเตือนให้เซลล์แล้ว", result.duplicate ? "info" : "success");
+    } catch { toast("เชื่อมต่อระบบแจ้งเตือนไม่สำเร็จ", "error"); }
+    finally { setNotifying(null); }
+  };
 
   const cols: Column<SilentLead>[] = [
     { key: "t", header: "ความพร้อม", sort: (r) => ({ hot: 0, warm: 1, cold: 2 })[r.temp], render: (r) => <Badge tone={TONE[r.temp]}>{r.temp === "hot" ? "ร้อน" : r.temp === "warm" ? "อุ่น" : "เย็น"}</Badge> },
@@ -41,6 +61,17 @@ export default function FollowupPage() {
     { key: "g", header: "สนใจ", render: (r) => <span className="flex flex-wrap gap-1">{r.tags.length ? r.tags.map((t) => <Badge key={t} tone="violet">{t}</Badge>) : "—"}</span> },
     { key: "c", header: "โทร/อีเมล", render: (r) => r.lead.phone || r.lead.email || "—" },
     { key: "m", header: "ข้อความล่าสุดของเรา", render: (r) => <span className="line-clamp-1 max-w-[260px] text-muted">{r.lastText}</span> },
+    ...(isAdmin ? [{ key: "notify", header: "แจ้งเซลล์", render: (r: SilentLead) => {
+      const rep = data.users.find((u) => u.id === r.lead.repId && u.role === "Sales Representative" && u.active);
+      const key = notificationKey(r.lead), sent = notified.has(key), busy = notifying === r.lead.id;
+      return rep
+        ? <button type="button" disabled={busy || sent || (!!notifying && !busy)} onClick={() => void notifySales(r.lead)}
+            aria-label={`แจ้ง ${rep.name} ให้ติดตาม ${r.lead.name}`}
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
+            <BellRing size={14} />{busy ? "กำลังส่ง…" : sent ? "แจ้งแล้ว" : "แจ้ง Sales"}
+          </button>
+        : <span className="text-xs text-muted">ยังไม่ assign</span>;
+    } }] : []),
   ];
   const exportQueue = () => download(`followup-${filters.start}_${filters.end}.csv`, [["ความพร้อม", "ลูกค้า", "เพจ", "เซลล์", "เงียบมา(ชม.)", "สนใจ", "เบอร์/อีเมล", "ข้อความล่าสุดของเรา"],
     ...rows.map((r) => [TEMP_TH[r.temp], r.lead.name, pageName(r.lead.pageId), repName(r.lead.repId), r.silentHours, r.tags.join(" / "), r.lead.phone || r.lead.email, r.lastText])]);

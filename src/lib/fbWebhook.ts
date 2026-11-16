@@ -51,7 +51,7 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
       leadOf.set(ev.customerId, id);
     }
     const stamp = localStamp(new Date(ev.at).toISOString(), tz);
-    w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", text: ev.text, sent_at: stamp, attachment_name: "" });
+    w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", sender_type: ev.out ? "unknown" : "customer", text: ev.text, sent_at: stamp, attachment_name: "" });
     latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) });
   }
   w.leadUpdates.push(...latest.values());

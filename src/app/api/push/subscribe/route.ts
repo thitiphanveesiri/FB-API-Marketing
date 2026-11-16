@@ -11,14 +11,24 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   await connection();
   const g = await userGate(req); if ("err" in g) return g.err;
-  if (!pushConfigured()) return fail(503, "ยังไม่ได้ตั้งค่าการแจ้งเตือนบนเซิร์ฟเวอร์ (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY)");
-  try { const b = (await req.json()) as { subscription?: SubInput }; if (!b.subscription) return fail(400, "ไม่พบข้อมูลการสมัครรับแจ้งเตือน"); await saveSub(g.me.id, b.subscription); return NextResponse.json({ ok: true }, noStore); }
-  catch (e) { return fail(400, e instanceof Error ? e.message : "บันทึกไม่สำเร็จ"); }
+  if (!pushConfigured()) return fail(503, "ยังไม่ได้ตั้งค่า VAPID และ PUSH_SUBSCRIPTION_SECRET");
+  let b: { subscription?: SubInput };
+  try { b = await req.json() as { subscription?: SubInput }; }
+  catch { return fail(400, "ข้อมูลการสมัครรับแจ้งเตือนไม่ถูกต้อง"); }
+  if (!b.subscription) return fail(400, "ไม่พบข้อมูลการสมัครรับแจ้งเตือน");
+  try { await saveSub(g.me.id, b.subscription); return NextResponse.json({ ok: true }, noStore); }
+  catch (e) {
+    const message = e instanceof Error ? e.message : "บันทึกไม่สำเร็จ";
+    return fail(message.includes("ไม่ถูกต้อง") ? 400 : 502, message);
+  }
 }
 export async function DELETE(req: Request) {
   await connection();
   const g = await userGate(req); if ("err" in g) return g.err;
-  const b = (await req.json().catch(() => ({}))) as { endpoint?: string };
-  if (b.endpoint) await removeSub(g.me.id, b.endpoint).catch(() => {});
-  return NextResponse.json({ ok: true }, noStore);
+  let b: { endpoint?: string };
+  try { b = await req.json() as { endpoint?: string }; }
+  catch { return fail(400, "ข้อมูลการสมัครรับแจ้งเตือนไม่ถูกต้อง"); }
+  if (!b.endpoint) return fail(400, "ไม่พบอุปกรณ์ที่ต้องการปิด");
+  try { await removeSub(g.me.id, b.endpoint); return NextResponse.json({ ok: true }, noStore); }
+  catch (e) { console.error("[api/push/subscribe] removal failed", e instanceof Error ? e.name : "UnknownError"); return fail(502, "ปิดแจ้งเตือนไม่สำเร็จ"); }
 }

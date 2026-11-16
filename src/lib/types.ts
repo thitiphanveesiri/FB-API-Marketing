@@ -143,6 +143,7 @@ export interface Message {
   id: string;
   leadId: string;
   direction: "in" | "out" | "note";
+  senderType?: "customer" | "human" | "automated" | "unknown";
   text: string;
   at: string; // ISO local datetime
   attachment?: { name: string; kind: "image" | "file" };

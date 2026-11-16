@@ -17,6 +17,7 @@ export default function PushCard() {
   useEffect(() => {
     let live = true;
     (async () => {
+      if (ios && !standalone) { if (live) setState("unsupported"); return; }
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) { if (live) setState("unsupported"); return; }
       const j = await fetch("/api/push/subscribe", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
       if (!live) return; if (!j?.ok || !j.configured) { setState("unconfigured"); return; }
@@ -27,7 +28,7 @@ export default function PushCard() {
       if (live) setState(sub ? "on" : "off");
     })();
     return () => { live = false; };
-  }, []);
+  }, [ios, standalone]);
 
   const enable = async () => {
     setBusy(true);
@@ -46,14 +47,20 @@ export default function PushCard() {
     setBusy(true);
     try {
       const reg = await navigator.serviceWorker.getRegistration("/"); const sub = await reg?.pushManager.getSubscription();
-      if (sub) { await fetch("/api/push/subscribe", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) }); await sub.unsubscribe(); }
+      if (sub) {
+        const response = await fetch("/api/push/subscribe", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+        const result = await response.json().catch(() => ({ ok: false }));
+        if (!response.ok || !result.ok) { toast(result.message || "ปิดแจ้งเตือนไม่สำเร็จ", "error"); return; }
+        await sub.unsubscribe();
+      }
       setState("off"); toast("ปิดแจ้งเตือนบนเครื่องนี้แล้ว", "info");
-    } finally { setBusy(false); }
+    } catch { toast("ปิดแจ้งเตือนไม่สำเร็จ", "error"); }
+    finally { setBusy(false); }
   };
   const test = async () => { setBusy(true); const j = await fetch("/api/push/test", { method: "POST" }).then((r) => r.json()).catch(() => ({ ok: false })); setBusy(false); toast(j.ok ? "ส่งการแจ้งเตือนทดสอบแล้ว" : j.message || "ส่งไม่สำเร็จ", j.ok ? "success" : "error"); };
 
   return (
-    <Card title="แจ้งเตือนบนมือถือ" subtitle="เด้งเมื่อลูกค้าทักเข้ามา · เตือนก่อนเกิน 15 นาที · แจ้งแชทค้าง" right={<BellRing size={16} className="text-brand-2" />}>
+    <Card title="แจ้งเตือนบนมือถือ" subtitle="แจ้งข้อความใหม่ให้ Sales ที่ได้รับมอบหมาย · เตือนก่อนเกิน 15 นาที · แจ้งแชทค้าง" right={<BellRing size={16} className="text-brand-2" />}>
       <div className="space-y-2 text-sm">
         {state === "loading" && <p className="text-muted">กำลังตรวจสอบ…</p>}
         {state === "unsupported" && <p className="text-muted">{ios && !standalone ? "iPhone: กดปุ่มแชร์ใน Safari → “เพิ่มไปยังหน้าจอโฮม” แล้วเปิดแอปจากไอคอนนั้น จึงจะเปิดแจ้งเตือนได้ (iOS 16.4 ขึ้นไป)" : "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน ลองใช้ Chrome บน Android"}</p>}
@@ -61,7 +68,7 @@ export default function PushCard() {
         {state === "blocked" && <p className="text-amber-700">เครื่องนี้ปิดกั้นการแจ้งเตือนไว้ — เปิดอนุญาตที่การตั้งค่าเว็บไซต์ของเบราว์เซอร์ แล้วโหลดหน้านี้ใหม่</p>}
         {state === "off" && <Btn variant="primary" onClick={enable} disabled={busy}>เปิดแจ้งเตือนบนเครื่องนี้</Btn>}
         {state === "on" && <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-brand-faint px-2.5 py-0.5 text-xs font-medium text-brand">เปิดอยู่บนเครื่องนี้</span><Btn onClick={test} disabled={busy}>ส่งทดสอบ</Btn><Btn onClick={disable} disabled={busy}>ปิด</Btn></div>}
-        <p className="text-xs text-muted">เซลล์ได้รับเฉพาะแชทของตัวเอง · หัวหน้าและแอดมินได้รับแชทที่ยังไม่มีผู้ดูแลกับแชทค้าง · ไม่ส่งแจ้งเตือนข้อความใหม่ช่วง 22:00–08:00</p>
+        <p className="text-xs text-muted">ข้อความใหม่จะส่งเฉพาะ Sales ที่ถูก assign; ถ้ายังไม่มีผู้ดูแลจะไม่ส่ง · ไม่ส่งข้อความใหม่ช่วง 22:00–08:00 · หัวหน้าและแอดมินได้รับแจ้งแชทค้างตามรอบระบบ</p>
       </div>
     </Card>
   );
