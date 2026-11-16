@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
-import { type AdsTotals, pullAds, wait } from "@/lib/syncClient";
+import { type AdsTotals, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
 
 interface Cfg { fbPageId: string; sheetPageId: string }
 interface Totals { chats: number; newLeads: number; messages: number; comments: number }
@@ -37,7 +37,7 @@ export default function FbSyncCard() {
     const targets = all ? pages.filter((p) => p.sheetPageId).map((p) => ({ fb: p.fbPageId, sheet: p.sheetPageId })) : [{ fb, sheet: sheetPage }];
     if (!targets.length || targets.some((t) => !t.sheet)) { toast(all ? "ยังไม่มีเพจที่ผูกกับเพจในระบบ — เชื่อมในการ์ด “เชื่อมช่องทางแชท” ก่อน" : "เลือกเพจในระบบที่จะเก็บข้อมูลก่อน"); return; }
     stop.current = false; setBusy(true); setDone(null); setAdsDone(null);
-    const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0 };
+    const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [] };
     const failed: string[] = [];
     try {
       for (const [n, t] of targets.entries()) {
@@ -55,7 +55,8 @@ export default function FbSyncCard() {
         setAdsDone(adsTot);
       }
       setDone(tot);
-      setLog(failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
+      const warning = adsTot.warnings?.length ? ` หมายเหตุ: ${adsTot.warnings.join(" · ")}` : "";
+      setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }
   };
@@ -65,10 +66,10 @@ export default function FbSyncCard() {
       while (state.phase !== "done" && !stop.current) {
         setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.comments} คอมเมนต์)`));
         const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId, days: Number(days) || 7, state }) });
-        const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
-        if (j.rateLimited) { for (let s = 60; s > 0 && !stop.current; s--) { setLog(`Meta ขอให้รอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
+        const j = await readSyncResponse(r);
+        if (j.rateLimited) { for (let s = 60; s > 0 && !stop.current; s--) { setLog(`ระบบจำกัดคำขอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
         if (!j.ok) { if (++failures < 3 && r.status >= 500) { await wait(2000); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
-        failures = 0; tot.chats += j.counts.chats; tot.newLeads += j.counts.newLeads; tot.messages += j.counts.messages; tot.comments += j.counts.comments; state = j.next;
+        failures = 0; tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after };
       }
     }
   };

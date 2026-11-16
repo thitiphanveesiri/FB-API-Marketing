@@ -47,7 +47,7 @@ interface FbPost { id: string; permalink_url?: string }
 export interface SyncInput { cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts }
 
-const CHATS_PER_CALL = 8, POSTS_PER_CALL = 4, MSG_PAGES = 5;
+const CHATS_PER_CALL = 3, POSTS_PER_CALL = 4, MSG_PAGES = 5;
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const f = i.fetchFn ?? ((u: string) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>), base = i.base ?? "https://graph.facebook.com";

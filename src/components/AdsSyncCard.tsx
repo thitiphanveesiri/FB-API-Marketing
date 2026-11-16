@@ -3,16 +3,15 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
-import { pullAds } from "@/lib/syncClient";
+import { pullAds, type AdsTotals } from "@/lib/syncClient";
 
 interface Acct { channelId: string; name: string; accountId: string }
-interface Totals { ads: number; campaigns: number; rows: number }
 
 /** Administrators only: pull campaigns, ads, daily results and ad images from the Meta ad account into the Google Sheet. */
 export default function AdsSyncCard() {
   const { user, reloadData, toast } = useStore();
   const [accts, setAccts] = useState<Acct[] | null>(null); const [ch, setCh] = useState(""); const [days, setDays] = useState("30");
-  const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<Totals | null>(null);
+  const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<AdsTotals | null>(null);
   const stop = useRef(false);
 
   useEffect(() => {
@@ -25,12 +24,14 @@ export default function AdsSyncCard() {
 
   const run = async () => {
     stop.current = false; setBusy(true); setDone(null);
-    const tot: Totals = { ads: 0, campaigns: 0, rows: 0 };
+    const tot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [] };
     try {
       await pullAds(ch, Number(days) || 30, { stop, log: setLog }, tot);
-      setDone(tot); setLog(stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
+      setDone(tot);
+      const warning = tot.warnings?.length ? ` หมายเหตุ: ${tot.warnings.join(" · ")}` : "";
+      setLog((stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
       toast(stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลโฆษณาเสร็จแล้ว");
-    } catch (e) { setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`); }
+    } catch (e) { const warning = tot.warnings?.length ? ` หมายเหตุ: ${tot.warnings.join(" · ")}` : ""; setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)${warning}`); }
     finally { setBusy(false); await reloadData(true); }
   };
 
