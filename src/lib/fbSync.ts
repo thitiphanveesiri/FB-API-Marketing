@@ -3,7 +3,7 @@
 import type { Dataset } from "./dataset";
 import type { UpsertMode } from "./sheetOps";
 
-export interface FbPageCfg { fbPageId: string; token: string; sheetPageId?: string }
+export interface FbPageCfg { fbPageId: string; token: string; sheetPageId?: string; name?: string }
 export type Phase = "chats" | "comments" | "done";
 export interface SyncState { phase: Phase; after?: string }
 export interface SyncCounts { chats: number; newLeads: number; messages: number; comments: number }
@@ -21,14 +21,14 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
 }
 
 export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
-export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number } }
+export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; fbtrace_id?: string } }
 
 export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string): Promise<Graph> {
   const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
   const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
   if (r.ok && !j.error) return j;
   const code = j.error?.code; const rate = code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)); // 800xx = Marketing API call limits
-  throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}`, rate, code);
+  throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}${j.error?.error_user_msg ? ` — ${clean(j.error.error_user_msg)}` : ""}${code != null ? ` (code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}${j.error?.fbtrace_id ? `, trace ${j.error.fbtrace_id}` : ""})` : ""}`, rate, code);
 }
 
 /** "2026-11-01T03:05:00+0000" (UTC) → "2026-11-01 10:05" in the business time zone. */
