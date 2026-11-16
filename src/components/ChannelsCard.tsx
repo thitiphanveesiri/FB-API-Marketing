@@ -46,7 +46,10 @@ export default function ChannelsCard() {
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!j.ok) { setChoices(Array.isArray(j.pages) ? j.pages : []); setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
       setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setEditing(null); await load(); await reloadData(true);
-      toast(j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`, j.subscribed === false ? "info" : undefined);
+      const ads = j.ads as { added: number; existing: number; names: string[]; message: string } | null;
+      const adsNote = !ads ? "" : ads.added + ads.existing > 0 ? ` · พบบัญชีโฆษณา ${ads.added + ads.existing} บัญชี (${ads.names.join(", ")}) ดึงพร้อมแชทได้เลย` : ` · ${ads.message}`;
+      const adsBad = !!ads && ads.added + ads.existing === 0;
+      toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + adsNote, j.subscribed === false || adsBad ? "info" : undefined);
     } catch { setMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
   };
   const saveAds = async () => {

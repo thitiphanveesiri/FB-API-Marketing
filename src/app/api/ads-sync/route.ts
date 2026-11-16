@@ -27,7 +27,9 @@ export async function POST(req: Request) {
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = b.state?.phase === "insights" || b.state?.phase === "done" ? b.state.phase : "ads";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
-    const out = await adsStep({ accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after }, base: process.env.FB_GRAPH_BASE });
+    const pageMap: Record<string, string> = {};
+    for (const c of await loadChannels(true)) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) pageMap[c.accountId] = c.sheetPageId;
+    const out = await adsStep({ accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts }, noStore);

@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
+import { pullAds } from "@/lib/syncClient";
 
 interface Acct { channelId: string; name: string; accountId: string }
 interface Totals { ads: number; campaigns: number; rows: number }
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Administrators only: pull campaigns, ads, daily results and ad images from the Meta ad account into the Google Sheet. */
 export default function AdsSyncCard() {
@@ -26,16 +26,8 @@ export default function AdsSyncCard() {
   const run = async () => {
     stop.current = false; setBusy(true); setDone(null);
     const tot: Totals = { ads: 0, campaigns: 0, rows: 0 };
-    let state: { phase: string; after?: string } = { phase: "ads" }, failures = 0;
     try {
-      while (state.phase !== "done" && !stop.current) {
-        setLog(state.phase === "ads" ? `กำลังดึงรายการโฆษณาและภาพ… (${tot.ads} โฆษณา)` : `กำลังดึงสถิติรายวัน… (${tot.rows} แถว)`);
-        const r = await fetch("/api/ads-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channelId: ch, days: Number(days) || 30, state }) });
-        const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
-        if (j.rateLimited) { for (let s = 60; s > 0 && !stop.current; s--) { setLog(`Meta ขอให้รอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
-        if (!j.ok) { if (++failures < 3 && r.status >= 500) { await wait(2000); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
-        failures = 0; tot.ads += j.counts.ads; tot.campaigns += j.counts.campaigns; tot.rows += j.counts.rows; state = j.next;
-      }
+      await pullAds(ch, Number(days) || 30, { stop, log: setLog }, tot);
       setDone(tot); setLog(stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
       toast(stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลโฆษณาเสร็จแล้ว");
     } catch (e) { setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`); }

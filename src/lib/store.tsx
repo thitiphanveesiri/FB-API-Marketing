@@ -49,7 +49,7 @@ interface Store {
   addNote: (id: string, text: string) => void;
   sendMessage: (id: string, text: string, mode: "reply" | "note", attachment?: Message["attachment"]) => void;
   /** Real Messenger reply via /api/reply (Google Sheet mode). Resolves with an error message when it could not be sent. */
-  sendReply: (id: string, text: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  sendReply: (id: string, text: string) => Promise<{ ok: true; saved: boolean } | { ok: false; message: string }>;
   markRead: (id: string) => void;
   dropLead: (id: string, reason: DropReason) => void;
   recoverLead: (id: string, to: LeadStatus) => void;
@@ -226,7 +226,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const msg: Message = { id: j.messageId, leadId: id, direction: "out", text, at: String(j.at).replace(" ", "T"), simulated: false, sentBy: user.id };
         setData((d) => ({ ...d, messages: { ...d.messages, [id]: [...(d.messages[id] ?? []).filter((m) => m.id !== msg.id), msg] } }));
         updLead(id, (l) => ({ ...l, lastMessage: text, lastContactAt: msg.at, unread: false, status: j.status ?? l.status }));
-        return { ok: true };
+        return { ok: true, saved: j.saved !== false };
       } catch { return { ok: false, message: "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ" }; }
     },
     markRead: (id) => {

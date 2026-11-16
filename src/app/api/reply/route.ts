@@ -35,17 +35,21 @@ export async function POST(req: Request) {
     const mid = await sendText({ pageId: ch.accountId, token: ch.accessToken, psid, text, base });
 
     const at = localStamp(new Date().toISOString(), tz);
-    // upsert: Meta's echo of this message may already be saved without a sender — this fills in sent_by
-    await upsertRows("messages", ["message_id"], [{ message_id: mid, lead_id: lead.id, direction: "out", text, sent_at: at, attachment_name: "", sent_by: me.id }], "upsert");
+    // From here the customer HAS the message. If the sheet write fails we still answer ok (saved:false): an error here would make the
+    // admin press Send again and the customer would get the same message twice. Meta's echo (webhook) fills the sheet in anyway.
     const upd: Record<string, string | boolean> = { lead_id: lead.id, last_contact_at: at, last_message: text.slice(0, 300), unread: false };
     if (lead.status === "Not Responded") { upd.status = "Average"; upd.quality = "Average"; }
-    await upsertRows("leads", ["lead_id"], [upd], "updateOnly");
+    let saved = true;
+    try {
+      // upsert: Meta's echo of this message may already be saved without a sender — this fills in sent_by
+      await upsertRows("messages", ["message_id"], [{ message_id: mid, lead_id: lead.id, direction: "out", text, sent_at: at, attachment_name: "", sent_by: me.id }], "upsert");
+      await upsertRows("leads", ["lead_id"], [upd], "updateOnly");
+    } catch (e) { saved = false; console.error("[api/reply] sent, but the sheet write failed:", e instanceof Error ? e.message.replace(/EAA[\w-]{20,}/g, "…") : "error"); }
     invalidateCache();
-    return NextResponse.json({ ok: true, messageId: mid, at, status: upd.status ?? lead.status }, noStore);
+    return NextResponse.json({ ok: true, messageId: mid, at, status: upd.status ?? lead.status, saved }, noStore);
   } catch (e) {
     if (e instanceof SendError) return fail(e.status, e.message);
     console.error("[api/reply]", e instanceof Error ? e.message.replace(/EAA[\w-]{20,}/g, "…") : "error");
-    invalidateCache();
-    return fail(502, "ส่งข้อความหรือบันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
+    return fail(502, "ส่งข้อความไม่สำเร็จ (ข้อความยังไม่ถูกส่งถึงลูกค้า) ลองใหม่อีกครั้ง");
   }
 }

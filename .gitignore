@@ -42,3 +42,6 @@ next-env.d.ts
 
 # keep the template, never the real secrets
 !.env.example
+
+# patch files shared while working with an assistant
+*.patch

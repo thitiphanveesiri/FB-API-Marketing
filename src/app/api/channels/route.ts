@@ -1,9 +1,9 @@
 import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
-import { checkAdAccount, actId } from "@/lib/adsSync";
+import { checkAdAccount, actId, listAdAccounts } from "@/lib/adsSync";
 import { FbError } from "@/lib/fbSync";
-import { defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
+import { type Channel, defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
 import { inspectToken, TokenError } from "@/lib/fbToken";
 import { upsertRows } from "@/lib/sheetsWrite";
 
@@ -11,6 +11,26 @@ export const maxDuration = 30;
 const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v21.0`;
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
+
+/** A user token that has ads_read also sees the ad accounts: connect them too, so one token covers chats AND ads.
+ *  An ad account that is already connected keeps its own token (it may be a never-expiring system-user token). Never throws. */
+async function connectAdAccounts(userToken: string, sheetPageId: string, all: Channel[]): Promise<{ added: number; existing: number; names: string[]; message: string }> {
+  try {
+    const accts = await listAdAccounts(userToken, (u) => fetch(u, { cache: "no-store" }) as ReturnType<Parameters<typeof listAdAccounts>[1]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
+    if (!accts.length) return { added: 0, existing: 0, names: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ถ้าต้องการดึงโฆษณาด้วย ให้เพิ่มสิทธิ์ ads_read แล้วสร้างโทเคนใหม่" };
+    let added = 0, existing = 0; const names: string[] = [];
+    for (const a of accts) {
+      const channelId = `ads:${a.id}`, prev = all.find((x) => x.channelId === channelId && x.accessToken);
+      if (prev) { existing++; names.push(prev.name || a.name || a.id); continue; }
+      await saveChannel({ channelId, channel: "ads", accountId: a.id, name: a.name || `act_${a.id}`, accessToken: userToken, sheetPageId, active: true });
+      added++; names.push(a.name || a.id);
+    }
+    return { added, existing, names, message: "" };
+  } catch (e) {
+    const permission = e instanceof FbError && (e.code === 200 || e.code === 10 || e.code === 100);
+    return { added: 0, existing: 0, names: [], message: permission ? "โทเคนนี้ไม่มีสิทธิ์ ads_read จึงยังไม่ได้เชื่อมบัญชีโฆษณา (เพิ่มสิทธิ์ ads_read ใน Graph API Explorer แล้วสร้างโทเคนใหม่)" : "เชื่อมบัญชีโฆษณาไม่สำเร็จ (เชื่อมแยกได้ในส่วนโฆษณาด้านล่าง)" };
+  }
+}
 
 /** Admin only. Never returns tokens or secrets — only whether they are set and the last 4 characters of the token. */
 export async function GET(req: Request) {
@@ -61,7 +81,7 @@ export async function POST(req: Request) {
 
     let existing = all.find((x) => x.channelId === b.channelId);
     let accountId = existing?.accountId ?? "", name = existing?.name ?? "", subscribed: boolean | null = null, subscribeMessage = "";
-    let pageToken = token;
+    let pageToken = token, viaUserToken = false;
     if (token) {
       // ask Meta what this token is. A Page token is used as is; a USER token is exchanged for the token of the page it manages.
       let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
@@ -72,7 +92,7 @@ export async function POST(req: Request) {
         if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
         const pick = info.pages.length === 1 ? info.pages[0] : info.pages.find((p) => p.id === b.fbPageId);
         if (!pick) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} ที่ดูแลหลายเพจ เลือกเพจ Facebook ที่จะเชื่อม`, { pages: info.pages.map((p) => ({ id: p.id, name: p.name })) });
-        pageToken = pick.token; j = pick;
+        pageToken = pick.token; j = pick; viaUserToken = true;
       }
       accountId = j.id; name = j.name ?? ""; existing = all.find((x) => x.channelId === `facebook:${accountId}`) ?? existing;
       // subscribe the page to this app's webhook (needs the token to have pages_messaging)
@@ -86,8 +106,9 @@ export async function POST(req: Request) {
     const channelId = `facebook:${accountId}`;
     if (!secret && !existing?.appSecret) return fail(400, "ใส่ App Secret ด้วย (Meta App → Settings → Basic) — ใช้ตรวจว่าข้อความมาจาก Meta จริง");
     await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret: secret, verifyToken: existing?.verifyToken || defaultVerifyToken() || newVerifyToken(), sheetPageId, active: true });
+    const ads = viaUserToken ? await connectAdAccounts(token, sheetPageId, all) : null;
     invalidateCache();
-    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage }, noStore);
+    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage, ads }, noStore);
   } catch (e) {
     console.error("[api/channels]", e instanceof Error ? scrub(e.message) : "error");
     return fail(502, "บันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");

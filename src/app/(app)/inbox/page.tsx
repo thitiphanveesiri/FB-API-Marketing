@@ -73,7 +73,7 @@ export default function InboxPage() {
       if (!text.trim()) return;
       setSending(true); const r = await sendReply(lead.id, text.trim()); setSending(false);
       if (!r.ok) { toast(r.message, "error"); return; }
-      setText(""); toast("ส่งข้อความถึงลูกค้าแล้ว", "success"); return;
+      setText(""); toast(r.saved ? "ส่งข้อความถึงลูกค้าแล้ว" : "ส่งข้อความถึงลูกค้าแล้ว (บันทึกลงชีตไม่สำเร็จ — จะเข้าชีตเองผ่าน Webhook ห้ามกดส่งซ้ำ)", r.saved ? "success" : "info"); return;
     }
     sendMessage(lead.id, text.trim(), mode, attach ?? undefined);
     setText(""); setAttach(null);
