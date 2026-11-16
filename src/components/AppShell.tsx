@@ -20,6 +20,11 @@ const NAV = [
   { key: "followup", label: "ติดตาม", href: "/followup", icon: BellRing },
 ];
 
+/** Registers the service worker once, so the browser offers "install app" and push alerts can arrive. */
+function useServiceWorker() {
+  useEffect(() => { if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {}); }, []);
+}
+
 function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void) {
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close(); };
@@ -31,6 +36,7 @@ function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void)
 export default function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
+  useServiceWorker();
   const { data, user, filters, setFilters, eff, source, sourceMeta, reloadData, authed, signOut } = useStore();
   const [showWarn, setShowWarn] = useState(false);
   const [reloading, setReloading] = useState(false);

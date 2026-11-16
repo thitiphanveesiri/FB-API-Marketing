@@ -48,6 +48,8 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "post_comments", required: false, purpose: "Customer comments under page posts, with the time the page replied (used by the response-check page)", cols: [
     C("comment_id", "Unique", true), C("page_id", "→ pages.page_id", true), C("post_id", "Post ID / link"), C("commenter", "Customer name"), C("text", "Comment text"),
     C("commented_at", "YYYY-MM-DD HH:MM", true), C("replied_at", "YYYY-MM-DD HH:MM (blank = not replied yet)"), C("replied_by", "→ users.user_id or name") ] },
+  { tab: "push_subs", required: false, purpose: "Phones / browsers that receive alerts (written by the app when someone presses \u201cเปิดแจ้งเตือน\u201d)", cols: [
+    C("endpoint", "Push service address (unique)", true), C("user_id", "→ users.user_id", true), C("p256dh", "Public key"), C("auth", "Auth secret"), C("created_at", "ISO time"), C("active", "TRUE / FALSE") ] },
   { tab: "channels", required: false, purpose: "Chat channel connections (Facebook now; LINE / WhatsApp later). SECRET: holds access tokens — anyone who can open the sheet can read them", cols: [
     C("channel_id", "e.g. facebook:123456", true), C("channel", "facebook | line | whatsapp", true), C("account_id", "Facebook Page ID / LINE channel ID / WhatsApp phone-number ID"), C("name", "Account name"),
     C("access_token", "Page access token (secret)"), C("app_secret", "App secret, used to verify webhook signatures (secret)"), C("verify_token", "Text you paste into Meta's webhook set-up"),

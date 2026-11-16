@@ -5,6 +5,7 @@ import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
 import { readTabs } from "@/lib/googleSheets";
 import { mapSheets } from "@/lib/sheetMapper";
 import { upsertRows } from "@/lib/sheetsWrite";
+import { notifyInbound } from "@/lib/push";
 
 // PUBLIC endpoint (Meta calls it). It is excluded from the login gate in src/proxy.ts; every request is authenticated by Meta's signature instead.
 export const maxDuration = 30;
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
       if (w.messages.length) await upsertRows("messages", ["message_id"], w.messages, "insert");
       if (w.leadUpdates.length) await upsertRows("leads", ["lead_id"], w.leadUpdates, "updateOnly");
       wrote = true;
+      // phone alerts must never make Meta retry the webhook: errors are swallowed and the wait is capped
+      await Promise.race([notifyInbound(mapped.dataset, w.messages as { lead_id: string; direction: string; text: string }[], new Map(w.newLeads.map((l) => [String(l.lead_id), String(l.name)]))).catch(() => {}), new Promise((r) => setTimeout(r, 8000))]);
     }
     if (wrote) invalidateCache();
     return text("ok", 200);

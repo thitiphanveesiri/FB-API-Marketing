@@ -2,6 +2,7 @@
 import { useStore } from "@/lib/store";
 import { Avatar, Badge, Card } from "@/components/ui";
 import { scopeFor } from "@/lib/queries";
+import PushCard from "@/components/PushCard";
 
 export default function Account() {
   const { user, data } = useStore();
@@ -17,6 +18,7 @@ export default function Account() {
           <div><dt className="text-xs text-muted">Session</dt><dd>Signed in with Google</dd></div>
         </dl>
       </Card>
+      <PushCard />
     </div>
   );
 }
