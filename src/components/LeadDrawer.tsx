@@ -22,7 +22,7 @@ export function ConversationView({ leadId, height = 260 }: { leadId: string; hei
               {m.direction === "note" && <b className="mr-1 text-[10px] uppercase">Internal note</b>}
               {m.text}
               {m.attachment && <div className="mt-1 rounded bg-black/10 px-1.5 py-0.5 text-xs">📎 {m.attachment.name}</div>}
-              <div className={`mt-0.5 text-[10px] ${m.direction === "out" ? "text-white/70" : "text-gray-400"}`}>{fmtDateTime(m.at)}</div>
+              <div className={`mt-0.5 text-[10px] ${m.direction === "out" ? "text-white/70" : "text-gray-400"}`}>{fmtDateTime(m.at)}{m.direction === "out" && m.senderType === "automated" ? " · ตอบอัตโนมัติ" : ""}</div>
             </div>
           </div>
         ))}

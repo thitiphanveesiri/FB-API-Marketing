@@ -1,5 +1,6 @@
 // Pure: Google Sheet tabs (arrays of cell strings) -> Dataset. No network, no React.
 import type { Dataset } from "./dataset";
+import { isAutoReply, parseAutoRules } from "./autoReply";
 import { parseDate, parseNumber } from "./importer";
 import { SHEET_TABS } from "./sheetSchema";
 import {
@@ -157,6 +158,10 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (rep && !userIds.has(rep)) { users.push({ id: rep, name: rep, email: "", role: "Sales Representative", active: true, hue: hue(rep) }); userIds.add(rep); }
   }
 
+  // automatic-reply rules (tab auto_replies) — used below to tell the page's automatic messages from typed ones
+  const auto = parseAutoRules(tab("auto_replies").rows);
+  for (const w of auto.warnings) warn("auto_replies", w.row, w.message);
+
   // messages
   const messages: Record<string, Message[]> = {}; let mn = 0;
   for (const l of leads) messages[l.id] = [];
@@ -166,9 +171,14 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (!dir || !at) { warn("messages", r.n, "direction (in/out/note) and a valid sent_at are required — row skipped"); continue; }
     const att = r.get("attachment_name");
     const sentBy = dir === "out" ? r.get("sent_by") || undefined : undefined;
-    const senderType = pick(["customer", "human", "automated", "unknown"] as const, r.get("sender_type"))
-      ?? (dir === "in" ? "customer" : dir === "out" && sentBy ? "human" : "unknown");
-    messages[lid].push({ id: r.get("message_id") || `${lid}-M${++mn}`, leadId: lid, direction: dir, senderType, text: r.get("text"), at, attachment: att ? { name: att, kind: /\.(png|jpe?g|gif|webp)$/i.test(att) ? "image" : "file" } : undefined, simulated: false, sentBy });
+    // An explicit sender_type wins, except "unknown" (what the webhook writes for echoes) which only means "not decided yet".
+    const explicit = pick(["customer", "human", "automated", "unknown"] as const, r.get("sender_type"));
+    const senderApp = dir === "out" ? r.get("sender_app") || undefined : undefined;
+    const senderType = explicit && explicit !== "unknown" ? explicit
+      : dir === "in" ? "customer"
+      : dir === "out" ? (sentBy ? "human" : isAutoReply({ text: r.get("text"), senderApp }, auto.rules) ? "automated" : "unknown")
+      : "unknown";
+    messages[lid].push({ id: r.get("message_id") || `${lid}-M${++mn}`, leadId: lid, direction: dir, senderType, senderApp, text: r.get("text"), at, attachment: att ? { name: att, kind: /\.(png|jpe?g|gif|webp)$/i.test(att) ? "image" : "file" } : undefined, simulated: false, sentBy });
   }
   for (const k of Object.keys(messages)) messages[k].sort((a, b) => a.at.localeCompare(b.at));
 
