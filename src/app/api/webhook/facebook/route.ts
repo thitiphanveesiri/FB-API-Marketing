@@ -36,6 +36,7 @@ export async function POST(req: Request) {
   if (!events.length) return text("ok", 200);
   try {
     const mapped = getCached() ?? mapSheets(await readTabs()); setCached(mapped);
+    const knownMessageIds = new Set(Object.values(mapped.dataset.messages).flat().map((m) => m.id));
     const tz = process.env.APP_TZ || "Asia/Bangkok", base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
     let wrote = false;
     for (const ch of signed) {
@@ -45,12 +46,20 @@ export async function POST(req: Request) {
         const j = (await r.json().catch(() => ({}))) as { name?: string }; return r.ok ? j.name ?? "" : "";
       };
       const w = await buildWrites(mine, ch, mapped.dataset, tz, nameOf);
+      const newMessages = w.messages.filter((m) => {
+        const id = String(m.message_id ?? "");
+        if (!id || knownMessageIds.has(id)) return false;
+        knownMessageIds.add(id);
+        return true;
+      });
       if (w.newLeads.length) await upsertRows("leads", ["lead_id"], w.newLeads, "insert");
       if (w.messages.length) await upsertRows("messages", ["message_id"], w.messages, "insert");
       if (w.leadUpdates.length) await upsertRows("leads", ["lead_id"], w.leadUpdates, "updateOnly");
       wrote = true;
       // phone alerts must never make Meta retry the webhook: errors are swallowed and the wait is capped
-      await Promise.race([notifyInbound(mapped.dataset, w.messages as { lead_id: string; direction: string; text: string }[], new Map(w.newLeads.map((l) => [String(l.lead_id), String(l.name)]))).catch(() => {}), new Promise((r) => setTimeout(r, 8000))]);
+      await Promise.race([notifyInbound(mapped.dataset, newMessages as { message_id: string; lead_id: string; direction: string; text: string }[]).catch((e) => {
+        console.error("[webhook/facebook] push delivery failed", e instanceof Error ? e.name : "UnknownError");
+      }), new Promise((r) => setTimeout(r, 8000))]);
     }
     if (wrote) invalidateCache();
     return text("ok", 200);

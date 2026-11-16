@@ -4,6 +4,7 @@ import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { fbSyncConfigs } from "@/lib/channels";
 import { FbError, syncStep, type SyncState } from "@/lib/fbSync";
+import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 
 export const maxDuration = 60;
 export async function GET(req: Request) {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts }, noStore);
   } catch (e) {
-    if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, e.message, { rateLimited: e.rateLimited });
+    if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e.message, { rateLimited: e.rateLimited });
     console.error("[api/fb-sync]", e instanceof Error ? e.message : "error"); invalidateCache();
     return fail(502, "ดึงข้อมูลหรือบันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
   }

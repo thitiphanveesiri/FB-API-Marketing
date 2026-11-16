@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     let saved = true;
     try {
       // upsert: Meta's echo of this message may already be saved without a sender — this fills in sent_by
-      await upsertRows("messages", ["message_id"], [{ message_id: mid, lead_id: lead.id, direction: "out", text, sent_at: at, attachment_name: "", sent_by: me.id }], "upsert");
+      await upsertRows("messages", ["message_id"], [{ message_id: mid, lead_id: lead.id, direction: "out", sender_type: "human", text, sent_at: at, attachment_name: "", sent_by: me.id }], "upsert");
       await upsertRows("leads", ["lead_id"], [upd], "updateOnly");
     } catch (e) { saved = false; console.error("[api/reply] sent, but the sheet write failed:", e instanceof Error ? e.message.replace(/EAA[\w-]{20,}/g, "…") : "error"); }
     invalidateCache();

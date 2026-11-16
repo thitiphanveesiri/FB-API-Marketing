@@ -1,6 +1,6 @@
 // SERVER ONLY. Writes rows to the Google Sheet (service account must be an EDITOR) or to the local JSON file used in tests.
 import { readFile, writeFile, rename } from "fs/promises";
-import { applyPlan, Obj, planUpsert, UpsertMode } from "./sheetOps";
+import { applyPlan, norm, Obj, planUpsert, UpsertMode } from "./sheetOps";
 import { SHEET_TABS } from "./sheetSchema";
 import { accessToken } from "./googleSheets";
 
@@ -46,5 +46,72 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
     for (let i = 0; i < plan.appends.length; i += 1000)
       await call(`${base}/values/${encodeURIComponent(`${A1(title)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: plan.appends.slice(i, i + 1000) }) });
     return { updated: plan.updated, appended: plan.appended, skipped: plan.skipped };
+  });
+}
+
+/** Rewrite a row and its key in place, used to remove legacy plaintext push credentials. */
+export async function rewriteRow(tab: string, keyCol: string, oldKey: string, obj: Obj): Promise<void> {
+  if (!SHEET_TABS.some((t) => t.tab === tab)) throw new Error(`Unknown tab ${tab}`);
+  return serialized(async () => {
+    if (process.env.SHEETS_LOCAL_JSON) {
+      const file = process.env.SHEETS_LOCAL_JSON;
+      const all = JSON.parse(await readFile(file, "utf8")) as Record<string, string[][]>;
+      const grid = all[tab] ?? [];
+      const headers = grid[0] ?? [];
+      const keyIndex = headers.findIndex((header) => norm(header) === norm(keyCol));
+      const rowIndex = keyIndex < 0 ? -1 : grid.findIndex((row, i) => i > 0 && String(row[keyIndex] ?? "").trim() === oldKey);
+      if (rowIndex < 0 && keyIndex >= 0 && String(obj[keyCol] ?? "").trim() &&
+        grid.slice(1).some((row) => String(row[keyIndex] ?? "").trim() === String(obj[keyCol]).trim())) return;
+      if (rowIndex < 0) throw new Error(`Cannot find ${tab}.${keyCol} row to rewrite`);
+      const row = [...grid[rowIndex]];
+      for (const [name, value] of Object.entries(obj)) {
+        let col = headers.findIndex((header) => norm(header) === norm(name));
+        if (col < 0) { col = headers.length; headers.push(name); }
+        row[col] = String(value ?? "");
+      }
+      while (row.length < headers.length) row.push("");
+      grid[0] = headers;
+      grid[rowIndex] = row;
+      all[tab] = grid;
+      await writeFile(`${file}.tmp`, JSON.stringify(all)); await rename(`${file}.tmp`, file);
+      return;
+    }
+
+    const id = process.env.GOOGLE_SHEET_ID!;
+    const auth = { Authorization: `Bearer ${await accessToken(true)}`, "Content-Type": "application/json" };
+    const base = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
+    const call = async (url: string, init?: RequestInit) => {
+      const response = await fetch(url, { ...init, headers: { ...auth, ...(init?.headers ?? {}) }, cache: "no-store" });
+      if (!response.ok) throw new Error(`Google Sheets ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      return response.json();
+    };
+    const meta = (await call(`${base}?fields=sheets.properties.title`)) as { sheets: { properties: { title: string } }[] };
+    const title = meta.sheets.map((sheet) => sheet.properties.title).find((name) => name.trim().toLowerCase() === tab);
+    if (!title) throw new Error(`Cannot find ${tab} tab to rewrite`);
+    const result = (await call(`${base}/values/${encodeURIComponent(A1(title))}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`)) as { values?: (string | number | boolean)[][] };
+    const grid = result.values?.map((row) => row.map(String)) ?? [];
+    const headers = grid[0] ?? [];
+    const keyIndex = headers.findIndex((header) => norm(header) === norm(keyCol));
+    const rowIndex = keyIndex < 0 ? -1 : grid.findIndex((row, i) => i > 0 && String(row[keyIndex] ?? "").trim() === oldKey);
+    if (rowIndex < 0 && keyIndex >= 0 && String(obj[keyCol] ?? "").trim() &&
+      grid.slice(1).some((row) => String(row[keyIndex] ?? "").trim() === String(obj[keyCol]).trim())) return;
+    if (rowIndex < 0) throw new Error(`Cannot find ${tab}.${keyCol} row to rewrite`);
+    const row = [...grid[rowIndex]];
+    for (const [name, value] of Object.entries(obj)) {
+      let col = headers.findIndex((header) => norm(header) === norm(name));
+      if (col < 0) {
+        col = headers.length;
+        headers.push(name);
+        await call(`${base}/values/${encodeURIComponent(`${A1(title)}!${colLetter(col)}1`)}?valueInputOption=RAW`, {
+          method: "PUT", body: JSON.stringify({ values: [[name]] }),
+        });
+      }
+      row[col] = String(value ?? "");
+    }
+    while (row.length < headers.length) row.push("");
+    await call(`${base}/values:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ valueInputOption: "RAW", data: [{ range: `${A1(title)}!A${rowIndex + 1}:${colLetter(headers.length - 1)}${rowIndex + 1}`, values: [row] }] }),
+    });
   });
 }

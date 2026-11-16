@@ -83,6 +83,7 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 - Without Google sign-in configured, the demo build is open to anyone with the URL. Never connect real data without it.
 - Sheets API quotas apply; fine for a small team. Move to Supabase (`docs/schema.sql`) when rows/users grow.
 - Customer names, phones and chats are personal data (PDPA): limit who can open the Sheet itself.
+- For the installable mobile Inbox and Web Push setup, see `docs/NOTIFICATIONS.md`.
 
 ## 8. Testing without Google (developers)
 `SHEETS_LOCAL_JSON=/path/to/tabs.json npm start` reads tabs from a JSON file (`{ "pages": [["page_id","name"],…], … }`) instead of Google. `npx tsx scripts/sheet-roundtrip.ts` checks the mapper; `npx tsx scripts/make-sheet-template.ts` regenerates the workbooks.

@@ -22,7 +22,11 @@ const NAV = [
 
 /** Registers the service worker once, so the browser offers "install app" and push alerts can arrive. */
 function useServiceWorker() {
-  useEffect(() => { if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {}); }, []);
+  useEffect(() => {
+    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
+      console.error("[pwa] service worker registration failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }, []);
 }
 
 function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void) {

@@ -135,7 +135,10 @@ export default function InboxPage() {
                       {m.direction === "note" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase"><StickyNote size={11} /> Internal note · only your team sees this</p>}
                       {m.text}
                       {m.attachment && <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs">{m.attachment.kind === "image" ? "🖼" : "📎"} {m.attachment.name}</div>}
-                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>{fmtDateTime(m.at)}{m.simulated && " · not sent"}{m.direction === "out" && m.sentBy && ` · ${data.users.find((u) => u.id === m.sentBy)?.name ?? "—"}`}</p>
+                      <p className={cn("mt-0.5 text-[10px]", m.direction === "out" ? "text-white/70" : "text-gray-400")}>
+                        {fmtDateTime(m.at)}{m.simulated && " · not sent"}
+                        {m.direction === "out" && !m.simulated && ` · ${m.senderType === "human" ? (m.sentBy ? data.users.find((u) => u.id === m.sentBy)?.name ?? "เจ้าหน้าที่" : "เจ้าหน้าที่") : m.senderType === "automated" ? "ตอบอัตโนมัติ" : "ไม่ทราบว่าเป็นคนหรือระบบ"}`}
+                      </p>
                     </div>
                   </div>
                 ))}

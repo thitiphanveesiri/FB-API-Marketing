@@ -165,7 +165,10 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (!leadIds.has(lid)) { warn("messages", r.n, `lead_id "${lid}" not found — row skipped`); continue; }
     if (!dir || !at) { warn("messages", r.n, "direction (in/out/note) and a valid sent_at are required — row skipped"); continue; }
     const att = r.get("attachment_name");
-    messages[lid].push({ id: r.get("message_id") || `${lid}-M${++mn}`, leadId: lid, direction: dir, text: r.get("text"), at, attachment: att ? { name: att, kind: /\.(png|jpe?g|gif|webp)$/i.test(att) ? "image" : "file" } : undefined, simulated: false, sentBy: dir === "out" ? r.get("sent_by") || undefined : undefined });
+    const sentBy = dir === "out" ? r.get("sent_by") || undefined : undefined;
+    const senderType = pick(["customer", "human", "automated", "unknown"] as const, r.get("sender_type"))
+      ?? (dir === "in" ? "customer" : dir === "out" && sentBy ? "human" : "unknown");
+    messages[lid].push({ id: r.get("message_id") || `${lid}-M${++mn}`, leadId: lid, direction: dir, senderType, text: r.get("text"), at, attachment: att ? { name: att, kind: /\.(png|jpe?g|gif|webp)$/i.test(att) ? "image" : "file" } : undefined, simulated: false, sentBy });
   }
   for (const k of Object.keys(messages)) messages[k].sort((a, b) => a.at.localeCompare(b.at));
 

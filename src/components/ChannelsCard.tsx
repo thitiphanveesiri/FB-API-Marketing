@@ -4,7 +4,8 @@ import { Check, Copy, Plug } from "lucide-react";
 import { Badge, Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 
-interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
+interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
+interface ChannelList { channels: Ch[]; webhookUrl: string; verifyToken: string }
 const inp = "w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-mono";
 
 function CopyBox({ label, value }: { label: string; value: string }) {
@@ -24,16 +25,36 @@ export default function ChannelsCard() {
   const [token, setToken] = useState(""); const [secret, setSecret] = useState(""); const [pageId, setPageId] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // channelId being updated, "" = new
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
-  const [adAcct, setAdAcct] = useState(""); const [adToken, setAdToken] = useState(""); const [adEdit, setAdEdit] = useState(false); const [adMsg, setAdMsg] = useState("");
+  const [adAcct, setAdAcct] = useState(""); const [adToken, setAdToken] = useState(""); const [adForcePage, setAdForcePage] = useState(false); const [adEdit, setAdEdit] = useState(false); const [editingAdChannel, setEditingAdChannel] = useState<string | null>(null); const [adMsg, setAdMsg] = useState("");
   const admin = user.role === "Administrator";
 
-  const load = useCallback(async () => {
-    try { const j = await (await fetch("/api/channels", { cache: "no-store" })).json(); if (j.ok) { setList(j.channels); setHook(j.webhookUrls.facebook); setVerify(j.verifyToken || ""); } else setList([]); } catch { setList([]); }
+  const load = useCallback(async (): Promise<ChannelList | null> => {
+    try {
+      const response = await fetch("/api/channels", { cache: "no-store" });
+      if (!response.ok) return null;
+      const result = await response.json() as { ok?: boolean; channels?: Ch[]; webhookUrls?: { facebook?: string }; verifyToken?: string };
+      if (!result.ok || !Array.isArray(result.channels)) return null;
+      return { channels: result.channels, webhookUrl: result.webhookUrls?.facebook ?? "", verifyToken: result.verifyToken ?? "" };
+    } catch { return null; }
   }, []);
-  useEffect(() => { if (admin) void load(); }, [admin, load]);
-  useEffect(() => { if (!pageId) setPageId(data.pages.find((p) => p.active)?.id ?? ""); }, [data.pages, pageId]);
+  const refresh = useCallback(async () => {
+    const result = await load();
+    setList(result?.channels ?? []);
+    if (result) { setHook(result.webhookUrl); setVerify(result.verifyToken); }
+  }, [load]);
+  useEffect(() => {
+    if (!admin) return;
+    let active = true;
+    void load().then((result) => {
+      if (!active) return;
+      setList(result?.channels ?? []);
+      if (result) { setHook(result.webhookUrl); setVerify(result.verifyToken); }
+    });
+    return () => { active = false; };
+  }, [admin, load]);
   if (!admin || list === null) return null;
 
+  const selectedPageId = pageId || data.pages.find((p) => p.active)?.id || "";
   const fb = list.filter((c) => c.channel === "facebook" && c.active && c.hasToken);
   const ads = list.filter((c) => c.channel === "ads" && c.active && c.hasToken);
   const form = editing !== null || fb.length === 0;
@@ -42,10 +63,10 @@ export default function ChannelsCard() {
   const save = async () => {
     setBusy(true); setMsg("");
     try {
-      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: pageId, fbPageId: fbPageId || undefined }) });
+      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: selectedPageId, fbPageId: fbPageId || undefined }) });
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!j.ok) { setChoices(Array.isArray(j.pages) ? j.pages : []); setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
-      setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setEditing(null); await load(); await reloadData(true);
+      setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setEditing(null); await refresh(); await reloadData(true);
       const ads = j.ads as { added: number; existing: number; names: string[]; message: string } | null;
       const adsNote = !ads ? "" : ads.added + ads.existing > 0 ? ` · พบบัญชีโฆษณา ${ads.added + ads.existing} บัญชี (${ads.names.join(", ")}) ดึงพร้อมแชทได้เลย` : ` · ${ads.message}`;
       const adsBad = !!ads && ads.added + ads.existing === 0;
@@ -55,17 +76,17 @@ export default function ChannelsCard() {
   const saveAds = async () => {
     setBusy(true); setAdMsg("");
     try {
-      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "ads", accountId: adAcct, accessToken: adToken, sheetPageId: pageId }) });
+      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "ads", accountId: adAcct, accessToken: adToken, sheetPageId: selectedPageId, forceSheetPage: adForcePage }) });
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!j.ok) { setAdMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
-      setAdToken(""); setAdAcct(""); setAdEdit(false); await load();
-      toast(j.currency && j.currency !== "THB" ? `เชื่อมบัญชีโฆษณา ${j.name} แล้ว แต่สกุลเงินเป็น ${j.currency} (ระบบแสดงผลเป็นบาท)` : `เชื่อมบัญชีโฆษณา ${j.name || ""} แล้ว`, j.currency && j.currency !== "THB" ? "info" : undefined);
+      setAdToken(""); setAdAcct(""); setAdEdit(false); setEditingAdChannel(null); await refresh();
+      toast(j.mappingUpdated ? `เปลี่ยนเพจปลายทางของ ${j.name || adAcct} แล้ว` : j.currency && j.currency !== "THB" ? `เชื่อมบัญชีโฆษณา ${j.name} แล้ว แต่สกุลเงินเป็น ${j.currency} (ระบบแสดงผลเป็นบาท)` : `เชื่อมบัญชีโฆษณา ${j.name || ""} แล้ว`, j.currency && j.currency !== "THB" ? "info" : undefined);
     } catch { setAdMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
   };
   const disconnect = async (c: Ch) => {
     if (!window.confirm(`ยกเลิกการเชื่อมต่อเพจ ${c.name || c.accountId}? ระบบจะลบ Token ออกจากชีต`)) return;
     setBusy(true);
-    try { await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "disconnect", channelId: c.channelId }) }); await load(); } finally { setBusy(false); }
+    try { await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "disconnect", channelId: c.channelId }) }); await refresh(); } finally { setBusy(false); }
   };
 
   return (
@@ -82,7 +103,7 @@ export default function ChannelsCard() {
           <div key={c.channelId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
             <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">Token …{c.tokenTail} · เก็บในเพจ {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
             {!c.hasSecret && <Badge tone="red">ยังไม่มี App Secret</Badge>}
-            <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setPageId(c.sheetPageId || pageId); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
+            <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setPageId(c.sheetPageId || selectedPageId); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>))}
 
         <div className="max-w-xl space-y-3 rounded-xl bg-gray-50 p-3">
@@ -109,7 +130,7 @@ export default function ChannelsCard() {
               <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
             <label className="block text-xs font-medium text-muted">App Secret (Meta App → Settings → Basic){editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
               <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} className={`${inp} mt-1`} /></label>
-            <Select label="เก็บแชทเข้าเพจในระบบ" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+            <Select label="เก็บแชทเข้าเพจในระบบ" value={selectedPageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
             {choices.length > 0 && <Select label="เลือกเพจ Facebook ที่จะเชื่อม" value={fbPageId} onChange={setFbPageId} options={[{ value: "", label: "— เลือกเพจ —" }, ...choices.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))]} />}
             {msg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{msg}</p>}
             <div className="flex gap-2"><Btn variant="primary" onClick={save} disabled={busy || (!editing && !token) || (choices.length > 0 && !fbPageId)}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{editing !== null && <Btn onClick={() => { setEditing(null); setMsg(""); }}>ยกเลิก</Btn>}</div>
@@ -122,21 +143,31 @@ export default function ChannelsCard() {
           <h3 className="text-sm font-semibold">โฆษณา — ดึงสถิติจาก Meta โดยตรง (ไม่ต้องอัปโหลดไฟล์)</h3>
           {ads.map((c) => (
             <div key={c.channelId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
-              <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">act_{c.accountId} · Token …{c.tokenTail} · เก็บในเพจ {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
-              <span className="ml-auto"><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
+              <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">act_{c.accountId} · Token …{c.tokenTail} · {c.forceSheetPage ? "บังคับเก็บทั้งหมดใน" : "เพจสำรอง"} {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
+              <span className="ml-auto flex gap-2">
+                <Btn size="sm" onClick={() => { setAdAcct(c.accountId); setAdToken(""); setPageId(c.sheetPageId || selectedPageId); setAdForcePage(c.forceSheetPage); setEditingAdChannel(c.channelId); setAdEdit(true); setAdMsg(""); }} disabled={busy}>แก้ไข</Btn>
+                <Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn>
+              </span>
             </div>))}
           {adForm ? (
             <div className="max-w-xl space-y-3 rounded-xl border border-line p-3">
+              <h4 className="text-sm font-semibold">{editingAdChannel ? "แก้ไขบัญชีโฆษณา" : "เชื่อมบัญชีโฆษณา"}</h4>
               <label className="block text-xs font-medium text-muted">Ad Account ID (ตัวเลขใน Ads Manager เช่น 1234567890)
-                <input value={adAcct} onChange={(e) => setAdAcct(e.target.value)} placeholder="act_1234567890" className={`${inp} mt-1`} /></label>
-              <label className="block text-xs font-medium text-muted">Access Token ที่มีสิทธิ์ ads_read
+                <input value={adAcct} onChange={(e) => setAdAcct(e.target.value)} disabled={busy || !!editingAdChannel} placeholder="act_1234567890" className={`${inp} mt-1`} /></label>
+              <label className="block text-xs font-medium text-muted">Access Token ที่มีสิทธิ์ ads_read{editingAdChannel ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
                 <input type="password" autoComplete="off" value={adToken} onChange={(e) => setAdToken(e.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
-              <Select label="เก็บข้อมูลโฆษณาเข้าเพจในระบบ" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+              <Select label="เพจในระบบปลายทาง (ค่าเริ่มต้นของบัญชีนี้)" value={selectedPageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+              <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-line p-3 text-sm">
+                <input type="checkbox" checked={adForcePage} onChange={(e) => setAdForcePage(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>บังคับใช้เพจที่เลือกกับโฆษณาทั้งหมดในบัญชีนี้</span>
+              </label>
+              <p className="text-xs text-muted">ถ้าไม่เลือก ระบบใช้ mapping ของเพจ Facebook ต้นทางก่อน และใช้เพจนี้เป็นค่าเริ่มต้นเมื่อไม่พบ mapping</p>
+              {editingAdChannel && <p className="text-xs text-muted">ถ้าโทเคนหมดอายุ ให้วางโทเคนใหม่ที่มีสิทธิ์ ads_read; ถ้าต้องการเปลี่ยนเฉพาะเพจปลายทาง ให้เว้นช่องโทเคนว่าง</p>}
               {adMsg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{adMsg}</p>}
-              <div className="flex gap-2"><Btn variant="primary" onClick={saveAds} disabled={busy || !adAcct || !adToken}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{ads.length > 0 && <Btn onClick={() => { setAdEdit(false); setAdMsg(""); }}>ยกเลิก</Btn>}</div>
+              <div className="flex gap-2"><Btn variant="primary" onClick={saveAds} disabled={busy || !adAcct || (!adToken && !editingAdChannel)}>{busy ? "กำลังตรวจสอบ…" : editingAdChannel ? "บันทึกการแก้ไข" : "บันทึกและเชื่อมต่อ"}</Btn>{ads.length > 0 && <Btn onClick={() => { setAdEdit(false); setEditingAdChannel(null); setAdAcct(""); setAdToken(""); setAdMsg(""); }}>ยกเลิก</Btn>}</div>
               <p className="text-xs text-amber-700">⚠ Token เก็บในแท็บ <b>channels</b> ของ Google Sheet เหมือนช่องทางแชท · คุณต้องเป็นผู้ดูแลบัญชีโฆษณานี้ · ปุ่มดึงข้อมูลอยู่ด้านล่าง การอัปโหลดไฟล์ด้านล่างสุดเก็บไว้เป็นทางสำรอง</p>
             </div>
-          ) : <Btn size="sm" onClick={() => setAdEdit(true)}>+ เชื่อมบัญชีโฆษณาเพิ่ม</Btn>}
+          ) : <Btn size="sm" onClick={() => { setAdAcct(""); setAdToken(""); setAdForcePage(false); setEditingAdChannel(null); setAdMsg(""); setAdEdit(true); }}>+ เชื่อมบัญชีโฆษณาเพิ่ม</Btn>}
         </div>
       </div>
     </Card>

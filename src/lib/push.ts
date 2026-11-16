@@ -1,58 +1,184 @@
-// SERVER ONLY. Web Push to the salespeople's phones. Subscriptions live in the Google Sheet tab "push_subs" (endpoint = key).
+// SERVER ONLY. Web Push subscriptions and notification audit data live in Google Sheets.
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import * as webpush from "web-push";
 import { readTabs } from "./googleSheets";
-import { upsertRows } from "./sheetsWrite";
+import { rewriteRow, upsertRows } from "./sheetsWrite";
+import type { Obj } from "./sheetOps";
 import { isClosingMessage } from "./sla";
 import type { Dataset } from "./dataset";
 import type { Lead } from "./types";
 
-export const pushConfigured = () => !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+export const pushConfigured = () => !!(
+  process.env.VAPID_PUBLIC_KEY?.trim() &&
+  process.env.VAPID_PRIVATE_KEY?.trim() &&
+  process.env.VAPID_SUBJECT?.trim() &&
+  process.env.PUSH_SUBSCRIPTION_SECRET &&
+  process.env.PUSH_SUBSCRIPTION_SECRET.length >= 32
+);
 export const vapidPublicKey = () => process.env.VAPID_PUBLIC_KEY ?? "";
 export interface Note { title: string; body: string; url?: string; tag?: string }
 export interface SubInput { endpoint: string; keys: { p256dh: string; auth: string } }
-interface Sub { endpoint: string; userId: string; p256dh: string; auth: string }
+interface Sub { endpoint: string; endpointKey: string; userId: string; keys: { p256dh: string; auth: string } }
+export interface AuditInput {
+  notification_id: string;
+  kind: "inbound" | "followup";
+  lead_id: string;
+  message_ids?: string;
+  state_key?: string;
+  recipient_id: string;
+  actor_id?: string;
+}
+export interface AuditResult { status: "sent" | "failed" | "duplicate"; sent: number; failed: number; detail: string }
 
 let cache: { at: number; subs: Sub[] } | null = null;
 const TTL = 30_000;
+let dispatchChain: Promise<unknown> = Promise.resolve();
 export const invalidateSubs = () => { cache = null; };
+
+const endpointKey = (endpoint: string) => createHash("sha256").update(endpoint).digest("hex");
+function encryptionKey(): Buffer {
+  const secret = process.env.PUSH_SUBSCRIPTION_SECRET;
+  if (!secret || secret.length < 32) throw new Error("PUSH_SUBSCRIPTION_SECRET must be at least 32 characters");
+  return createHash("sha256").update(secret, "utf8").digest();
+}
+function encryptSubscription(sub: SubInput): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const body = Buffer.concat([cipher.update(JSON.stringify(sub), "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${body.toString("base64url")}`;
+}
+function decryptSubscription(value: string): SubInput {
+  const [iv, tag, body, extra] = value.split(".");
+  if (!iv || !tag || !body || extra) throw new Error("Invalid encrypted push subscription");
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  const parsed = JSON.parse(Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8")) as SubInput;
+  if (!validSubscription(parsed)) throw new Error("Invalid stored push subscription");
+  return parsed;
+}
+function validEndpoint(endpoint: string): boolean {
+  if (endpoint.length > 2048) return false;
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch { return false; }
+}
+function validSubscription(s: SubInput | undefined): s is SubInput {
+  return !!s && validEndpoint(s.endpoint) &&
+    /^[A-Za-z0-9_-]{20,200}$/.test(s.keys?.p256dh ?? "") &&
+    /^[A-Za-z0-9_-]{16,200}$/.test(s.keys?.auth ?? "");
+}
 
 async function loadSubs(fresh = false): Promise<Sub[]> {
   if (!fresh && cache && Date.now() - cache.at < TTL) return cache.subs;
   const grid = (await readTabs()).push_subs ?? [];
   const head = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
   const at = (r: string[], n: string) => { const i = head.indexOf(n); return i < 0 ? "" : String(r[i] ?? "").trim(); };
-  const subs = grid.slice(1).filter((r) => at(r, "endpoint") && at(r, "active").toLowerCase() !== "false")
-    .map((r): Sub => ({ endpoint: at(r, "endpoint"), userId: at(r, "user_id"), p256dh: at(r, "p256dh"), auth: at(r, "auth") }));
+  const subs: Sub[] = [], migrations: { oldEndpoint: string; row: Obj }[] = [];
+  for (const row of grid.slice(1)) {
+    if (at(row, "active").toLowerCase() === "false") continue;
+    const key = at(row, "endpoint"), userId = at(row, "user_id");
+    if (!key || !userId) continue;
+    if (/^[a-f0-9]{64}$/.test(key)) {
+      const encrypted = at(row, "encrypted_subscription");
+      if (!encrypted) continue;
+      const subscription = decryptSubscription(encrypted);
+      subs.push({ endpoint: subscription.endpoint, endpointKey: key, userId, keys: subscription.keys });
+      continue;
+    }
+
+    // Migrate existing plaintext rows in place and erase their old endpoint/key cells.
+    const legacy = { endpoint: key, keys: { p256dh: at(row, "p256dh"), auth: at(row, "auth") } };
+    if (!validSubscription(legacy)) continue;
+    const hashed = endpointKey(key);
+    subs.push({ endpoint: key, endpointKey: hashed, userId, keys: legacy.keys });
+    if (pushConfigured()) migrations.push({ oldEndpoint: key, row: {
+      endpoint: hashed, user_id: userId, encrypted_subscription: encryptSubscription(legacy),
+      created_at: at(row, "created_at") || new Date().toISOString(), active: true, p256dh: "", auth: "",
+    } });
+  }
+  for (const migration of migrations) await rewriteRow("push_subs", "endpoint", migration.oldEndpoint, migration.row);
   cache = { at: Date.now(), subs };
   return subs;
 }
 
-const validEndpoint = (e: string) => /^https:\/\/[^\s]{10,1000}$/.test(e);
 export async function saveSub(userId: string, s: SubInput): Promise<void> {
-  if (!validEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw new Error("การสมัครรับแจ้งเตือนไม่ถูกต้อง");
-  await upsertRows("push_subs", ["endpoint"], [{ endpoint: s.endpoint, user_id: userId, p256dh: s.keys.p256dh, auth: s.keys.auth, created_at: new Date().toISOString(), active: true }], "upsert");
+  if (!pushConfigured()) throw new Error("ตั้งค่า VAPID และ PUSH_SUBSCRIPTION_SECRET ก่อน");
+  if (!validSubscription(s)) throw new Error("การสมัครรับแจ้งเตือนไม่ถูกต้อง");
+  await loadSubs(true);
+  await upsertRows("push_subs", ["endpoint"], [{
+    endpoint: endpointKey(s.endpoint), user_id: userId, encrypted_subscription: encryptSubscription(s),
+    created_at: new Date().toISOString(), active: true, p256dh: "", auth: "",
+  }], "upsert");
   invalidateSubs();
 }
 export async function removeSub(userId: string, endpoint: string): Promise<void> {
-  const mine = (await loadSubs(true)).find((s) => s.endpoint === endpoint && s.userId === userId); if (!mine) return;
-  await upsertRows("push_subs", ["endpoint"], [{ endpoint, active: false }], "updateOnly"); invalidateSubs();
+  if (!validEndpoint(endpoint)) throw new Error("การสมัครรับแจ้งเตือนไม่ถูกต้อง");
+  const mine = (await loadSubs(true)).find((s) => s.endpoint === endpoint && s.userId === userId);
+  if (!mine) return;
+  await upsertRows("push_subs", ["endpoint"], [{ endpoint: mine.endpointKey, active: false }], "updateOnly");
+  invalidateSubs();
 }
 
-/** Send to every device of the given users. Dead subscriptions (404/410) are switched off. Never throws. */
+/** Send to every active device registered to these users. Dead endpoints are disabled in the sheet. */
 export async function notifyUsers(userIds: string[], n: Note): Promise<{ sent: number; failed: number }> {
   if (!pushConfigured() || !userIds.length) return { sent: 0, failed: 0 };
-  try {
-    webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:admin@example.com", process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
-    const want = new Set(userIds), subs = (await loadSubs()).filter((s) => want.has(s.userId));
-    const dead: string[] = []; let sent = 0, failed = 0;
-    await Promise.all(subs.map(async (s) => {
-      try { await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(n), { TTL: 3600, urgency: "high" }); sent++; }
-      catch (e) { failed++; const code = (e as { statusCode?: number }).statusCode; if (code === 404 || code === 410) dead.push(s.endpoint); }
-    }));
-    if (dead.length) { await upsertRows("push_subs", ["endpoint"], dead.map((endpoint) => ({ endpoint, active: false })), "updateOnly").catch(() => {}); invalidateSubs(); }
-    return { sent, failed };
-  } catch (e) { console.error("[push]", e instanceof Error ? e.message.slice(0, 120) : "error"); return { sent: 0, failed: 0 }; }
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT!, process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
+  const want = new Set(userIds), subs = (await loadSubs()).filter((s) => want.has(s.userId));
+  const dead: string[] = []; let sent = 0, failed = 0;
+  await Promise.all(subs.map(async (s) => {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, JSON.stringify(n), { TTL: 3600, urgency: "high" });
+      sent++;
+    } catch (e) {
+      failed++;
+      const code = typeof e === "object" && e !== null && "statusCode" in e ? Number(e.statusCode) : 0;
+      if (code === 404 || code === 410) dead.push(s.endpointKey);
+      else console.error("[push] delivery failed", { code: code || "unknown" });
+    }
+  }));
+  if (dead.length) {
+    try { await upsertRows("push_subs", ["endpoint"], dead.map((endpoint) => ({ endpoint, active: false })), "updateOnly"); }
+    catch (e) { console.error("[push] could not disable expired subscriptions", e instanceof Error ? e.name : "UnknownError"); }
+    invalidateSubs();
+  }
+  return { sent, failed };
 }
+
+/** Record an idempotent audit row before delivery, then persist its result. */
+export async function notifyAudited(input: AuditInput, userIds: string[], note: Note): Promise<AuditResult> {
+  const run = async (): Promise<AuditResult> => {
+    const grid = (await readTabs()).notification_log ?? [];
+    const headers = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
+    const idCol = headers.indexOf("notification_id"), statusCol = headers.indexOf("status");
+    const prior = idCol < 0 ? "" : grid.slice(1).find((row) => String(row[idCol] ?? "").trim() === input.notification_id);
+    const priorStatus = prior && statusCol >= 0 ? String(prior[statusCol] ?? "").trim().toLowerCase() : "";
+    if (priorStatus === "sent" || priorStatus === "pending") return { status: "duplicate", sent: 0, failed: 0, detail: priorStatus };
+
+    const base: Obj = { ...input, sent_at: new Date().toISOString(), sent_count: 0, failed_count: 0, detail: "" };
+    await upsertRows("notification_log", ["notification_id"], [{ ...base, status: "pending" }], "upsert");
+    let result: { sent: number; failed: number }, detail = "";
+    try {
+      result = await notifyUsers(userIds, note);
+      if (!result.sent) { result = { ...result, failed: Math.max(1, result.failed) }; detail = "no_active_subscription"; }
+    } catch (e) {
+      result = { sent: 0, failed: 1 };
+      detail = "delivery_error";
+      console.error("[push] audited delivery failed", e instanceof Error ? e.name : "UnknownError");
+    }
+    const status = result.sent > 0 ? "sent" : "failed";
+    await upsertRows("notification_log", ["notification_id"], [{
+      ...base, sent_at: new Date().toISOString(), status, sent_count: result.sent, failed_count: result.failed, detail,
+    }], "upsert");
+    return { status, ...result, detail };
+  };
+  const pending = dispatchChain.then(run, run);
+  dispatchChain = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+export const stableNotificationId = (...parts: string[]) =>
+  createHash("sha256").update(parts.join("\u0000"), "utf8").digest("hex");
 
 /** Who should hear about a lead: its salesperson, or (no owner yet) the managers and administrators. */
 export function recipientsFor(ds: Dataset, lead: Pick<Lead, "repId"> | null): string[] {
@@ -61,7 +187,7 @@ export function recipientsFor(ds: Dataset, lead: Pick<Lead, "repId"> | null): st
 }
 export const managersOf = (ds: Dataset): string[] => ds.users.filter((u) => u.active && (u.role === "Administrator" || u.role === "Sales Manager")).map((u) => u.id);
 
-/** Quiet hours (default 22:00–08:00, Bangkok): new-message alerts are not sent so phones stay silent at night. PUSH_QUIET_HOURS="off" or "23-7". */
+/** Quiet hours (default 22:00–08:00, Bangkok): new-message alerts are not sent so phones stay silent at night. */
 export function isQuiet(date = new Date(), tz = process.env.APP_TZ || "Asia/Bangkok"): boolean {
   const cfg = (process.env.PUSH_QUIET_HOURS || "22-8").trim().toLowerCase(); if (cfg === "off") return false;
   const m = /^(\d{1,2})-(\d{1,2})$/.exec(cfg); const from = m ? +m[1] : 22, to = m ? +m[2] : 8;
@@ -69,13 +195,25 @@ export function isQuiet(date = new Date(), tz = process.env.APP_TZ || "Asia/Bang
   return from > to ? h >= from || h < to : h >= from && h < to;
 }
 
-/** One push per customer for the inbound messages of a webhook batch (closing messages like "ขอบคุณค่ะ" and stickers stay silent). */
-export async function notifyInbound(ds: Dataset, msgs: { lead_id: string; direction: string; text: string }[], newLeadNames: Map<string, string>): Promise<void> {
+/** One audited push per assigned Sales Rep for the inbound messages in a webhook batch. */
+export async function notifyInbound(ds: Dataset, msgs: { message_id: string; lead_id: string; direction: string; text: string }[]): Promise<void> {
   if (!pushConfigured() || isQuiet()) return;
-  const last = new Map<string, { text: string; n: number }>();
-  for (const m of msgs) { if (m.direction !== "in" || isClosingMessage(m.text)) continue; const c = last.get(m.lead_id); last.set(m.lead_id, { text: m.text, n: (c?.n ?? 0) + 1 }); }
-  for (const [id, v] of last) {
-    const lead = ds.leads.find((l) => l.id === id) ?? null;
-    await notifyUsers(recipientsFor(ds, lead), { title: `ข้อความใหม่ · ${lead?.name ?? newLeadNames.get(id) ?? "ลูกค้า"}${v.n > 1 ? ` (${v.n})` : ""}`, body: v.text.slice(0, 120), url: "/inbox", tag: `msg-${id}` });
+  const grouped = new Map<string, { text: string; ids: string[] }>();
+  for (const m of msgs) {
+    if (m.direction !== "in" || !m.message_id || isClosingMessage(m.text)) continue;
+    const group = grouped.get(m.lead_id) ?? { text: "", ids: [] };
+    group.text = m.text;
+    group.ids.push(m.message_id);
+    grouped.set(m.lead_id, group);
+  }
+  for (const [leadId, group] of grouped) {
+    const lead = ds.leads.find((l) => l.id === leadId);
+    const rep = lead?.repId && ds.users.find((u) => u.id === lead.repId && u.active && u.role === "Sales Representative");
+    if (!lead || !rep) continue;
+    const ids = [...new Set(group.ids)].sort();
+    const id = stableNotificationId("inbound", leadId, rep.id, ids.join("|"));
+    await notifyAudited({
+      notification_id: id, kind: "inbound", lead_id: leadId, message_ids: ids.join(","), recipient_id: rep.id,
+    }, [rep.id], { title: "ข้อความใหม่ใน Inbox", body: "มีลูกค้าส่งข้อความใหม่ เปิดแอปเพื่อดู", url: "/inbox", tag: `msg-${leadId}` });
   }
 }

@@ -5,8 +5,8 @@ import { upsertRows } from "./sheetsWrite";
 import { fbConfigs, type FbPageCfg } from "./fbSync";
 
 export type ChannelKind = "facebook" | "line" | "whatsapp" | "ads"; // "ads" = Meta Marketing API (ad account)
-export interface Channel { channelId: string; channel: ChannelKind; accountId: string; name: string; accessToken: string; appSecret: string; verifyToken: string; sheetPageId: string; active: boolean; updatedAt: string }
-export interface PublicChannel { channelId: string; channel: ChannelKind; accountId: string; name: string; sheetPageId: string; active: boolean; updatedAt: string; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
+export interface Channel { channelId: string; channel: ChannelKind; accountId: string; name: string; accessToken: string; appSecret: string; verifyToken: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; updatedAt: string }
+export interface PublicChannel { channelId: string; channel: ChannelKind; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; updatedAt: string; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
 
 const TTL = 30_000;
 let cache: { at: number; list: Channel[] } | null = null;
@@ -20,6 +20,7 @@ export async function loadChannels(fresh = false): Promise<Channel[]> {
   const list = grid.slice(1).filter((r) => at(r, "channel_id")).map((r): Channel => ({
     channelId: at(r, "channel_id"), channel: (at(r, "channel").toLowerCase() || "facebook") as ChannelKind, accountId: at(r, "account_id"), name: at(r, "name"),
     accessToken: at(r, "access_token"), appSecret: at(r, "app_secret"), verifyToken: at(r, "verify_token"), sheetPageId: at(r, "sheet_page_id"),
+    forceSheetPage: at(r, "force_sheet_page").toLowerCase() === "true",
     active: at(r, "active").toLowerCase() !== "false", updatedAt: at(r, "updated_at"),
   }));
   cache = { at: Date.now(), list };
@@ -27,7 +28,7 @@ export async function loadChannels(fresh = false): Promise<Channel[]> {
 }
 
 export const toPublic = (c: Channel): PublicChannel => ({
-  channelId: c.channelId, channel: c.channel, accountId: c.accountId, name: c.name, sheetPageId: c.sheetPageId, active: c.active, updatedAt: c.updatedAt,
+  channelId: c.channelId, channel: c.channel, accountId: c.accountId, name: c.name, sheetPageId: c.sheetPageId, forceSheetPage: c.forceSheetPage, active: c.active, updatedAt: c.updatedAt,
   hasToken: !!c.accessToken, tokenTail: c.accessToken ? c.accessToken.slice(-4) : "", hasSecret: !!c.appSecret, verifyToken: c.verifyToken,
 });
 
@@ -49,6 +50,7 @@ export async function saveChannel(c: Partial<Channel> & { channelId: string; cha
   if (c.appSecret) row.app_secret = c.appSecret;
   if (c.verifyToken) row.verify_token = c.verifyToken;
   if (c.sheetPageId !== undefined) row.sheet_page_id = c.sheetPageId;
+  if (c.forceSheetPage !== undefined) row.force_sheet_page = c.forceSheetPage;
   if (c.active !== undefined) row.active = c.active;
   await upsertRows("channels", ["channel_id"], [row], "upsert");
   invalidateChannels();
