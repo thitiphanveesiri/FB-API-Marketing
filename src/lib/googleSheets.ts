@@ -52,18 +52,36 @@ export async function accessToken(write = false): Promise<string> {
   return j.access_token;
 }
 
+/** GET that waits and retries a few times when Google answers 429 (per-minute read quota), so a short burst does not fail the whole request. */
+export async function sheetsFetch(url: string, init: RequestInit, tries = 3): Promise<Response> {
+  for (let n = 1; ; n++) {
+    const r = await fetch(url, init);
+    if (r.status !== 429 || n >= tries) return r;
+    await new Promise((res) => setTimeout(res, 1500 * n));
+  }
+}
+let titleCache: { at: number; titles: string[] } | null = null;
+/** Tab names of the spreadsheet, remembered for 10 minutes (tabs almost never change) — saves one API call on every read and write. */
+export async function sheetTitles(auth: Record<string, string>, force = false): Promise<string[]> {
+  if (!force && titleCache && Date.now() - titleCache.at < 600_000) return titleCache.titles;
+  const meta = await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${process.env.GOOGLE_SHEET_ID}?fields=sheets.properties.title`, { headers: auth, cache: "no-store" });
+  if (!meta.ok) throw new Error(`Cannot open the spreadsheet (${meta.status}). Check GOOGLE_SHEET_ID and that the sheet is shared with the service account.`);
+  const titles = ((await meta.json()) as { sheets: { properties: { title: string } }[] }).sheets.map((x) => x.properties.title);
+  titleCache = { at: Date.now(), titles };
+  return titles;
+}
+export const forgetSheetTitles = () => { titleCache = null; };
+
 /** Reads every known tab that exists in the spreadsheet. Missing optional tabs are simply absent from the result. */
 export async function readTabs(): Promise<RawTabs> {
   if (process.env.SHEETS_LOCAL_JSON) return JSON.parse(await readFile(process.env.SHEETS_LOCAL_JSON, "utf8")) as RawTabs; // dev/testing only
   const id = process.env.GOOGLE_SHEET_ID!;
   const auth = { Authorization: `Bearer ${await accessToken()}` };
-  const meta = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=sheets.properties.title`, { headers: auth, cache: "no-store" });
-  if (!meta.ok) throw new Error(`Cannot open the spreadsheet (${meta.status}). Check GOOGLE_SHEET_ID and that the sheet is shared with the service account.`);
-  const titles = ((await meta.json()) as { sheets: { properties: { title: string } }[] }).sheets.map((s) => s.properties.title);
+  const titles = await sheetTitles(auth);
   const wanted = titles.filter((t) => TAB_NAMES.includes(t.trim().toLowerCase()));
   if (wanted.length === 0) return {};
   const qs = wanted.map((t) => `ranges=${encodeURIComponent(`'${t.replace(/'/g, "''")}'`)}`).join("&");
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?${qs}&majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`, { headers: auth, cache: "no-store" });
+  const res = await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?${qs}&majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`, { headers: auth, cache: "no-store" });
   if (!res.ok) throw new Error(`Reading the sheet failed (${res.status}).`);
   const j = (await res.json()) as { valueRanges: { range: string; values?: (string | number | boolean)[][] }[] };
   const out: RawTabs = {};

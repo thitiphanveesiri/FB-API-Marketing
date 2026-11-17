@@ -1,7 +1,7 @@
 // CLIENT helpers shared by the sync cards (chat pull and ads pull run from the same button).
 export const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface PullCtl { stop: { current: boolean }; log: (s: string) => void }
-export interface AdsTotals { ads: number; campaigns: number; rows: number; warnings?: string[] }
+export interface AdsTotals { ads: number; campaigns: number; rows: number; warnings?: string[]; byPage?: Record<string, number> }
 
 interface SyncResponse {
   ok?: boolean;
@@ -10,6 +10,7 @@ interface SyncResponse {
   next?: { phase?: string; after?: string; fallback?: boolean; tier?: number };
   counts?: { ads?: number; campaigns?: number; rows?: number; chats?: number; newLeads?: number; messages?: number; comments?: number };
   warning?: string;
+  byPage?: Record<string, number>;
 }
 
 export async function readSyncResponse(response: Response): Promise<SyncResponse> {
@@ -32,9 +33,10 @@ export async function pullAds(channelId: string, days: number, ctl: PullCtl, tot
     const r = await fetch("/api/ads-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channelId, days: Math.min(90, Math.max(1, days || 30)), state }) });
     const j = await readSyncResponse(r);
     if (j.rateLimited) { for (let s = 60; s > 0 && !ctl.stop.current; s--) { ctl.log(`ระบบจำกัดคำขอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
-    if (!j.ok) { if (++failures < 3 && r.status >= 500) { await wait(2000); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
+    if (!j.ok) { if (++failures < 4 && r.status >= 500) { await wait(3000 * failures); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
     failures = 0;
     tot.ads += j.counts?.ads ?? 0; tot.campaigns += j.counts?.campaigns ?? 0; tot.rows += j.counts?.rows ?? 0;
+    for (const [pageId, count] of Object.entries(j.byPage ?? {})) { tot.byPage ??= {}; tot.byPage[pageId] = (tot.byPage[pageId] ?? 0) + count; }
     if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); }
     state = j.next?.phase ? { phase: j.next.phase, after: j.next.after, fallback: j.next.fallback, tier: j.next.tier } : { phase: "done" };
   }

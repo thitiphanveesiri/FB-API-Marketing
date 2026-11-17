@@ -8,7 +8,7 @@ import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 
 export const maxDuration = 60;
-const adsChannels = async () => (await loadChannels(true)).filter((c) => c.channel === "ads" && c.active && c.accessToken && c.accountId);
+const adsChannels = async (fresh = false) => (await loadChannels(fresh)).filter((c) => c.channel === "ads" && c.active && c.accessToken && c.accountId);
 
 /** Administrators only. Lists connected ad accounts (never the tokens). */
 export async function GET(req: Request) {
@@ -23,19 +23,20 @@ export async function POST(req: Request) {
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
   try {
     const b = (await req.json()) as { channelId?: string; days?: number; state?: AdsState };
-    const ch = (await adsChannels()).find((c) => c.channelId === b.channelId); if (!ch) return fail(400, "ไม่พบบัญชีโฆษณานี้ (เชื่อมบัญชีโฆษณาในหน้า Upload ก่อน)");
+    const ch = (await adsChannels(false)).find((c) => c.channelId === b.channelId); if (!ch) return fail(400, "ไม่พบบัญชีโฆษณานี้ (เชื่อมบัญชีโฆษณาในหน้า Upload ก่อน)");
     if (!g.mapped.dataset.pages.some((p) => p.id === ch.sheetPageId)) return fail(400, "เพจในระบบที่ผูกไว้ไม่มีแล้ว — แก้การเชื่อมต่อบัญชีโฆษณาใหม่");
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = b.state?.phase === "insights" || b.state?.phase === "done" ? b.state.phase : "ads";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const pageMap: Record<string, string> = {};
     if (!ch.forceSheetPage) {
-      for (const c of await loadChannels(true)) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) pageMap[c.accountId] = c.sheetPageId;
+      for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) pageMap[c.accountId] = c.sheetPageId;
     }
-    const out = await adsStep({ accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    const pageNames = Object.fromEntries(g.mapped.dataset.pages.map((p) => [p.id, p.name]));
+    const out = await adsStep({ pageNames, accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
-    if (out.writes.length) invalidateCache();
-    return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);
+    if (out.next.phase === "done") invalidateCache();
+    return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning, byPage: out.byPage }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e.message, { rateLimited: e.rateLimited });
     const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;
