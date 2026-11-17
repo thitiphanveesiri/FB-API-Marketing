@@ -7,7 +7,7 @@ interface SyncResponse {
   ok?: boolean;
   message?: string;
   rateLimited?: boolean;
-  next?: { phase?: string; after?: string; chatList?: "light" | "no-platform"; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean; fallback?: boolean; tier?: number; win?: number; lim?: number };
+  next?: { phase?: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean; fallback?: boolean; tier?: number; win?: number; lim?: number };
   counts?: { ads?: number; campaigns?: number; rows?: number; chats?: number; newLeads?: number; messages?: number; comments?: number; posts?: number };
   warning?: string;
   byPage?: Record<string, number>;

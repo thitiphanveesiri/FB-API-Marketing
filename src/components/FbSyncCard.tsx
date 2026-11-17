@@ -41,8 +41,8 @@ export default function FbSyncCard() {
   const chosen = which === "all" ? resolved : resolved.filter((r) => r.fb === which);
   /** Chats + comments of the chosen pages (one after another, each in its own small batches so one page cannot time out another), then the ad accounts. */
   const run = async () => {
-    const skipped = chosen.filter((t) => !t.sheet), targets = chosen.filter((t) => t.sheet);
-    if (!targets.length) { toast("เพจนี้ยังไม่ได้ผูกกับเพจในระบบ — เชื่อมใหม่ในการ์ด “เชื่อมช่องทางแชท” (เลือกเพจในระบบ) ก่อน"); return; }
+    const targets = chosen;
+    if (!targets.length) return;
     stop.current = false; setBusy(true); setDone(null); setAdsDone(null);
     const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0, posts: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [], byPage: {} };
     const failed: string[] = [];
@@ -63,17 +63,18 @@ export default function FbSyncCard() {
       }
       setDone(tot);
       const notes = [...(tot.warnings ?? []), ...(adsTot.warnings ?? [])];
-      const warning = (notes.length ? ` หมายเหตุ: ${notes.join(" · ")}` : "") + (skipped.length ? ` · ข้ามเพจที่ยังไม่ได้ผูกกับเพจในระบบ: ${skipped.map((t) => t.label).join(", ")}` : "");
+      const warning = notes.length ? ` หมายเหตุ: ${notes.join(" · ")}` : "";
       setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }
   };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string) => {
-    let state: { phase: string; after?: string; chatList?: "light" | "no-platform"; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0;
+    let state: { phase: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
     {
       while (state.phase !== "done" && !stop.current) {
-        setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.posts ?? 0} โพสต์, ${tot.comments} คอมเมนต์)`));
-        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId, days: Number(days) || 7, state }) });
+        if (state.phase === "comments") commentSteps++;
+        setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.posts ?? 0} โพสต์, ${tot.comments} คอมเมนต์ · ชุดที่ ${commentSteps})`));
+        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId || undefined, days: Number(days) || 7, state }) });
         const j = await readSyncResponse(r);
         if (j.rateLimited) {
           if (++rateWaits > MAX_RATE_WAITS) throw new Error(`${j.message || "Meta จำกัดจำนวนคำขอ"} — รอ ${MAX_RATE_WAITS} รอบแล้วยังถูกจำกัด หยุดดึงเพื่อไม่ให้ค้าง ลองใหม่อีกครั้งในอีกสักพัก (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`);
@@ -89,7 +90,7 @@ export default function FbSyncCard() {
           }
           throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ");
         }
-        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
+        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, commentBatch: j.next?.commentBatch, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
       }
     }
   };
@@ -109,7 +110,6 @@ export default function FbSyncCard() {
           {ads.length > 0
             ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={withAds} onChange={(e) => setWithAds(e.target.checked)} disabled={busy} className="accent-[#087a58]" /> ดึงโฆษณาพร้อมกัน ({ads.length} บัญชี: {ads.map((a) => a.name || a.accountId).join(", ")}) · ย้อนหลังตามช่วงที่เลือก (สูงสุด 90 วัน)</label>
             : <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้เชื่อมบัญชีโฆษณา จึงไม่มีข้อมูลโฆษณา (Dashboard โฆษณาจะว่าง) — วาง <b>โทเคนผู้ใช้ที่มีสิทธิ์ ads_read</b> ในการ์ด “เชื่อมช่องทางแชท” ระบบจะเชื่อมบัญชีโฆษณาให้เองพร้อมเพจ หรือกรอก Ad Account ID เองในการ์ดโฆษณาด้านล่าง</p>}
-          {chosen.some((t) => !t.sheet) && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้ผูกกับเพจในระบบ (จะถูกข้าม): {chosen.filter((t) => !t.sheet).map((t) => t.label).join(", ")} — เชื่อมใหม่ในการ์ด “เชื่อมช่องทางแชท”</p>}
           {log && <p className="text-sm" role="status">{log}</p>}
           {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.chats} แชท ({done.messages} ข้อความ, ลีดใหม่ {done.newLeads}) และ {done.comments} คอมเมนต์จาก {done.posts ?? 0} โพสต์{adsDone ? ` · โฆษณา ${adsDone.ads} รายการ (${adsDone.campaigns} แคมเปญ) สถิติรายวัน ${adsDone.rows} แถว` : ""}{adsDone?.byPage && Object.keys(adsDone.byPage).length ? ` · แคมเปญแยกตามเพจ: ${Object.entries(adsDone.byPage).map(([id, count]) => `${sysName(id)} ${count}`).join(", ")}` : ""} · ไปดูผลที่หน้า <b>SLA</b> (ต้องมอบหมายเซลล์ให้แต่ละแชทที่หน้า Board ก่อน จึงจะมีคะแนน)</p>}
           <p className="text-xs text-muted">ครั้งแรกเริ่มที่ 7 วันก่อนเพื่อทดสอบ · ดึงซ้ำได้ ข้อความเดิมจะไม่ซ้ำ · แชทจะถูกจับคู่กับลีดเดิมด้วยชื่อลูกค้า (ถ้าชื่อซ้ำกันหลายคนจะสร้างลีดใหม่)</p>

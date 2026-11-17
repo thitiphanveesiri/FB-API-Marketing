@@ -5,6 +5,7 @@ import { Badge, Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 
 interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
+interface ConnectRes { fbPageId: string; name: string; ok: boolean; message?: string; systemPageId?: string; createdPage?: boolean; subscribed?: boolean; subscribeMessage?: string; instagram?: { id: string; username: string } | null }
 interface ChannelList { channels: Ch[]; webhookUrl: string; verifyToken: string }
 const inp = "w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-mono";
 
@@ -26,6 +27,9 @@ export default function ChannelsCard() {
   const [editing, setEditing] = useState<string | null>(null); // channelId being updated, "" = new
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
   const [adAcct, setAdAcct] = useState(""); const [adToken, setAdToken] = useState(""); const [adForcePage, setAdForcePage] = useState(false); const [adEdit, setAdEdit] = useState(false); const [editingAdChannel, setEditingAdChannel] = useState<string | null>(null); const [adMsg, setAdMsg] = useState("");
+  const [fbDest, setFbDest] = useState(""); const [allToken, setAllToken] = useState(""); const [allSecret, setAllSecret] = useState("");
+  const [allBusy, setAllBusy] = useState(false); const [allMsg, setAllMsg] = useState("");
+  const [allRes, setAllRes] = useState<{ results: ConnectRes[]; ads: { added: number; existing: number; names: string[]; message: string } | null } | null>(null);
   const admin = user.role === "Administrator";
 
   const load = useCallback(async (): Promise<ChannelList | null> => {
@@ -63,15 +67,33 @@ export default function ChannelsCard() {
   const save = async () => {
     setBusy(true); setMsg("");
     try {
-      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: selectedPageId, fbPageId: fbPageId || undefined }) });
+      const r = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "facebook", channelId: editing || undefined, accessToken: token, appSecret: secret, sheetPageId: fbDest || undefined, fbPageId: fbPageId || undefined }) });
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!j.ok) { setChoices(Array.isArray(j.pages) ? j.pages : []); setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
-      setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setEditing(null); await refresh(); await reloadData(true);
+      setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setFbDest(""); setEditing(null); await refresh(); await reloadData(true);
       const ads = j.ads as { added: number; existing: number; names: string[]; message: string } | null;
       const adsNote = !ads ? "" : ads.added + ads.existing > 0 ? ` · พบบัญชีโฆษณา ${ads.added + ads.existing} บัญชี (${ads.names.join(", ")}) ดึงพร้อมแชทได้เลย` : ` · ${ads.message}`;
       const adsBad = !!ads && ads.added + ads.existing === 0;
       toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + adsNote, j.subscribed === false || adsBad ? "info" : undefined);
     } catch { setMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
+  };
+  const connectAll = async () => {
+    setAllBusy(true); setAllMsg(""); setAllRes(null);
+    try {
+      const response = await fetch("/api/channels", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "connectAll", accessToken: allToken, appSecret: allSecret }),
+      });
+      const result = await response.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
+      if (!result.ok) { setAllMsg(result.message || "เชื่อมไม่สำเร็จ"); return; }
+      const connected = (result.results ?? []) as ConnectRes[];
+      setAllRes({ results: connected, ads: result.ads ?? null });
+      setAllToken(""); setAllSecret("");
+      await refresh(); await reloadData(true);
+      const successCount = connected.filter((page) => page.ok).length;
+      toast(`เชื่อมแล้ว ${successCount} เพจ`, successCount === connected.length ? undefined : "info");
+    } catch { setAllMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setAllBusy(false); }
   };
   const saveAds = async () => {
     setBusy(true); setAdMsg("");
@@ -103,8 +125,30 @@ export default function ChannelsCard() {
           <div key={c.channelId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
             <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">Token …{c.tokenTail} · เก็บในเพจ {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
             {!c.hasSecret && <Badge tone="red">ยังไม่มี App Secret</Badge>}
-            <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setPageId(c.sheetPageId || selectedPageId); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
+            <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setFbDest(c.sheetPageId || ""); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>))}
+
+        <div className="max-w-xl space-y-3 rounded-xl border border-brand-2 bg-brand-faint p-3">
+          <h3 className="text-sm font-semibold">เชื่อมทุกเพจในครั้งเดียว</h3>
+          <p className="text-xs text-muted">วางโทเคนผู้ใช้ครั้งเดียว ระบบจะเชื่อมทุกเพจที่โทเคนนั้นดูแล สมัครรับแชทอัตโนมัติ และจับคู่กับเพจในระบบตามชื่อ (ถ้ายังไม่มีจะสร้างให้) เพจที่เชื่อมไว้แล้วจะอัปเดตโทเคน</p>
+          <label className="block text-xs font-medium text-muted">Access Token (ผู้ใช้)
+            <input type="password" autoComplete="off" value={allToken} onChange={(event) => setAllToken(event.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
+          <label className="block text-xs font-medium text-muted">App Secret ของ Meta App ที่ออกโทเคน (Meta App → Settings → Basic)
+            <input type="password" autoComplete="off" value={allSecret} onChange={(event) => setAllSecret(event.target.value)} className={`${inp} mt-1`} /></label>
+          {allMsg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{allMsg}</p>}
+          <Btn variant="primary" onClick={() => void connectAll()} disabled={allBusy || !allToken || !allSecret} aria-busy={allBusy}>{allBusy ? "กำลังเชื่อมทุกเพจ…" : "เชื่อมทุกเพจ"}</Btn>
+          {allRes && <div className="space-y-1.5 text-sm" role="status">
+            {allRes.results.map((page) => (
+              <div key={page.fbPageId} className="rounded-lg bg-white px-3 py-2">
+                <b>{page.ok ? "✓" : "✗"} {page.name || page.fbPageId}</b>
+                {page.ok
+                  ? <span className="text-xs text-muted"> · เก็บในเพจ {data.pages.find((item) => item.id === page.systemPageId)?.name ?? page.systemPageId}{page.createdPage ? " (สร้างใหม่)" : ""} · {page.subscribed ? "รับแชทอัตโนมัติแล้ว" : `สมัครรับแชทไม่สำเร็จ: ${page.subscribeMessage}`}</span>
+                  : <span className="text-xs text-red-600"> · {page.message}</span>}
+                {page.ok && page.instagram && <span className="block text-xs text-muted">พบ Instagram ที่ผูกกับเพจนี้: @{page.instagram.username || page.instagram.id} (ยังไม่เปิดดึงแชท Instagram)</span>}
+              </div>))}
+            {allRes.ads && <p className="text-xs text-muted">{allRes.ads.added + allRes.ads.existing > 0 ? `พบบัญชีโฆษณา ${allRes.ads.added + allRes.ads.existing} บัญชี (${allRes.ads.names.join(", ")})` : allRes.ads.message}</p>}
+          </div>}
+        </div>
 
         <div className="max-w-xl space-y-3 rounded-xl bg-gray-50 p-3">
           <h3 className="text-sm font-semibold">ข้อมูล Webhook สำหรับใส่ใน Meta</h3>
@@ -130,13 +174,13 @@ export default function ChannelsCard() {
               <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
             <label className="block text-xs font-medium text-muted">App Secret (Meta App → Settings → Basic){editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
               <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} className={`${inp} mt-1`} /></label>
-            <Select label="เก็บแชทเข้าเพจในระบบ" value={selectedPageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+            <Select label="เก็บแชทเข้าเพจในระบบ" value={fbDest} onChange={setFbDest} options={[{ value: "", label: "อัตโนมัติ — ตามเพจ Facebook นี้" }, ...data.pages.filter((page) => page.active).map((page) => ({ value: page.id, label: page.name }))]} />
             {choices.length > 0 && <Select label="เลือกเพจ Facebook ที่จะเชื่อม" value={fbPageId} onChange={setFbPageId} options={[{ value: "", label: "— เลือกเพจ —" }, ...choices.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))]} />}
             {msg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{msg}</p>}
             <div className="flex gap-2"><Btn variant="primary" onClick={save} disabled={busy || (!editing && !token) || (choices.length > 0 && !fbPageId)}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{editing !== null && <Btn onClick={() => { setEditing(null); setMsg(""); }}>ยกเลิก</Btn>}</div>
             <p className="text-xs text-amber-700">⚠ Token และ App Secret จะถูกเก็บในแท็บ <b>channels</b> ของ Google Sheet — ใครก็ตามที่เปิดชีตได้จะเห็น ควรตั้งการแชร์ชีตเป็น “จำกัด” (Restricted) เฉพาะคนที่ไว้ใจ ระบบจะไม่ส่งค่าเหล่านี้กลับมาที่เบราว์เซอร์</p>
           </div>
-        ) : <Btn size="sm" onClick={() => { setEditing(""); }}>+ เชื่อมเพจเพิ่ม</Btn>}
+        ) : <Btn size="sm" onClick={() => { setEditing(""); setFbDest(""); }}>+ เชื่อมเพจเพิ่ม</Btn>}
 
 
         <div className="space-y-3 border-t border-line pt-4">
