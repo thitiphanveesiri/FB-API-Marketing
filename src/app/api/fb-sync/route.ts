@@ -26,7 +26,22 @@ export async function POST(req: Request) {
     const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" ? b.state.chatList : undefined;
-    const out = await syncStep({ cfg, sheetPageId: b.sheetPageId, days, state: { phase, after, chatList }, ds, tz: process.env.APP_TZ || "Asia/Bangkok", base: process.env.FB_GRAPH_BASE });
+    const commentPostId = typeof b.state?.commentPostId === "string" && /^[\w.-]{1,200}$/.test(b.state.commentPostId) ? b.state.commentPostId : undefined;
+    const commentPostUrl = typeof b.state?.commentPostUrl === "string" && b.state.commentPostUrl.length <= 2048
+      ? (() => { try { const u = new URL(b.state.commentPostUrl!); return u.protocol === "https:" && ["facebook.com", "www.facebook.com", "m.facebook.com"].includes(u.hostname) ? u.href : undefined; } catch { return undefined; } })()
+      : undefined;
+    const commentAfter = typeof b.state?.commentAfter === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.commentAfter) ? b.state.commentAfter : undefined;
+    const commentsFeedDone = typeof b.state?.commentsFeedDone === "boolean" ? b.state.commentsFeedDone : undefined;
+    const commentBasic = b.state?.commentBasic === true ? true : undefined;
+    const out = await syncStep({
+      cfg,
+      sheetPageId: b.sheetPageId,
+      days,
+      state: { phase, after, chatList, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
+      ds,
+      tz: process.env.APP_TZ || "Asia/Bangkok",
+      base: process.env.FB_GRAPH_BASE,
+    });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);
