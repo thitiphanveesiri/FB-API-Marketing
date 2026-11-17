@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     if (!ch.forceSheetPage) {
       for (const c of await loadChannels(true)) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) pageMap[c.accountId] = c.sheetPageId;
     }
-    const out = await adsStep({ accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true }, base: process.env.FB_GRAPH_BASE, pageMap });
+    const out = await adsStep({ accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);

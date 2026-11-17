@@ -23,12 +23,20 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
 export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; fbtrace_id?: string } }
 
-export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string): Promise<Graph> {
-  const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
-  const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
-  if (r.ok && !j.error) return j;
-  const code = j.error?.code; const rate = code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)); // 800xx = Marketing API call limits
-  throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}${j.error?.error_user_msg ? ` — ${clean(j.error.error_user_msg)}` : ""}${code != null ? ` (code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}${j.error?.fbtrace_id ? `, trace ${j.error.fbtrace_id}` : ""})` : ""}`, rate, code);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Meta's own hiccups (HTTP 5xx, code 1 "unknown" / 2 "unexpected error") are usually gone a moment later: retry twice before giving up. */
+const transient = (status: number, code?: number) => status >= 500 || code === 1 || code === 2;
+
+export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900): Promise<Graph> {
+  for (let attempt = 0; ; attempt++) {
+    const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
+    const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
+    if (r.ok && !j.error) return j;
+    const code = j.error?.code;
+    if (transient(r.status, code) && attempt < 2) { await sleep(retryMs * (attempt + 1)); continue; }
+    const rate = code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)); // 800xx = Marketing API call limits
+    throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}${j.error?.error_user_msg ? ` — ${clean(j.error.error_user_msg)}` : ""}${code != null ? ` (code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}${j.error?.fbtrace_id ? `, trace ${j.error.fbtrace_id}` : ""})` : ""}`, rate, code);
+  }
 }
 
 /** "2026-11-01T03:05:00+0000" (UTC) → "2026-11-01 10:05" in the business time zone. */
@@ -75,7 +83,9 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const lists = await Promise.all(fresh.map(async (c) => {
       const all: FbMsg[] = []; let after: string | undefined;
       for (let p = 0; p < MSG_PAGES; p++) {
-        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: "100", ...(after ? { after } : {}) }, tok, f, base);
+        // a heavy page of messages (many attachments) can make Meta answer 500: ask again for fewer messages without the attachment details
+        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: "100", ...(after ? { after } : {}) }, tok, f, base)
+          .catch((e) => { if (!(e instanceof FbError) || (e.code !== 1 && e.code !== 2)) throw e; return graph(`${c.id}/messages`, { fields: "id,message,from,created_time", limit: "25", ...(after ? { after } : {}) }, tok, f, base); });
         all.push(...((m.data ?? []) as FbMsg[]));
         if (!m.paging?.next) break; after = m.paging.cursors?.after; if (!after) break;
       }
