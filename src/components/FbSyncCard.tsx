@@ -52,7 +52,6 @@ export default function FbSyncCard() {
         const tag = targets.length > 1 ? `[${n + 1}/${targets.length}] ${t.label} · ` : `${t.label} · `;
         try { await pull(t.fb, t.sheet, tot, tag); } catch (e) { failed.push(`${t.label}: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
       }
-      for (const t of skipped) failed.push(`${t.label}: ยังไม่ได้ผูกกับเพจในระบบ (ข้าม)`);
       // ads: once per ad account (an account can serve several pages; each ad is filed under the page it posts as)
       if (withAds && ads.length && !stop.current) {
         for (const [n, a] of ads.entries()) {
@@ -63,7 +62,7 @@ export default function FbSyncCard() {
         setAdsDone(adsTot);
       }
       setDone(tot);
-      const warning = adsTot.warnings?.length ? ` หมายเหตุ: ${adsTot.warnings.join(" · ")}` : "";
+      const warning = (adsTot.warnings?.length ? ` หมายเหตุ: ${adsTot.warnings.join(" · ")}` : "") + (skipped.length ? ` · ข้ามเพจที่ยังไม่ได้ผูกกับเพจในระบบ: ${skipped.map((t) => t.label).join(", ")}` : "");
       setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }

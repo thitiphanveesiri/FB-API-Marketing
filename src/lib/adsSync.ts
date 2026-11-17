@@ -4,7 +4,7 @@ import { FbError, graph, type FetchFn, type Graph } from "./fbSync";
 import type { SyncWrite } from "./fbSync";
 
 export type AdsPhase = "ads" | "insights" | "done";
-export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean }
+export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number }
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
 /** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
 export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string> }
@@ -34,29 +34,30 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
   const counts: AdsCounts = { ads: 0, campaigns: 0, rows: 0 }, writes: SyncWrite[] = [];
 
   if (i.state.phase === "ads") {
-    const fetchAds = (basic: boolean) => graph(`${acct}/ads`, {
-      fields: basic ? "id,name,effective_status,updated_time,campaign{id,name}" : "id,name,effective_status,updated_time,campaign{id,name,objective},creative{thumbnail_url,image_url,video_id,object_type,effective_object_story_id,object_story_spec{page_id}}",
-      ...(basic ? {} : { effective_status: ALL_STATUS }),
-      limit: String(ADS_PER_CALL),
-      ...(i.state.after ? { after: i.state.after } : {}),
+    // Detail levels, richest first. When Meta rejects one (code 100 invalid parameter, or 1/2 "unexpected error" for too much data) the next lighter one is tried,
+    // and later batches stay on the level that worked — so a single bad field costs only that field, not the whole ad list.
+    const CAMP = "campaign{id,name,objective}";
+    const TIERS = [
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,effective_object_story_id,object_story_spec{page_id}}`, filter: true, limit: ADS_PER_CALL, note: "" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,effective_object_story_id,object_story_spec{page_id}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,effective_object_story_id}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
+      { fields: "id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url}", filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและการจับคู่เพจจากตัวโฆษณา" },
+      { fields: "id,name,effective_status,updated_time,campaign{id,name}", filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณาและการจับคู่เพจจากตัวโฆษณา" },
+    ];
+    const fetchAds = (t: number) => graph(`${acct}/ads`, {
+      fields: TIERS[t].fields, ...(TIERS[t].filter ? { effective_status: ALL_STATUS } : {}), limit: String(TIERS[t].limit), ...(i.state.after ? { after: i.state.after } : {}),
     }, i.token, f, base);
-    let basic = i.state.fallback === true;
-    let j: Graph;
-    if (basic) {
-      try { j = await fetchAds(true); }
-      catch (e) { if (e instanceof FbError) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ: ${e.message}`, e.rateLimited, e.code); throw e; }
-    } else {
-      try { j = await fetchAds(false); }
+    let tier = Math.min(TIERS.length - 1, Math.max(0, i.state.tier ?? (i.state.fallback ? TIERS.length - 1 : 0)));
+    let j: Graph | undefined, lastErr: FbError | undefined;
+    for (; tier < TIERS.length; tier++) {
+      try { j = await fetchAds(tier); break; }
       catch (e) {
-        if (!(e instanceof FbError) || e.code !== 100) throw e instanceof FbError ? new FbError(`ดึงรายการโฆษณาไม่สำเร็จ: ${e.message}`, e.rateLimited, e.code) : e;
-        basic = true;
-        try { j = await fetchAds(true); }
-        catch (fallbackError) {
-          if (fallbackError instanceof FbError) throw new FbError(`Meta ปฏิเสธทั้งคำขอรายละเอียดและคำขอพื้นฐาน: ${fallbackError.message}`, fallbackError.rateLimited, fallbackError.code);
-          throw fallbackError;
-        }
+        if (!(e instanceof FbError)) throw e;
+        lastErr = e;
+        if (e.rateLimited || (e.code !== 100 && e.code !== 1 && e.code !== 2) || i.state.after) break; // only the first batch can change level (a paging cursor belongs to its query)
       }
     }
+    if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
     const ads = (j.data ?? []) as RawAd[];
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [];
     for (const a of ads) {
@@ -73,10 +74,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
     return {
-      next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(basic ? { fallback: true } : {}) } : { phase: "insights" },
+      next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
       counts,
-      ...(basic ? { warning: "Meta ปฏิเสธพารามิเตอร์/ฟิลด์รายละเอียด จึงดึงโฆษณาแบบพื้นฐานแทน (ภาพและการจับคู่เพจจากตัวโฆษณาอาจไม่มี)" } : {}),
+      ...(tier > 0 ? { warning: `Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})` } : {}),
     };
   }
 
