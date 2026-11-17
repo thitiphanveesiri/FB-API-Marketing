@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
-import { type AdsTotals, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
+import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
 
 interface Cfg { fbPageId: string; sheetPageId: string; name?: string }
 const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
@@ -69,15 +69,19 @@ export default function FbSyncCard() {
     } finally { setBusy(false); await reloadData(true); }
   };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string) => {
-    let state: { phase: string; after?: string } = { phase: "chats" }, failures = 0;
+    let state: { phase: string; after?: string; chatList?: "light" | "no-platform" } = { phase: "chats" }, failures = 0, rateWaits = 0;
     {
       while (state.phase !== "done" && !stop.current) {
         setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.comments} คอมเมนต์)`));
         const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId, days: Number(days) || 7, state }) });
         const j = await readSyncResponse(r);
-        if (j.rateLimited) { for (let s = 60; s > 0 && !stop.current; s--) { setLog(`ระบบจำกัดคำขอ — ลองต่อใน ${s} วินาที…`); await wait(1000); } continue; }
+        if (j.rateLimited) {
+          if (++rateWaits > MAX_RATE_WAITS) throw new Error(`${j.message || "Meta จำกัดจำนวนคำขอ"} — รอ ${MAX_RATE_WAITS} รอบแล้วยังถูกจำกัด หยุดดึงเพื่อไม่ให้ค้าง ลองใหม่อีกครั้งในอีกสักพัก (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`);
+          for (let s = 60; s > 0 && !stop.current; s--) { setLog(`${tag}Meta จำกัดคำขอ — ลองต่อใน ${s} วินาที (รอบที่ ${rateWaits}/${MAX_RATE_WAITS})`); await wait(1000); }
+          continue;
+        }
         if (!j.ok) { if (++failures < 4 && r.status >= 500) { await wait(3000 * failures); continue; } throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ"); }
-        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after };
+        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList };
       }
     }
   };

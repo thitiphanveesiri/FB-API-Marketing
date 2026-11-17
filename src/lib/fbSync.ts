@@ -5,7 +5,7 @@ import type { UpsertMode } from "./sheetOps";
 
 export interface FbPageCfg { fbPageId: string; token: string; sheetPageId?: string; name?: string }
 export type Phase = "chats" | "comments" | "done";
-export interface SyncState { phase: Phase; after?: string }
+export interface SyncState { phase: Phase; after?: string; chatList?: "light" | "no-platform" }
 export interface SyncCounts { chats: number; newLeads: number; messages: number; comments: number }
 export interface SyncWrite { tab: string; keyCols: string[]; rows: Record<string, string | number | boolean>[]; mode: UpsertMode }
 
@@ -27,15 +27,28 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Meta's own hiccups (HTTP 5xx, code 1 "unknown" / 2 "unexpected error") are usually gone a moment later: retry twice before giving up. */
 const transient = (status: number, code?: number) => status >= 500 || code === 1 || code === 2;
 
-export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900): Promise<Graph> {
+/** fetch for Meta that gives up after META_TIMEOUT_MS (default 12 s) instead of hanging until the platform kills the whole request. A timeout looks like
+ *  Meta's own "code 1" (too much data) so callers can fall back to a lighter query right away. */
+export const metaFetch: FetchFn = async (u) => {
+  const ms = Math.max(3000, Number(process.env.META_TIMEOUT_MS) || 12000);
+  try { return (await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(ms) })) as Awaited<ReturnType<FetchFn>>; }
+  catch (e) {
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(ms / 1000)} วินาที` } }) };
+    throw e;
+  }
+};
+
+/** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
+ *  failed once will fail again, and every repeat eats the time budget). */
+export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900, retries = 2): Promise<Graph> {
   for (let attempt = 0; ; attempt++) {
     const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
     const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
     if (r.ok && !j.error) return j;
     const code = j.error?.code;
-    if (transient(r.status, code) && attempt < 2) { await sleep(retryMs * (attempt + 1)); continue; }
+    if (transient(r.status, code) && attempt < retries) { await sleep(retryMs * (attempt + 1)); continue; }
     const rate = code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)); // 800xx = Marketing API call limits
-    throw new FbError(rate ? "Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง)" : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}${j.error?.error_user_msg ? ` — ${clean(j.error.error_user_msg)}` : ""}${code != null ? ` (code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}${j.error?.fbtrace_id ? `, trace ${j.error.fbtrace_id}` : ""})` : ""}`, rate, code);
+    throw new FbError(rate ? `Meta ขอให้รอสักครู่ (ถูกจำกัดจำนวนครั้ง) — code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}: ${clean(j.error?.message ?? "")}`.slice(0, 260) : `Meta ตอบ ${r.status}: ${clean(j.error?.message ?? "ไม่ทราบสาเหตุ")}${j.error?.error_user_msg ? ` — ${clean(j.error.error_user_msg)}` : ""}${code != null ? ` (code ${code}${j.error?.error_subcode ? `/${j.error.error_subcode}` : ""}${j.error?.fbtrace_id ? `, trace ${j.error.fbtrace_id}` : ""})` : ""}`, rate, code);
   }
 }
 
@@ -58,7 +71,7 @@ export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: Sync
 const CHATS_PER_CALL = 3, POSTS_PER_CALL = 4, MSG_PAGES = 5;
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
-  const f = i.fetchFn ?? ((u: string) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>), base = i.base ?? "https://graph.facebook.com";
+  const f = i.fetchFn ?? metaFetch, base = i.base ?? "https://graph.facebook.com";
   const now = i.now ?? new Date(), since = now.getTime() - i.days * 86400000, tok = i.cfg.token;
   // Ask Meta which page this token belongs to: catches the two usual set-up mistakes (a user token instead of a Page token, or the wrong FB_PAGE_ID)
   const who = (await graph("me", { fields: "id,name,category" }, tok, f, base).catch((e) => { if (e instanceof FbError && e.code === 100 && /category/i.test(e.message)) throw new FbError("โทเคนนี้เป็นโทเคนของผู้ใช้ ไม่ใช่ของเพจ — เชื่อมเพจใหม่ที่หน้า Upload (วางโทเคนผู้ใช้ได้ ระบบจะแลกเป็นโทเคนเพจให้) หรือใช้ me/accounts ใน Graph API Explorer เพื่อเอา access_token ของเพจ", false, 100); if (e instanceof FbError && !e.rateLimited) throw new FbError(`โทเคนใช้ไม่ได้: ${e.message} — สร้างโทเคนเพจใหม่`, false, e.code); throw e; })) as unknown as { id?: string; name?: string; category?: string };
@@ -69,7 +82,24 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const ms = (iso: string) => new Date(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).getTime();
 
   if (i.state.phase === "chats") {
-    const j = await graph(`${fb}/conversations`, { platform: "messenger", fields: "id,updated_time,participants", limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base);
+    // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
+    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: "messenger" } : {}), fields, limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
+    const isTransient = (e: unknown) => e instanceof FbError && (e.code === 1 || e.code === 2);
+    let j: Graph, chatList = i.state.chatList;
+    if (chatList === "no-platform") j = await convQuery("id,updated_time", false);
+    else if (chatList === "light") {
+      try { j = await convQuery("id,updated_time", true); }
+      catch (e) { if (!isTransient(e)) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+    } else {
+      try { j = await convQuery("id,updated_time,participants", true); }
+      catch (e) {
+        if (!isTransient(e)) throw e;
+        chatList = "light";
+        try { j = await convQuery("id,updated_time", true); }
+        catch (e2) { if (!isTransient(e2)) throw e2; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+      }
+    }
+    let skippedChats = 0, partialChats = 0;
     const convs = (j.data ?? []) as FbConv[];
     const fresh = convs.filter((c) => ms(c.updated_time) >= since);
     const cutoff = fresh.length < convs.length; // list is newest-first: an old one means the rest is older still
@@ -82,20 +112,25 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = []; const psidRows = new Map<string, SyncWrite["rows"][number]>();
     const lists = await Promise.all(fresh.map(async (c) => {
       const all: FbMsg[] = []; let after: string | undefined;
+      try {
       for (let p = 0; p < MSG_PAGES; p++) {
         // a heavy page of messages (many attachments) can make Meta answer 500: ask again for fewer messages without the attachment details
-        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: "100", ...(after ? { after } : {}) }, tok, f, base)
-          .catch((e) => { if (!(e instanceof FbError) || (e.code !== 1 && e.code !== 2)) throw e; return graph(`${c.id}/messages`, { fields: "id,message,from,created_time", limit: "25", ...(after ? { after } : {}) }, tok, f, base); });
+        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: "100", ...(after ? { after } : {}) }, tok, f, base, 900, 0)
+          .catch((e) => { if (!(e instanceof FbError) || (e.code !== 1 && e.code !== 2)) throw e; return graph(`${c.id}/messages`, { fields: "id,message,from,created_time", limit: "25", ...(after ? { after } : {}) }, tok, f, base, 900, 0); });
         all.push(...((m.data ?? []) as FbMsg[]));
         if (!m.paging?.next) break; after = m.paging.cursors?.after; if (!after) break;
       }
+      } catch (e) {
+        if (!isTransient(e)) throw e;
+        if (all.length) partialChats++; else skippedChats++;
+      } // one chat Meta cannot serve must not stop the whole page: report skipped or partial history
       return all.sort((a, b) => a.created_time.localeCompare(b.created_time));
     }));
     fresh.forEach((c, n) => {
       const list = lists[n].filter((m) => ms(m.created_time) >= since); if (!list.length) return;
       counts.chats++;
-      const customer = (c.participants?.data ?? []).find((p) => p.id !== fb);
-      const name = customer?.name?.trim() || "ลูกค้า Facebook";
+      const customer = (c.participants?.data ?? []).find((p) => p.id !== fb) ?? list.find((m) => m.from?.id && m.from.id !== fb)?.from;
+      const name = customer?.name?.trim() || list.find((m) => m.from?.id && m.from.id !== fb)?.from?.name?.trim() || "ลูกค้า Facebook";
       let leadId = byId.has(c.id) ? c.id : byName.get(name.toLowerCase()) ?? "";
       if (!leadId) {
         leadId = c.id; byId.add(leadId); counts.newLeads++;
@@ -110,7 +145,8 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
     if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
-    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after } : { phase: "comments" }, writes, counts };
+    const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
+    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" }, writes, counts, ...(warning ? { warning } : {}) };
   }
 
   if (i.state.phase === "comments") {
