@@ -13,12 +13,13 @@ import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/c
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
 import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
 
-const PICKER_TYPES: ImportDataType[] = ["Ads Performance", "Ad-Level Performance", "Campaign Performance", "Page Insights"]; // chats / leads come from the connected channels
+const PICKER_TYPES: ImportDataType[] = ["Ads Performance", "Ad-Level Performance", "Campaign Performance", "Page Insights", "Lead Data", "Inbox Conversations", "Chat Messages", "Post Comments", "Sales Performance"];
 const TYPE_INFO: { type: ImportDataType; title: string; from: string; hint: string }[] = [
   { type: "Inbox Conversations", title: "แชท/ลูกค้าจาก Inbox เพจ", from: "Meta Business Suite → กล่องข้อความ (หรือไฟล์ส่งออกจากเครื่องมือแชทที่คุณใช้)", hint: "ชื่อลูกค้า วันที่ทัก ข้อความล่าสุด โฆษณาต้นทาง → กลายเป็นการ์ดบน Board" },
+  { type: "Ads Performance", title: "สถิติโฆษณา (รูปแบบทั่วไป/เดิม)", from: "Ads Manager → Reports → Export", hint: "ข้อมูลรายวันระดับโฆษณา ใช้รูปแบบเดียวกับสถิติรายโฆษณา" },
   { type: "Ad-Level Performance", title: "สถิติโฆษณา (รายโฆษณา)", from: "Ads Manager → Reports → Export (breakdown: Day, ระดับ Ad)", hint: "ค่าโฆษณา การเข้าถึง การแสดงผล ข้อความที่เริ่มต้น รายวัน รายโฆษณา" },
   { type: "Campaign Performance", title: "สถิติโฆษณา (รายแคมเปญ)", from: "Ads Manager → Reports → Export (ระดับ Campaign)", hint: "ตัวเลขรวมระดับแคมเปญ ใช้เมื่อไม่มีไฟล์รายโฆษณา" },
-  { type: "Chat Messages", title: "ข้อความแชทรายข้อความ (สำหรับตรวจเวลาตอบ)", from: "ไฟล์ส่งออกจากเครื่องมือแชท / Meta Business Suite ที่มีเวลาของแต่ละข้อความ", hint: "ลูกค้าหรือเซลล์ส่ง + วันที่และเวลา ใช้คำนวณ SLA ตอบภายใน 15 นาที — ต้องอัปโหลดแชทของลูกค้าก่อน" },
+  { type: "Chat Messages", title: "ข้อความแชทรายข้อความ (สำหรับตรวจเวลาตอบ)", from: "ไฟล์ส่งออกจากเครื่องมือแชท / Meta Business Suite ที่มีเวลาของแต่ละข้อความ", hint: "ลูกค้าหรือเซลล์ส่ง + วันที่และเวลา ใช้คำนวณ SLA ตอบภายใน 15 นาที — ต้องมี Lead/Conversation ในระบบก่อน (นำเข้า Lead Data หรือ Inbox Conversations ก่อน)" },
   { type: "Post Comments", title: "คอมเมนต์ใต้โพสต์ (สำหรับตรวจเวลาตอบ)", from: "Meta Business Suite → กล่องข้อความ → คอมเมนต์ หรือเครื่องมือจัดการคอมเมนต์", hint: "เวลาที่ลูกค้าคอมเมนต์ + เวลาที่เพจตอบ ใช้คำนวณ SLA ตอบภายใน 1 ชั่วโมง" },
   { type: "Page Insights", title: "Insights ของเพจ", from: "Meta Business Suite → Insights → Export data", hint: "การเข้าถึง การดู การมีส่วนร่วม ผู้ติดตาม รายวัน" },
   { type: "Lead Data", title: "Leads Center / Lead Ads", from: "Meta Business Suite → Leads Center → Download", hint: "ลีดจากฟอร์ม Lead Ads (ชื่อ เบอร์ โฆษณาต้นทาง)" },
@@ -88,7 +89,6 @@ export default function UploadPage() {
       if (hdr.length === 0 || recs.length === 0) throw new Error("The file has no header row or no data rows.");
       setFileName(file.name); setHeaders(hdr); setRows(recs);
       const det0 = auto ? detectType(hdr) : null;
-      if (det0 && !PICKER_TYPES.includes(det0.type)) throw new Error("ไฟล์นี้เป็นข้อมูลแชท/ลีด — หน้านี้รับเฉพาะไฟล์โฆษณา/Insights ส่วนแชทให้เชื่อมช่องทางด้านบน (Access Token + Webhook)");
       const det = det0;
       if (det) {
         // Recognised: switch to the detected type and, when every required field is mapped, go straight to validation.
@@ -167,14 +167,14 @@ export default function UploadPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Upload</h1><Badge tone="blue">ข้อมูลเพจ Facebook · CSV / XLSX</Badge>
+      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Upload</h1><Badge tone="blue">นำเข้าข้อมูล · CSV / XLSX</Badge>
         <Btn size="sm" className="ml-auto" onClick={() => download(`sample-${type.toLowerCase().replace(/[^a-z]+/g, "-")}.csv`, SAMPLES[type])}><Download size={14} /> ดาวน์โหลดไฟล์ตัวอย่าง</Btn></div>
 
       <ChannelsCard />
       <FbSyncCard />
       <AdsSyncCard />
 
-      <p className="text-sm text-muted"><b>อัปโหลดไฟล์โฆษณา/Insights (สำรอง)</b> — ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้ เช่น โทเคนหมดอายุ</p>
+      <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>
       <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
         {STEPS.map((s, i) => (
           <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>
@@ -255,20 +255,21 @@ export default function UploadPage() {
   );
 }
 
-const SAMPLES: Record<ImportDataType, string> = {
-  "Inbox Conversations": `ชื่อลูกค้า,วันที่ทัก,ข้อความล่าสุด,วันที่ข้อความล่าสุด,Ad ID,เบอร์โทร,สถานะ
-สมชาย ใจดี,2026-11-01,สนใจสอบถามราคาครับ,2026-11-02,AD-9001,0812345678,พอได้คุย
-Napat K.,2026-11-02,ขอบคุณค่ะ จะติดต่อกลับ,2026-11-03,AD-9001,,ไม่ตอบ
-มาลี รักดี,2026-11-03,นัดวันเสาร์นี้ได้ไหมคะ,2026-11-05,AD-9002,0899999999,นัดได้แล้ว
-`,
-  "Ads Performance": "", "Ad-Level Performance": `Day,Campaign name,Ad ID,Ad name,Amount spent (THB),Reach,Impressions,Link clicks,Messaging conversations started,Purchases
+const AD_PERFORMANCE_SAMPLE = `Day,Campaign name,Ad ID,Ad name,Amount spent (THB),Reach,Impressions,Link clicks,Messaging conversations started,Purchases
 2026-10-20,Sample Always-On,AD-9001,Hero image,520,8200,10400,180,24,1
 2026-10-21,Sample Always-On,AD-9001,Hero image,540,8600,10900,190,27,2
 2026-10-20,Sample Always-On,AD-9002,UGC video,610,9100,11800,230,35,2
 2026-10-21,Sample Always-On,AD-9002,UGC video,598,9000,11500,222,33,1
 2026-10-22,Sample Always-On,,Missing id example,300,4000,5200,80,9,0
 2026-13-40,Sample Always-On,AD-9003,Bad date example,300,4000,5200,80,9,0
+`;
+const SAMPLES: Record<ImportDataType, string> = {
+  "Inbox Conversations": `ชื่อลูกค้า,วันที่ทัก,ข้อความล่าสุด,วันที่ข้อความล่าสุด,Ad ID,เบอร์โทร,สถานะ
+สมชาย ใจดี,2026-11-01,สนใจสอบถามราคาครับ,2026-11-02,AD-9001,0812345678,พอได้คุย
+Napat K.,2026-11-02,ขอบคุณค่ะ จะติดต่อกลับ,2026-11-03,AD-9001,,ไม่ตอบ
+มาลี รักดี,2026-11-03,นัดวันเสาร์นี้ได้ไหมคะ,2026-11-05,AD-9002,0899999999,นัดได้แล้ว
 `,
+  "Ads Performance": AD_PERFORMANCE_SAMPLE, "Ad-Level Performance": AD_PERFORMANCE_SAMPLE,
   "Campaign Performance": `Day,Campaign name,Amount spent (THB),Reach,Impressions,Link clicks,Messaging conversations started,Purchases
 2026-10-20,Sample Always-On,1130,17300,22200,410,59,3
 2026-10-21,Sample Always-On,1138,17600,22400,412,60,3

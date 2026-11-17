@@ -36,10 +36,10 @@ const LEAD_FIELDS: FieldDef[] = [
 const INBOX_FIELDS: FieldDef[] = [
   F("channel", "Channel (fb / ig / line / whatsapp)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
   F("name", "Customer name", true, "text", ["name", "customer name", "customer", "full name", "contact", "contact name", "sender", "ชื่อ", "ชื่อลูกค้า"]),
-  F("date", "First contact date", true, "date", ["date", "created", "created date", "first contact", "first message", "first message date", "started", "conversation started", "วันที่"]),
+  F("date", "First contact date", true, "date", ["date", "created", "created date", "first contact", "first message", "first message date", "started", "conversation started", "วันที่", "วันที่ทัก"]),
   F("leadId", "Conversation / Lead ID", false, "text", ["lead id", "lead_id", "id", "conversation id", "thread id"]),
   F("lastMessage", "Last message", false, "text", ["last message", "latest message", "message", "ข้อความล่าสุด"]),
-  F("lastContactAt", "Last message date", false, "date", ["last message date", "last message time", "last contact", "last activity", "updated", "updated time", "วันที่ล่าสุด"]),
+  F("lastContactAt", "Last message date", false, "date", ["last message date", "last message time", "last contact", "last activity", "updated", "updated time", "วันที่ล่าสุด", "วันที่ข้อความล่าสุด"]),
   F("adId", "Source Ad ID", false, "text", ["ad id", "ad_id", "source ad", "source ad id", "referral ad id"]),
   F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone number", "เบอร์", "เบอร์โทร"]),
   F("status", "Chat type / status", false, "text", ["status", "stage", "chat type", "สถานะ", "ประเภท"]),
@@ -122,16 +122,23 @@ export function autoMap(headers: string[], fields: FieldDef[]): Record<string, s
   return out;
 }
 
-const DETECT_ORDER: ImportDataType[] = ["Ad-Level Performance", "Campaign Performance", "Lead Data", "Inbox Conversations", "Page Insights", "Chat Messages", "Post Comments", "Sales Performance"];
+// Ads Performance shares the Ad-Level fields; prefer the specific label when both match.
+const DETECT_ORDER: ImportDataType[] = ["Ad-Level Performance", "Ads Performance", "Campaign Performance", "Lead Data", "Inbox Conversations", "Page Insights", "Chat Messages", "Post Comments", "Sales Performance"];
 
 /** Guess the file type from its headers. A type qualifies only if every required field maps; the best share of mapped fields wins
  *  (ties go to DETECT_ORDER). Returns null when nothing qualifies, so the caller can ask the person to choose. */
 export function detectType(headers: string[]): { type: ImportDataType; mapping: Record<string, string> } | null {
   let best: { type: ImportDataType; mapping: Record<string, string>; score: number } | null = null;
+  const hasAdSpend = !!autoMap(headers, FIELDS["Ad-Level Performance"]).spend;
   for (const type of DETECT_ORDER) {
     const fields = FIELDS[type];
     const mapping = autoMap(headers, fields);
     if (fields.some((f) => f.required && !mapping[f.key])) continue;
+    const hasAdDimension = !!(mapping.adId || mapping.adName);
+    const hasCampaignDimension = !!(mapping.campaignName || mapping.adSetName);
+    if (type === "Page Insights" && hasAdSpend) continue;
+    if (type === "Campaign Performance" && hasAdDimension) continue;
+    if ((type === "Ad-Level Performance" || type === "Ads Performance") && hasCampaignDimension && !hasAdDimension) continue;
     const score = fields.filter((f) => mapping[f.key]).length / fields.length;
     if (!best || score > best.score) best = { type, mapping, score };
   }

@@ -11,6 +11,7 @@ import { ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
 
 export const maxDuration = 60;
 const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v21.0`;
+const INSTAGRAM_GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v27.0`;
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
 
@@ -40,8 +41,9 @@ export async function GET(req: Request) {
   const g = await adminOnly(req, false); if ("err" in g) return g.err;
   try {
     const list = (await loadChannels(true)).map(toPublic);
-    const verifyToken = list.find((c) => c.channel === "facebook" && c.active && c.verifyToken)?.verifyToken || defaultVerifyToken();
-    return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: `${origin(req)}/api/webhook/facebook` } }, noStore);
+    const verifyToken = list.find((c) => (c.channel === "facebook" || c.channel === "instagram") && c.active && c.verifyToken)?.verifyToken || defaultVerifyToken();
+    const webhookUrl = `${origin(req)}/api/webhook/facebook`;
+    return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: webhookUrl, instagram: webhookUrl } }, noStore);
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
@@ -57,7 +59,9 @@ export async function POST(req: Request) {
 
     if (b.action === "disconnect") {
       const c = all.find((x) => x.channelId === b.channelId); if (!c) return fail(404, "ไม่พบการเชื่อมต่อนี้");
-      await upsertRows("channels", ["channel_id"], [{ channel_id: c.channelId, active: false, access_token: "", app_secret: "", updated_at: new Date().toISOString() }], "upsert");
+      const rows = [{ channel_id: c.channelId, active: false, access_token: "", app_secret: "", updated_at: new Date().toISOString() }];
+      if (c.channel === "facebook") rows.push({ channel_id: `instagram:${c.accountId}`, active: false, access_token: "", app_secret: "", updated_at: new Date().toISOString() });
+      await upsertRows("channels", ["channel_id"], rows, "upsert");
       invalidateCache(); return NextResponse.json({ ok: true }, noStore);
     }
 
@@ -91,7 +95,7 @@ export async function POST(req: Request) {
 
     let existing = all.find((x) => x.channelId === b.channelId);
     let accountId = existing?.accountId ?? "", name = existing?.name ?? "", subscribed: boolean | null = null, subscribeMessage = "";
-    let pageToken = token, viaUserToken = false;
+    let pageToken = token || existing?.accessToken || "", viaUserToken = false;
     if (token) {
       // ask Meta what this token is. A Page token is used as is; a USER token is exchanged for the token of the page it manages.
       let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
@@ -99,7 +103,7 @@ export async function POST(req: Request) {
       if (info.kind === "page") j = info;
       else {
         const who = info.name ? ` (${info.name})` : "";
-        if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
+        if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic และ instagram_manage_messages แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
         const pick = info.pages.length === 1 ? info.pages[0] : info.pages.find((p) => p.id === b.fbPageId);
         if (!pick) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} ที่ดูแลหลายเพจ เลือกเพจ Facebook ที่จะเชื่อม`, { pages: info.pages.map((p) => ({ id: p.id, name: p.name })) });
         pageToken = pick.token; j = pick; viaUserToken = true;
@@ -116,10 +120,25 @@ export async function POST(req: Request) {
     const channelId = `facebook:${accountId}`;
     if (!secret && !existing?.appSecret) return fail(400, "ใส่ App Secret ด้วย (Meta App → Settings → Basic) — ใช้ตรวจว่าข้อความมาจาก Meta จริง");
     if (!sheetPageId) sheetPageId = (await ensureSystemPage({ pages: g.mapped.dataset.pages, channels: all, fbPageId: accountId, name })).id;
-    await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret: secret, verifyToken: existing?.verifyToken || defaultVerifyToken() || newVerifyToken(), sheetPageId, active: true });
+    const appSecret = secret || existing?.appSecret || "";
+    const verifyToken = existing?.verifyToken || defaultVerifyToken() || newVerifyToken();
+    await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret, verifyToken, sheetPageId, active: true });
+    const instagramLookup = await instagramOf(accountId, pageToken);
+    const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
+    const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
+    if (instagram) {
+      await saveChannel({
+        channelId: `instagram:${accountId}`, channel: "instagram", accountId: instagram.id,
+        name: instagram.username ? `@${instagram.username}` : instagram.id, accessToken: pageToken,
+        appSecret, verifyToken, sheetPageId, active: true,
+      });
+    } else if (instagramLookup.status === "none") {
+      const previousInstagram = all.find((item) => item.channelId === `instagram:${accountId}`);
+      if (previousInstagram?.active) await upsertRows("channels", ["channel_id"], [{ channel_id: previousInstagram.channelId, active: false, updated_at: new Date().toISOString() }], "upsert");
+    }
     const ads = viaUserToken ? await connectAdAccounts(token, sheetPageId, all) : null;
     invalidateCache();
-    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage, ads }, noStore);
+    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage, instagram, instagramLookupMessage, ads }, noStore);
   } catch (e) {
     console.error("[api/channels]", e instanceof Error ? scrub(e.message) : "error");
     return fail(502, "บันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
@@ -142,7 +161,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
   }
   const pages = info.kind === "page" ? [{ id: info.id, name: info.name, token }] : info.pages;
   const uniquePages = [...new Map(pages.map((page) => [page.id, page])).values()];
-  if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement แล้วสร้าง Access Token ใหม่");
+  if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic และ instagram_manage_messages แล้วสร้าง Access Token ใหม่");
 
   const mapping = uniquePages.map((page) => {
     const pick = pickSystemPage(systemPages, all, page.id, page.name);
@@ -169,7 +188,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
   const results: ConnectResult[] = [];
   for (let i = 0; i < mapping.length; i += 5) {
     const group = mapping.slice(i, i + 5);
-    results.push(...await Promise.all(group.map(async ({ page, pick }) => {
+    results.push(...await Promise.all(group.map(async ({ page, pick, previous }) => {
       let subscribed = false, subscribeMessage = "";
       try {
         const response = await fetch(`${GRAPH()}/${encodeURIComponent(page.id)}/subscribed_apps`, {
@@ -182,7 +201,20 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
         subscribed = response.ok && result.success === true;
         if (!subscribed) subscribeMessage = scrub(result.error?.message ?? `HTTP ${response.status}`);
       } catch { subscribeMessage = "เชื่อมต่อ Meta ไม่สำเร็จ"; }
-      const instagram = await instagramOf(page.id, page.token);
+      const instagramLookup = await instagramOf(page.id, page.token);
+      const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
+      const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
+      if (instagram) {
+        await saveChannel({
+          channelId: `instagram:${page.id}`, channel: "instagram", accountId: instagram.id,
+          name: instagram.username ? `@${instagram.username}` : instagram.id, accessToken: page.token,
+          appSecret: secret, verifyToken: previous?.verifyToken || defaultVerifyToken() || newVerifyToken(),
+          sheetPageId: pick.id, active: true,
+        });
+      } else if (instagramLookup.status === "none") {
+        const previousInstagram = all.find((item) => item.channelId === `instagram:${page.id}`);
+        if (previousInstagram?.active) await upsertRows("channels", ["channel_id"], [{ channel_id: previousInstagram.channelId, active: false, updated_at: new Date().toISOString() }], "upsert");
+      }
       return {
         fbPageId: page.id,
         name: page.name,
@@ -192,6 +224,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
         subscribed,
         subscribeMessage,
         instagram,
+        instagramLookupMessage,
       };
     })));
   }
@@ -210,16 +243,28 @@ interface ConnectResult {
   subscribed?: boolean;
   subscribeMessage?: string;
   instagram?: { id: string; username: string } | null;
+  instagramLookupMessage?: string;
 }
 
-async function instagramOf(pageId: string, pageToken: string): Promise<{ id: string; username: string } | null> {
+type InstagramLookup =
+  | { status: "found"; account: { id: string; username: string } }
+  | { status: "none" }
+  | { status: "error"; message: string };
+
+async function instagramOf(pageId: string, pageToken: string): Promise<InstagramLookup> {
   try {
-    const response = await fetch(`${GRAPH()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: pageToken })}`, {
+    const response = await fetch(`${INSTAGRAM_GRAPH()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: pageToken })}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });
-    const result = (await response.json().catch(() => ({}))) as { instagram_business_account?: { id?: string; username?: string } };
+    const result = (await response.json()) as {
+      instagram_business_account?: { id?: string; username?: string } | null;
+      error?: { message?: string };
+    };
+    if (!response.ok || result.error) return { status: "error", message: scrub(result.error?.message ?? `HTTP ${response.status}`) };
     const instagram = result.instagram_business_account;
-    return response.ok && instagram?.id ? { id: instagram.id, username: instagram.username ?? "" } : null;
-  } catch { return null; }
+    if (instagram === undefined || instagram === null) return { status: "none" };
+    if (!instagram.id) return { status: "error", message: "Meta returned invalid Instagram account data" };
+    return { status: "found", account: { id: instagram.id, username: instagram.username ?? "" } };
+  } catch { return { status: "error", message: "Instagram account lookup failed" }; }
 }

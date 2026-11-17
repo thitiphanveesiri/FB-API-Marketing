@@ -26,8 +26,8 @@ export function minutesSinceCustomer(msgs: Message[], tz: string, now = new Date
   return last ? minutesBetween(last.at, localStamp(now.toISOString(), tz)) : null;
 }
 
-export async function sendText(o: { pageId: string; token: string; psid: string; text: string; base: string }): Promise<string> {
-  const r = await fetch(`${o.base}/v21.0/${o.pageId}/messages?${new URLSearchParams({ access_token: o.token })}`, {
+export async function sendText(o: { pageId: string; token: string; psid: string; text: string; base: string; apiVersion?: string; channel?: "facebook" | "instagram" }): Promise<string> {
+  const r = await fetch(`${o.base}/${o.apiVersion ?? "v21.0"}/${o.pageId}/messages?${new URLSearchParams({ access_token: o.token })}`, {
     method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ recipient: { id: o.psid }, messaging_type: "RESPONSE", message: { text: o.text } }),
   });
@@ -37,6 +37,6 @@ export async function sendText(o: { pageId: string; token: string; psid: string;
   if (code === 190) throw new SendError("โทเคนของเพจหมดอายุหรือถูกเพิกถอน — วางโทเคนใหม่ในการ์ด “เชื่อมช่องทางแชท” หน้า Upload", 502);
   if ((code === 10 && sub === 2018278) || /outside of allowed window|allowed window/i.test(msg)) throw new SendError(`ส่งไม่ได้: เกิน ${WINDOW_HOURS} ชั่วโมงหลังลูกค้าทักล่าสุด (กฎของ Meta) — ตอบใน Business Suite หรือรอให้ลูกค้าทักมาใหม่`, 400);
   if (code === 551 || sub === 1545041) throw new SendError("ลูกค้าคนนี้ไม่รับข้อความจากเพจแล้ว (ปิดกั้นหรือลบแชท)", 400);
-  if (code === 200 || code === 100) throw new SendError(`Meta ไม่อนุญาตให้ส่ง: ${msg} (ตรวจว่าโทเคนมีสิทธิ์ pages_messaging)`, 400);
+  if (code === 200 || code === 100) throw new SendError(`Meta ไม่อนุญาตให้ส่ง: ${msg} (ตรวจว่าโทเคนมีสิทธิ์ ${o.channel === "instagram" ? "instagram_manage_messages" : "pages_messaging"})`, 400);
   throw new SendError(`Meta ตอบ ${r.status}: ${msg}`, 502);
 }
