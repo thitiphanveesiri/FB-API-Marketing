@@ -1,5 +1,6 @@
 import { connection, NextResponse } from "next/server";
 import { defaultVerifyToken, loadChannels } from "@/lib/channels";
+import { ensureSystemPage } from "@/lib/autoPage";
 import { buildWrites, parseEvents, signatureOk } from "@/lib/fbWebhook";
 import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
 import { readTabs } from "@/lib/googleSheets";
@@ -45,7 +46,10 @@ export async function POST(req: Request) {
         const r = await fetch(`${base}/v21.0/${psid}?${new URLSearchParams({ fields: "name", access_token: ch.accessToken })}`, { cache: "no-store" });
         const j = (await r.json().catch(() => ({}))) as { name?: string }; return r.ok ? j.name ?? "" : "";
       };
-      const w = await buildWrites(mine, ch, mapped.dataset, tz, nameOf);
+      const sheetPageId = mapped.dataset.pages.some((page) => page.id === ch.sheetPageId)
+        ? ch.sheetPageId
+        : (await ensureSystemPage({ pages: mapped.dataset.pages, channels, fbPageId: ch.accountId, name: ch.name })).id;
+      const w = await buildWrites(mine, { ...ch, sheetPageId }, mapped.dataset, tz, nameOf);
       const newMessages = w.messages.filter((m) => {
         const id = String(m.message_id ?? "");
         if (!id || knownMessageIds.has(id)) return false;

@@ -3,12 +3,13 @@ import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
 import { checkAdAccount, actId, listAdAccounts } from "@/lib/adsSync";
 import { FbError } from "@/lib/fbSync";
-import { type Channel, defaultVerifyToken, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
+import { type Channel, defaultVerifyToken, invalidateChannels, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
 import { inspectToken, TokenError } from "@/lib/fbToken";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { upsertRows } from "@/lib/sheetsWrite";
+import { ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v21.0`;
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
@@ -44,7 +45,7 @@ export async function GET(req: Request) {
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
+interface Body { action?: "save" | "disconnect" | "connectAll"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
@@ -60,8 +61,11 @@ export async function POST(req: Request) {
       invalidateCache(); return NextResponse.json({ ok: true }, noStore);
     }
 
-    const sheetPageId = (b.sheetPageId ?? "").trim();
-    if (!sheetPageId || !g.mapped.dataset.pages.some((p) => p.id === sheetPageId)) return fail(400, "เลือกเพจในระบบที่จะเก็บแชทก่อน");
+    if (b.action === "connectAll") return connectAll(b, all, g.mapped.dataset.pages);
+
+    let sheetPageId = (b.sheetPageId ?? "").trim();
+    if (sheetPageId && !g.mapped.dataset.pages.some((p) => p.id === sheetPageId)) return fail(400, "ไม่พบเพจนี้ในระบบ");
+    if (b.channel === "ads" && !sheetPageId) return fail(400, "เลือกเพจในระบบที่จะเป็นค่าเริ่มต้นของบัญชีโฆษณานี้ก่อน");
     const token = (b.accessToken ?? "").trim(), secret = (b.appSecret ?? "").trim();
     if (token && !/^[\w-]{20,400}$/.test(token)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
     if (secret && !/^[\w-]{8,100}$/.test(secret)) return fail(400, "รูปแบบ App Secret ไม่ถูกต้อง");
@@ -111,6 +115,7 @@ export async function POST(req: Request) {
     if (!accountId) return fail(400, "วาง Page Access Token ก่อน");
     const channelId = `facebook:${accountId}`;
     if (!secret && !existing?.appSecret) return fail(400, "ใส่ App Secret ด้วย (Meta App → Settings → Basic) — ใช้ตรวจว่าข้อความมาจาก Meta จริง");
+    if (!sheetPageId) sheetPageId = (await ensureSystemPage({ pages: g.mapped.dataset.pages, channels: all, fbPageId: accountId, name })).id;
     await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret: secret, verifyToken: existing?.verifyToken || defaultVerifyToken() || newVerifyToken(), sheetPageId, active: true });
     const ads = viaUserToken ? await connectAdAccounts(token, sheetPageId, all) : null;
     invalidateCache();
@@ -119,4 +124,102 @@ export async function POST(req: Request) {
     console.error("[api/channels]", e instanceof Error ? scrub(e.message) : "error");
     return fail(502, "บันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
   }
+}
+
+/** Connect every Facebook page visible to one user token, keeping all credentials on the server. */
+async function connectAll(b: Body, all: Channel[], systemPages: { id: string; name: string }[]) {
+  const token = (b.accessToken ?? "").trim(), secretIn = (b.appSecret ?? "").trim();
+  if (!token) return fail(400, "วาง Access Token ก่อน");
+  if (!/^[\w-]{20,400}$/.test(token)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
+  if (secretIn && !/^[\w-]{8,100}$/.test(secretIn)) return fail(400, "รูปแบบ App Secret ไม่ถูกต้อง");
+  if (!secretIn) return fail(400, "ใส่ App Secret ของ Meta App ที่ออกโทเคนนี้ เพื่อยืนยันลายเซ็น Webhook");
+  const secret = secretIn;
+
+  let info;
+  try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); }
+  catch (error) {
+    return fail(400, isExpiredMetaToken(error) ? expiredMetaTokenMessage("facebook") : error instanceof TokenError ? error.message : "เชื่อมต่อ Meta ไม่สำเร็จ");
+  }
+  const pages = info.kind === "page" ? [{ id: info.id, name: info.name, token }] : info.pages;
+  const uniquePages = [...new Map(pages.map((page) => [page.id, page])).values()];
+  if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement แล้วสร้าง Access Token ใหม่");
+
+  const mapping = uniquePages.map((page) => {
+    const pick = pickSystemPage(systemPages, all, page.id, page.name);
+    return { page, pick, previous: all.find((channel) => channel.channelId === `facebook:${page.id}`) };
+  });
+  const pageRows = mapping.flatMap(({ pick }) => pick.create ? [{ page_id: pick.id, name: pick.name, active: true }] : []);
+  const channelRows = mapping.map(({ page, pick, previous }) => ({
+    channel_id: `facebook:${page.id}`,
+    channel: "facebook",
+    account_id: page.id,
+    name: page.name,
+    access_token: page.token,
+    app_secret: secret,
+    verify_token: previous?.verifyToken || defaultVerifyToken() || newVerifyToken(),
+    sheet_page_id: pick.id,
+    active: true,
+    updated_at: new Date().toISOString(),
+  }));
+  if (pageRows.length) await upsertRows("pages", ["page_id"], pageRows, "insert");
+  await upsertRows("channels", ["channel_id"], channelRows, "upsert");
+  invalidateChannels();
+  invalidateCache();
+
+  const results: ConnectResult[] = [];
+  for (let i = 0; i < mapping.length; i += 5) {
+    const group = mapping.slice(i, i + 5);
+    results.push(...await Promise.all(group.map(async ({ page, pick }) => {
+      let subscribed = false, subscribeMessage = "";
+      try {
+        const response = await fetch(`${GRAPH()}/${encodeURIComponent(page.id)}/subscribed_apps`, {
+          method: "POST",
+          cache: "no-store",
+          signal: AbortSignal.timeout(8000),
+          body: new URLSearchParams({ subscribed_fields: "messages,message_echoes", access_token: page.token }),
+        });
+        const result = (await response.json().catch(() => ({}))) as { success?: boolean; error?: { message?: string } };
+        subscribed = response.ok && result.success === true;
+        if (!subscribed) subscribeMessage = scrub(result.error?.message ?? `HTTP ${response.status}`);
+      } catch { subscribeMessage = "เชื่อมต่อ Meta ไม่สำเร็จ"; }
+      const instagram = await instagramOf(page.id, page.token);
+      return {
+        fbPageId: page.id,
+        name: page.name,
+        ok: true,
+        systemPageId: pick.id,
+        createdPage: pick.create,
+        subscribed,
+        subscribeMessage,
+        instagram,
+      };
+    })));
+  }
+  const firstSheet = mapping[0]?.pick.id ?? "";
+  const ads = info.kind === "user" && firstSheet ? await connectAdAccounts(token, firstSheet, all) : null;
+  return NextResponse.json({ ok: true, connectedAll: true, results, ads }, noStore);
+}
+
+interface ConnectResult {
+  fbPageId: string;
+  name: string;
+  ok: boolean;
+  message?: string;
+  systemPageId?: string;
+  createdPage?: boolean;
+  subscribed?: boolean;
+  subscribeMessage?: string;
+  instagram?: { id: string; username: string } | null;
+}
+
+async function instagramOf(pageId: string, pageToken: string): Promise<{ id: string; username: string } | null> {
+  try {
+    const response = await fetch(`${GRAPH()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: pageToken })}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    const result = (await response.json().catch(() => ({}))) as { instagram_business_account?: { id?: string; username?: string } };
+    const instagram = result.instagram_business_account;
+    return response.ok && instagram?.id ? { id: instagram.id, username: instagram.username ?? "" } : null;
+  } catch { return null; }
 }

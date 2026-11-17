@@ -2,7 +2,8 @@ import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
-import { fbSyncConfigs } from "@/lib/channels";
+import { fbSyncConfigs, loadChannels } from "@/lib/channels";
+import { ensureSystemPage, fetchPageName } from "@/lib/autoPage";
 import { FbError, syncStep, type SyncState } from "@/lib/fbSync";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 
@@ -21,23 +22,46 @@ export async function POST(req: Request) {
     const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState };
     const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId); if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่า (เชื่อมเพจในหน้า Upload ก่อน)");
     const ds = g.mapped.dataset;
-    if (!b.sheetPageId || !ds.pages.some((p) => p.id === b.sheetPageId)) return fail(400, "เลือกเพจในระบบที่จะเก็บข้อมูลก่อน");
+    let sheetPageId = [b.sheetPageId, cfg.sheetPageId].find((id) => !!id && ds.pages.some((p) => p.id === id)) ?? "";
+    if (!sheetPageId) {
+      const made = await ensureSystemPage({
+        pages: ds.pages,
+        channels: await loadChannels(true),
+        fbPageId: cfg.fbPageId,
+        name: cfg.name || (await fetchPageName(cfg.fbPageId, cfg.token)),
+      });
+      sheetPageId = made.id;
+      if (made.created) invalidateCache();
+    }
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" ? b.state.chatList : undefined;
-    const commentPostId = typeof b.state?.commentPostId === "string" && /^[\w.-]{1,200}$/.test(b.state.commentPostId) ? b.state.commentPostId : undefined;
-    const commentPostUrl = typeof b.state?.commentPostUrl === "string" && b.state.commentPostUrl.length <= 2048
-      ? (() => { try { const u = new URL(b.state.commentPostUrl!); return u.protocol === "https:" && ["facebook.com", "www.facebook.com", "m.facebook.com"].includes(u.hostname) ? u.href : undefined; } catch { return undefined; } })()
+    const commentCursor = (value: unknown) => typeof value === "string" && /^[\w=+/.-]{1,400}$/.test(value) ? value : undefined;
+    const commentId = (value: unknown) => typeof value === "string" && /^[\w.-]{1,200}$/.test(value) ? value : undefined;
+    const commentUrl = (value: unknown) => {
+      if (typeof value !== "string" || value.length > 2048) return undefined;
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" && ["facebook.com", "www.facebook.com", "m.facebook.com"].includes(url.hostname) ? url.href : undefined;
+      } catch { return undefined; }
+    };
+    const commentBatch = Array.isArray(b.state?.commentBatch)
+      ? b.state.commentBatch.slice(0, 5).flatMap((post) => {
+        const id = commentId(post?.id);
+        return id ? [{ id, url: commentUrl(post.url), after: commentCursor(post.after), basic: post.basic === true }] : [];
+      })
       : undefined;
-    const commentAfter = typeof b.state?.commentAfter === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.commentAfter) ? b.state.commentAfter : undefined;
+    const commentPostId = typeof b.state?.commentPostId === "string" && /^[\w.-]{1,200}$/.test(b.state.commentPostId) ? b.state.commentPostId : undefined;
+    const commentPostUrl = commentUrl(b.state?.commentPostUrl);
+    const commentAfter = commentCursor(b.state?.commentAfter);
     const commentsFeedDone = typeof b.state?.commentsFeedDone === "boolean" ? b.state.commentsFeedDone : undefined;
     const commentBasic = b.state?.commentBasic === true ? true : undefined;
     const out = await syncStep({
       cfg,
-      sheetPageId: b.sheetPageId,
+      sheetPageId,
       days,
-      state: { phase, after, chatList, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
+      state: { phase, after, chatList, commentBatch, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
       ds,
       tz: process.env.APP_TZ || "Asia/Bangkok",
       base: process.env.FB_GRAPH_BASE,
