@@ -7,8 +7,8 @@ export type AdsPhase = "ads" | "insights" | "done";
 export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number }
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
 /** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
-export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string> }
-export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warning?: string }
+export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string> }
+export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warning?: string; byPage?: Record<string, number> }
 
 const ADS_PER_CALL = 40, INSIGHT_ROWS_PER_CALL = 200;
 const ALL_STATUS = JSON.stringify(["ACTIVE", "PAUSED", "DELETED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED", "PENDING_BILLING_INFO", "CAMPAIGN_PAUSED", "ARCHIVED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]);
@@ -64,19 +64,23 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
       const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
       const fbPage = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || "";
-      const mapped = fbPage ? i.pageMap?.[fbPage] : undefined; // unknown page → the page this ad account was connected under
+      // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
+      const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
+      const mapped = (fbPage ? i.pageMap?.[fbPage] : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
       adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
         updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "" });
     }
     counts.ads = adRows.length; counts.campaigns = camps.size;
+    const byPage: Record<string, number> = {};
+    for (const campaign of camps.values()) byPage[campaign.page_id] = (byPage[campaign.page_id] ?? 0) + 1;
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
-      counts,
+      counts, byPage,
       ...(tier > 0 ? { warning: `Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})` } : {}),
     };
   }

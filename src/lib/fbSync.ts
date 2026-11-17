@@ -53,7 +53,7 @@ interface FbComment { id: string; from?: FbPerson; message?: string; created_tim
 interface FbPost { id: string; permalink_url?: string }
 
 export interface SyncInput { cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
-export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts }
+export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
 
 const CHATS_PER_CALL = 3, POSTS_PER_CALL = 4, MSG_PAGES = 5;
 
@@ -115,12 +115,19 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
   if (i.state.phase === "comments") {
     // posts are filtered by their own date, so look back a bit further to catch fresh comments on slightly older posts
-    const j = await graph(`${fb}/feed`, { fields: "id,permalink_url", since: String(Math.floor((since - 14 * 86400000) / 1000)), limit: String(POSTS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base);
+    // Comments need the pages_read_engagement permission (and pages_read_user_content for the commenters). A token without them must not sink the chats that were already pulled.
+    const noPerm = (e: unknown) => e instanceof FbError && (e.code === 10 || e.code === 200);
+    const skip = (): SyncOutput => ({ next: { phase: "done" }, writes, counts, warning: "ข้ามคอมเมนต์: โทเคนของเพจไม่มีสิทธิ์ pages_read_engagement / pages_read_user_content (สร้างโทเคนใหม่โดยติ๊กสิทธิ์เหล่านี้ แล้วเชื่อมเพจใหม่)" });
+    let j: Graph;
+    try { j = await graph(`${fb}/feed`, { fields: "id,permalink_url", since: String(Math.floor((since - 14 * 86400000) / 1000)), limit: String(POSTS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base); }
+    catch (e) { if (noPerm(e)) return skip(); throw e; }
     const rows: SyncWrite["rows"] = [];
     for (const p of (j.data ?? []) as FbPost[]) {
       let after: string | undefined;
       for (let pg = 0; pg < 3; pg++) {
-        const c = await graph(`${p.id}/comments`, { filter: "toplevel", order: "chronological", fields: "id,from,message,created_time,comments.limit(50){from,message,created_time}", limit: "100", ...(after ? { after } : {}) }, tok, f, base);
+        let c: Graph;
+        try { c = await graph(`${p.id}/comments`, { filter: "toplevel", order: "chronological", fields: "id,from,message,created_time,comments.limit(50){from,message,created_time}", limit: "100", ...(after ? { after } : {}) }, tok, f, base); }
+        catch (e) { if (noPerm(e)) return skip(); throw e; }
         for (const x of (c.data ?? []) as FbComment[]) {
           if (x.from?.id === fb || ms(x.created_time) < since) continue; // the page's own comments aren't customers
           const reply = (x.comments?.data ?? []).filter((r) => r.from?.id === fb).sort((a, b) => a.created_time.localeCompare(b.created_time))[0];

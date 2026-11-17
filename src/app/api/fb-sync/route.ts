@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     const out = await syncStep({ cfg, sheetPageId: b.sheetPageId, days, state: { phase, after }, ds, tz: process.env.APP_TZ || "Asia/Bangkok", base: process.env.FB_GRAPH_BASE });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.writes.length) invalidateCache();
-    return NextResponse.json({ ok: true, next: out.next, counts: out.counts }, noStore);
+    return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e.message, { rateLimited: e.rateLimited });
     const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;

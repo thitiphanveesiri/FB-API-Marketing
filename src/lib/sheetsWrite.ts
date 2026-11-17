@@ -2,7 +2,7 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { applyPlan, norm, Obj, planUpsert, UpsertMode } from "./sheetOps";
 import { SHEET_TABS } from "./sheetSchema";
-import { accessToken } from "./googleSheets";
+import { accessToken, forgetSheetTitles, sheetTitles, sheetsFetch } from "./googleSheets";
 
 export interface WriteResult { updated: number; appended: number; skipped: number }
 let chain: Promise<unknown> = Promise.resolve();
@@ -28,15 +28,14 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
     const auth = { Authorization: `Bearer ${await accessToken(true)}`, "Content-Type": "application/json" };
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
     const call = async (url: string, init?: RequestInit) => {
-      const r = await fetch(url, { ...init, headers: { ...auth, ...(init?.headers ?? {}) }, cache: "no-store" });
+      const r = await sheetsFetch(url, { ...init, headers: { ...auth, ...(init?.headers ?? {}) }, cache: "no-store" });
       if (!r.ok) throw new Error(`Google Sheets ${r.status}: ${(await r.text()).slice(0, 300)}`);
       return r.json();
     };
     // find the real tab title (case-insensitive) or create it
-    const meta = (await call(`${base}?fields=sheets.properties.title`)) as { sheets: { properties: { title: string } }[] };
-    let title = meta.sheets.map((s) => s.properties.title).find((t) => t.trim().toLowerCase() === tab);
+    let title = (await sheetTitles(auth)).find((t) => t.trim().toLowerCase() === tab) ?? (await sheetTitles(auth, true)).find((t) => t.trim().toLowerCase() === tab); // not in the remembered list: look again before creating
     let grid: string[][] = [];
-    if (!title) { await call(`${base}:batchUpdate`, { method: "POST", body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) }); title = tab; }
+    if (!title) { await call(`${base}:batchUpdate`, { method: "POST", body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) }); title = tab; forgetSheetTitles(); }
     else grid = ((await call(`${base}/values/${encodeURIComponent(A1(title))}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`)) as { values?: (string | number | boolean)[][] }).values?.map((r) => r.map((c) => String(c))) ?? [];
     const plan = planUpsert(grid, keyCols, objs, mode);
     const data: { range: string; values: unknown[][] }[] = [];
@@ -81,12 +80,11 @@ export async function rewriteRow(tab: string, keyCol: string, oldKey: string, ob
     const auth = { Authorization: `Bearer ${await accessToken(true)}`, "Content-Type": "application/json" };
     const base = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
     const call = async (url: string, init?: RequestInit) => {
-      const response = await fetch(url, { ...init, headers: { ...auth, ...(init?.headers ?? {}) }, cache: "no-store" });
+      const response = await sheetsFetch(url, { ...init, headers: { ...auth, ...(init?.headers ?? {}) }, cache: "no-store" });
       if (!response.ok) throw new Error(`Google Sheets ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return response.json();
     };
-    const meta = (await call(`${base}?fields=sheets.properties.title`)) as { sheets: { properties: { title: string } }[] };
-    const title = meta.sheets.map((sheet) => sheet.properties.title).find((name) => name.trim().toLowerCase() === tab);
+    const title = (await sheetTitles(auth)).find((name) => name.trim().toLowerCase() === tab);
     if (!title) throw new Error(`Cannot find ${tab} tab to rewrite`);
     const result = (await call(`${base}/values/${encodeURIComponent(A1(title))}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`)) as { values?: (string | number | boolean)[][] };
     const grid = result.values?.map((row) => row.map(String)) ?? [];
