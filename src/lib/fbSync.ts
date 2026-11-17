@@ -17,7 +17,19 @@ export interface SyncState {
   commentsFeedDone?: boolean;
   commentBasic?: boolean;
 }
-export interface SyncCounts { chats: number; newLeads: number; messages: number; comments: number; posts?: number }
+export interface SyncCounts {
+  chats: number;
+  newLeads: number;
+  messages: number;
+  comments: number;
+  posts?: number;
+  postsWithReportedComments: number;
+  postsWithoutCommentSummary: number;
+  commentPagesRead: number;
+  commentItemsReceived: number;
+  commentsOutsideRange: number;
+  pageCommentsSkipped: number;
+}
 export interface SyncWrite { tab: string; keyCols: string[]; rows: Record<string, string | number | boolean>[]; mode: UpsertMode }
 
 export class FbError extends Error { constructor(msg: string, public rateLimited = false, public code?: number) { super(msg); } }
@@ -79,7 +91,8 @@ interface FbPost { id: string; permalink_url?: string; comments?: { summary?: { 
 export interface SyncInput { cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
 
-const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = 5, COMMENT_PARALLEL = 5;
+export const MAX_COMMENT_POSTS_PER_BATCH = 50;
+const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = MAX_COMMENT_POSTS_PER_BATCH, COMMENT_PARALLEL = 5;
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const f = i.fetchFn ?? metaFetch, base = i.base ?? "https://graph.facebook.com";
@@ -88,7 +101,19 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const who = (await graph("me", { fields: "id,name,category" }, tok, f, base, 900, 0).catch((e) => { if (e instanceof FbError && e.code === 100 && /category/i.test(e.message)) throw new FbError("โทเคนนี้เป็นโทเคนของผู้ใช้ ไม่ใช่ของเพจ — เชื่อมเพจใหม่ที่หน้า Upload (วางโทเคนผู้ใช้ได้ ระบบจะแลกเป็นโทเคนเพจให้) หรือใช้ me/accounts ใน Graph API Explorer เพื่อเอา access_token ของเพจ", false, 100); if (e instanceof FbError && !e.rateLimited) throw new FbError(`โทเคนใช้ไม่ได้: ${e.message} — สร้างโทเคนเพจใหม่`, false, e.code); throw e; })) as unknown as { id?: string; name?: string; category?: string };
   if (!who.id || !who.category) throw new FbError(`FB_PAGE_TOKEN เป็นโทเคนของผู้ใช้${who.name ? ` (${who.name})` : ""} ไม่ใช่โทเคนของเพจ — ใน Graph API Explorer รัน me/accounts แล้วคัดลอก access_token ของเพจที่ต้องการมาใช้แทน`);
   const fb = who.id; // always the page the token really belongs to (a mismatched FB_PAGE_ID is harmless then)
-  const counts: SyncCounts = { chats: 0, newLeads: 0, messages: 0, comments: 0 };
+  const counts: SyncCounts = {
+    chats: 0,
+    newLeads: 0,
+    messages: 0,
+    comments: 0,
+    posts: 0,
+    postsWithReportedComments: 0,
+    postsWithoutCommentSummary: 0,
+    commentPagesRead: 0,
+    commentItemsReceived: 0,
+    commentsOutsideRange: 0,
+    pageCommentsSkipped: 0,
+  };
   const writes: SyncWrite[] = [];
   const ms = (iso: string) => new Date(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).getTime();
 
@@ -186,12 +211,19 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
           feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,comments.filter(toplevel).limit(0).summary(true)" }, tok, f, base, 900, 0);
         } catch (e) {
           if (!transientOrUnsupported(e)) throw e;
-          feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url" }, tok, f, base, 900, 0);
+          try {
+            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,comments.limit(0).summary(true)" }, tok, f, base, 900, 0);
+          } catch (e2) {
+            if (!transientOrUnsupported(e2)) throw e2;
+            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url" }, tok, f, base, 900, 0);
+          }
         }
       } catch (e) { if (noPerm(e)) return skip(); throw e; }
 
       const posts = ((feed.data ?? []) as FbPost[]).filter((post) => !!post.id);
       counts.posts = posts.length;
+      counts.postsWithReportedComments = posts.filter((post) => (post.comments?.summary?.total_count ?? 0) > 0).length;
+      counts.postsWithoutCommentSummary = posts.filter((post) => post.comments?.summary?.total_count == null).length;
       batch = posts
         .filter((post) => (post.comments?.summary?.total_count ?? 1) > 0)
         .map((post) => ({ id: post.id, url: post.permalink_url || post.id }));
@@ -202,6 +234,8 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
     const rows: SyncWrite["rows"] = [];
     const pending: CommentPostState[] = [];
+    const activeBatch = batch.slice(0, COMMENT_PARALLEL);
+    const waitingBatch = batch.slice(COMMENT_PARALLEL);
     const pullPost = async (post: CommentPostState) => {
       const fetchComments = (light: boolean) => graph(`${post.id}/comments`, {
         filter: "toplevel",
@@ -211,18 +245,22 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         ...(post.after ? { after: post.after } : {}),
       }, tok, f, base, 900, 0);
       let comments: Graph, basic = post.basic === true;
-      try { comments = await fetchComments(basic); }
+      try { comments = await fetchComments(basic); counts.commentPagesRead++; }
       catch (e) {
         if (noPerm(e)) throw e;
         if (!basic && transientOrUnsupported(e)) {
           basic = true;
           comments = await fetchComments(true);
+          counts.commentPagesRead++;
           lighter = true;
         } else throw e;
       }
 
-      for (const x of (comments.data ?? []) as FbComment[]) {
-        if (x.from?.id === fb || ms(x.created_time) < since) continue;
+      const received = (comments.data ?? []) as FbComment[];
+      counts.commentItemsReceived += received.length;
+      for (const x of received) {
+        if (x.from?.id === fb) { counts.pageCommentsSkipped++; continue; }
+        if (ms(x.created_time) < since) { counts.commentsOutsideRange++; continue; }
         const reply = (x.comments?.data ?? []).filter((r) => r.from?.id === fb).sort((a, b) => a.created_time.localeCompare(b.created_time))[0];
         rows.push({ comment_id: x.id, page_id: i.sheetPageId, post_id: post.url || post.id, commenter: x.from?.name ?? "", text: (x.message ?? "").slice(0, 1000), commented_at: localStamp(x.created_time, i.tz), replied_at: reply ? localStamp(reply.created_time, i.tz) : "", replied_by: "" });
       }
@@ -231,15 +269,14 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     };
 
     try {
-      for (let k = 0; k < batch.length; k += COMMENT_PARALLEL) {
-        await Promise.all(batch.slice(k, k + COMMENT_PARALLEL).map(pullPost));
-      }
+      await Promise.all(activeBatch.map(pullPost));
     } catch (e) { if (noPerm(e)) return skip(); throw e; }
 
     counts.comments = rows.length;
     if (rows.length) writes.push({ tab: "post_comments", keyCols: ["comment_id"], rows, mode: "upsert" });
-    const next: SyncState = pending.length
-      ? { phase: "comments", ...(feedAfter ? { after: feedAfter } : {}), commentsFeedDone: feedDone, commentBatch: pending }
+    const remaining = [...pending, ...waitingBatch];
+    const next: SyncState = remaining.length
+      ? { phase: "comments", ...(feedAfter ? { after: feedAfter } : {}), commentsFeedDone: feedDone, commentBatch: remaining }
       : feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter };
     return { next, writes, counts, ...(lighter ? { warning: "Meta ตอบข้อมูลการตอบกลับแบบละเอียดไม่ทัน จึงดึงเฉพาะข้อความคอมเมนต์ (รายละเอียดการตอบกลับจากเพจอาจไม่ครบ)" } : {}) };
   }

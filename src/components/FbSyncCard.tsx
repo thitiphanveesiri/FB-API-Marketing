@@ -7,7 +7,20 @@ import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from 
 
 interface Cfg { fbPageId: string; sheetPageId: string; name?: string }
 const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
-interface Totals { chats: number; newLeads: number; messages: number; comments: number; posts?: number; warnings?: string[] }
+interface Totals {
+  chats: number;
+  newLeads: number;
+  messages: number;
+  comments: number;
+  posts?: number;
+  postsWithReportedComments: number;
+  postsWithoutCommentSummary: number;
+  commentPagesRead: number;
+  commentItemsReceived: number;
+  commentsOutsideRange: number;
+  pageCommentsSkipped: number;
+  warnings?: string[];
+}
 interface Acct { channelId: string; name: string; accountId: string }
 
 /** Administrators only: pull chats + comments (with their times) straight from the Facebook Page into the Google Sheet. */
@@ -44,7 +57,7 @@ export default function FbSyncCard() {
     const targets = chosen;
     if (!targets.length) return;
     stop.current = false; setBusy(true); setDone(null); setAdsDone(null);
-    const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0, posts: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [], byPage: {} };
+    const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0, posts: 0, postsWithReportedComments: 0, postsWithoutCommentSummary: 0, commentPagesRead: 0, commentItemsReceived: 0, commentsOutsideRange: 0, pageCommentsSkipped: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [], byPage: {} };
     const failed: string[] = [];
     try {
       for (const [n, t] of targets.entries()) {
@@ -90,7 +103,7 @@ export default function FbSyncCard() {
           }
           throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ");
         }
-        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, commentBatch: j.next?.commentBatch, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
+        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); tot.postsWithReportedComments += j.counts?.postsWithReportedComments ?? 0; tot.postsWithoutCommentSummary += j.counts?.postsWithoutCommentSummary ?? 0; tot.commentPagesRead += j.counts?.commentPagesRead ?? 0; tot.commentItemsReceived += j.counts?.commentItemsReceived ?? 0; tot.commentsOutsideRange += j.counts?.commentsOutsideRange ?? 0; tot.pageCommentsSkipped += j.counts?.pageCommentsSkipped ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, commentBatch: j.next?.commentBatch, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
       }
     }
   };
@@ -111,8 +124,8 @@ export default function FbSyncCard() {
             ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={withAds} onChange={(e) => setWithAds(e.target.checked)} disabled={busy} className="accent-[#087a58]" /> ดึงโฆษณาพร้อมกัน ({ads.length} บัญชี: {ads.map((a) => a.name || a.accountId).join(", ")}) · ย้อนหลังตามช่วงที่เลือก (สูงสุด 90 วัน)</label>
             : <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้เชื่อมบัญชีโฆษณา จึงไม่มีข้อมูลโฆษณา (Dashboard โฆษณาจะว่าง) — วาง <b>โทเคนผู้ใช้ที่มีสิทธิ์ ads_read</b> ในการ์ด “เชื่อมช่องทางแชท” ระบบจะเชื่อมบัญชีโฆษณาให้เองพร้อมเพจ หรือกรอก Ad Account ID เองในการ์ดโฆษณาด้านล่าง</p>}
           {log && <p className="text-sm" role="status">{log}</p>}
-          {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.chats} แชท ({done.messages} ข้อความ, ลีดใหม่ {done.newLeads}) และ {done.comments} คอมเมนต์จาก {done.posts ?? 0} โพสต์{adsDone ? ` · โฆษณา ${adsDone.ads} รายการ (${adsDone.campaigns} แคมเปญ) สถิติรายวัน ${adsDone.rows} แถว` : ""}{adsDone?.byPage && Object.keys(adsDone.byPage).length ? ` · แคมเปญแยกตามเพจ: ${Object.entries(adsDone.byPage).map(([id, count]) => `${sysName(id)} ${count}`).join(", ")}` : ""} · ไปดูผลที่หน้า <b>SLA</b> (ต้องมอบหมายเซลล์ให้แต่ละแชทที่หน้า Board ก่อน จึงจะมีคะแนน)</p>}
-          <p className="text-xs text-muted">ครั้งแรกเริ่มที่ 7 วันก่อนเพื่อทดสอบ · ดึงซ้ำได้ ข้อความเดิมจะไม่ซ้ำ · แชทจะถูกจับคู่กับลีดเดิมด้วยชื่อลูกค้า (ถ้าชื่อซ้ำกันหลายคนจะสร้างลีดใหม่)</p>
+          {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.chats} แชท ({done.messages} ข้อความ, ลีดใหม่ {done.newLeads}) และ {done.comments} คอมเมนต์จาก {done.posts ?? 0} โพสต์{done.comments === 0 ? ` · Meta รายงานโพสต์มีคอมเมนต์ ${done.postsWithReportedComments} โพสต์ (ไม่มี summary ${done.postsWithoutCommentSummary}); อ่านคอมเมนต์ ${done.commentItemsReceived} รายการจาก ${done.commentPagesRead} หน้า (เกินช่วงวันที่เลือก ${done.commentsOutsideRange}, เพจตอบเอง ${done.pageCommentsSkipped})` : ""}{adsDone ? ` · โฆษณา ${adsDone.ads} รายการ (${adsDone.campaigns} แคมเปญ) สถิติรายวัน ${adsDone.rows} แถว` : ""}{adsDone?.byPage && Object.keys(adsDone.byPage).length ? ` · แคมเปญแยกตามเพจ: ${Object.entries(adsDone.byPage).map(([id, count]) => `${sysName(id)} ${count}`).join(", ")}` : ""} · ไปดูผลที่หน้า <b>SLA</b> (ต้องมอบหมายเซลล์ให้แต่ละแชทที่หน้า Board ก่อน จึงจะมีคะแนน)</p>}
+          <p className="text-xs text-muted">ครั้งแรกเริ่มที่ 7 วันก่อนเพื่อทดสอบ · ดึงซ้ำได้ ข้อความเดิมจะไม่ซ้ำ · แชทจะถูกจับคู่กับลีดเดิมด้วยชื่อลูกค้า (ถ้าชื่อซ้ำกันหลายคนจะสร้างลีดใหม่) · จำนวนโพสต์รวมเผื่อย้อนหลังอีก 14 วันเพื่อเก็บคอมเมนต์ในช่วงที่เลือกจากโพสต์เก่า</p>
         </div>
       )}
     </Card>
