@@ -1,11 +1,11 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, Plug } from "lucide-react";
+import { Camera, Check, Copy, Plug } from "lucide-react";
 import { Badge, Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 
 interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
-interface ConnectRes { fbPageId: string; name: string; ok: boolean; message?: string; systemPageId?: string; createdPage?: boolean; subscribed?: boolean; subscribeMessage?: string; instagram?: { id: string; username: string } | null }
+interface ConnectRes { fbPageId: string; name: string; ok: boolean; message?: string; systemPageId?: string; createdPage?: boolean; subscribed?: boolean; subscribeMessage?: string; instagram?: { id: string; username: string } | null; instagramLookupMessage?: string }
 interface ChannelList { channels: Ch[]; webhookUrl: string; verifyToken: string }
 const inp = "w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-mono";
 
@@ -36,7 +36,7 @@ export default function ChannelsCard() {
     try {
       const response = await fetch("/api/channels", { cache: "no-store" });
       if (!response.ok) return null;
-      const result = await response.json() as { ok?: boolean; channels?: Ch[]; webhookUrls?: { facebook?: string }; verifyToken?: string };
+      const result = await response.json() as { ok?: boolean; channels?: Ch[]; webhookUrls?: { facebook?: string; instagram?: string }; verifyToken?: string };
       if (!result.ok || !Array.isArray(result.channels)) return null;
       return { channels: result.channels, webhookUrl: result.webhookUrls?.facebook ?? "", verifyToken: result.verifyToken ?? "" };
     } catch { return null; }
@@ -60,6 +60,7 @@ export default function ChannelsCard() {
 
   const selectedPageId = pageId || data.pages.find((p) => p.active)?.id || "";
   const fb = list.filter((c) => c.channel === "facebook" && c.active && c.hasToken);
+  const instagram = list.filter((c) => c.channel === "instagram" && c.active && c.hasToken);
   const ads = list.filter((c) => c.channel === "ads" && c.active && c.hasToken);
   const form = editing !== null || fb.length === 0;
   const adForm = adEdit || ads.length === 0;
@@ -74,7 +75,10 @@ export default function ChannelsCard() {
       const ads = j.ads as { added: number; existing: number; names: string[]; message: string } | null;
       const adsNote = !ads ? "" : ads.added + ads.existing > 0 ? ` · พบบัญชีโฆษณา ${ads.added + ads.existing} บัญชี (${ads.names.join(", ")}) ดึงพร้อมแชทได้เลย` : ` · ${ads.message}`;
       const adsBad = !!ads && ads.added + ads.existing === 0;
-      toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + adsNote, j.subscribed === false || adsBad ? "info" : undefined);
+      const igNote = j.instagram
+        ? ` · พบ Instagram @${j.instagram.username || j.instagram.id}; อย่าลืมเปิด Instagram → messages ใน Meta App Dashboard`
+        : j.instagramLookupMessage ? ` · ค้นหา Instagram ไม่สำเร็จ: ${j.instagramLookupMessage}` : "";
+      toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + igNote + adsNote, j.subscribed === false || !!j.instagramLookupMessage || adsBad ? "info" : undefined);
     } catch { setMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
   };
   const connectAll = async () => {
@@ -92,7 +96,8 @@ export default function ChannelsCard() {
       setAllToken(""); setAllSecret("");
       await refresh(); await reloadData(true);
       const successCount = connected.filter((page) => page.ok).length;
-      toast(`เชื่อมแล้ว ${successCount} เพจ`, successCount === connected.length ? undefined : "info");
+      const instagramLookupFailures = connected.filter((page) => !!page.instagramLookupMessage).length;
+      toast(`เชื่อมแล้ว ${successCount} เพจ${instagramLookupFailures ? ` · ค้นหา Instagram ไม่สำเร็จ ${instagramLookupFailures} เพจ (สถานะเดิมยังคงอยู่)` : ""}`, successCount === connected.length && !instagramLookupFailures ? undefined : "info");
     } catch { setAllMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setAllBusy(false); }
   };
   const saveAds = async () => {
@@ -114,8 +119,9 @@ export default function ChannelsCard() {
   return (
     <Card title="เชื่อมช่องทางแชท" subtitle="ใส่ Access Token + ตั้ง Webhook แล้วข้อความจะเข้าระบบอัตโนมัติ เพื่อคำนวณ SLA">
       <div className="space-y-4">
-        <div className="grid gap-2 sm:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-5">
           <div className="rounded-xl border border-brand-2 bg-brand-faint p-3 text-sm"><b>Facebook Messenger</b><div className="mt-1 text-xs text-muted">{fb.length ? `เชื่อมแล้ว ${fb.length} เพจ` : "ยังไม่ได้เชื่อม"}</div></div>
+          <div className={`rounded-xl border p-3 text-sm ${instagram.length ? "border-pink-300 bg-pink-50" : "border-line"}`}><b className="inline-flex items-center gap-1"><Camera size={14} /> Instagram Messaging</b><div className="mt-1 text-xs text-muted">{instagram.length ? `เชื่อมแล้ว ${instagram.length} บัญชี` : "เชื่อมผ่านเพจ Facebook"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${ads.length ? "border-brand-2 bg-brand-faint" : "border-line"}`}><b>โฆษณา (Marketing API)</b><div className="mt-1 text-xs text-muted">{ads.length ? `เชื่อมแล้ว ${ads.length} บัญชี` : "ยังไม่ได้เชื่อม"}</div></div>
           <div className="rounded-xl border border-line p-3 text-sm text-muted"><b>LINE</b> <Badge>เร็วๆ นี้</Badge></div>
           <div className="rounded-xl border border-line p-3 text-sm text-muted"><b>WhatsApp</b> <Badge>เร็วๆ นี้</Badge></div>
@@ -124,6 +130,7 @@ export default function ChannelsCard() {
         {fb.map((c) => (
           <div key={c.channelId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
             <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">Token …{c.tokenTail} · เก็บในเพจ {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
+            {instagram.find((item) => item.channelId === `instagram:${c.accountId}`) && <span className="inline-flex items-center gap-1 text-xs text-pink-700"><Camera size={12} /> {instagram.find((item) => item.channelId === `instagram:${c.accountId}`)?.name}</span>}
             {!c.hasSecret && <Badge tone="red">ยังไม่มี App Secret</Badge>}
             <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setFbDest(c.sheetPageId || ""); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>))}
@@ -144,7 +151,8 @@ export default function ChannelsCard() {
                 {page.ok
                   ? <span className="text-xs text-muted"> · เก็บในเพจ {data.pages.find((item) => item.id === page.systemPageId)?.name ?? page.systemPageId}{page.createdPage ? " (สร้างใหม่)" : ""} · {page.subscribed ? "รับแชทอัตโนมัติแล้ว" : `สมัครรับแชทไม่สำเร็จ: ${page.subscribeMessage}`}</span>
                   : <span className="text-xs text-red-600"> · {page.message}</span>}
-                {page.ok && page.instagram && <span className="block text-xs text-muted">พบ Instagram ที่ผูกกับเพจนี้: @{page.instagram.username || page.instagram.id} (ยังไม่เปิดดึงแชท Instagram)</span>}
+                {page.ok && page.instagram && <span className="block text-xs text-pink-700">พบ Instagram ที่ผูกกับเพจนี้: @{page.instagram.username || page.instagram.id} · เปิดใช้ Instagram → messages ใน Meta App Dashboard</span>}
+                {page.ok && page.instagramLookupMessage && <span className="block text-xs text-amber-700">ค้นหา Instagram ไม่สำเร็จ (คงสถานะการเชื่อมเดิมไว้): {page.instagramLookupMessage}</span>}
               </div>))}
             {allRes.ads && <p className="text-xs text-muted">{allRes.ads.added + allRes.ads.existing > 0 ? `พบบัญชีโฆษณา ${allRes.ads.added + allRes.ads.existing} บัญชี (${allRes.ads.names.join(", ")})` : allRes.ads.message}</p>}
           </div>}
@@ -157,11 +165,12 @@ export default function ChannelsCard() {
             ? <CopyBox label="Verify Token" value={fb[0]?.verifyToken || verify} />
             : <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่มี Verify Token — ตั้งค่า <b>AUTH_SECRET</b> หรือ <b>FB_WEBHOOK_VERIFY_TOKEN</b> ใน Vercel (Environment Variables) แล้ว Redeploy</p>}
           <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
-            <li>developers.facebook.com → แอปของคุณ → เพิ่มผลิตภัณฑ์ <b>Messenger</b> → <b>Messenger API Settings → Webhooks</b> (หรือ Webhooks → เลือก <b>Page</b>)</li>
-            <li>กด <b>Add Callback URL</b> วาง Callback URL กับ Verify Token ด้านบน แล้ว <b>Verify and Save</b></li>
-            <li>ติ๊ก subscribe ฟิลด์ <b>messages</b> และ <b>message_echoes</b> (echoes = ข้อความที่เซลล์ตอบ)</li>
-            <li>กด <b>Add or remove Pages</b> เลือกเพจของคุณ (หรือกด “บันทึกและเชื่อมต่อ” ด้านบน ระบบจะสมัครเพจเข้าแอปให้เอง)</li>
-            <li>ทดสอบ: ให้ใครสักคนส่งข้อความหาเพจ แล้วดูว่าขึ้นในหน้า Inbox ภายในไม่กี่วินาที</li>
+            <li>ใน Meta App เปิดผลิตภัณฑ์ Messenger/Instagram Messaging และ Webhooks; ตั้ง Callback URL กับ Verify Token นี้ใน Webhooks object ทั้ง <b>Page</b> และ <b>Instagram</b> แล้วกด <b>Verify and Save</b></li>
+            <li>สำหรับ Facebook Page ให้เลือก Webhooks object <b>Page</b> และ subscribe <b>messages</b> กับ <b>message_echoes</b></li>
+            <li>สำหรับ Instagram ให้เลือก <b>Instagram</b> ใน Messenger → Instagram settings/Webhooks และ subscribe ฟิลด์ <b>messages</b> (Instagram ส่ง echo ผ่านฟิลด์นี้ ไม่ต้อง subscribe message_echoes)</li>
+            <li>กด “บันทึกและเชื่อมต่อ” เพื่อสมัคร Facebook Page กับแอป และค้นหา Instagram Professional ที่ผูก Page. Instagram webhook ไม่ได้สมัครผ่าน Page subscribed_apps: ใน Meta App Dashboard ให้เลือก webhook object <b>Instagram</b> แล้วเปิดฟิลด์ <b>messages</b>.</li>
+            <li>ใช้ Page token ที่อนุญาต <b>instagram_basic</b>, <b>instagram_manage_messages</b>, <b>pages_manage_metadata</b> (และ <b>pages_show_list</b> เมื่อต่อด้วย User token); ผู้เชื่อมต้องมี Page task <b>MESSAGE</b> และผู้ใช้ Instagram ต้องเปิด <b>Allow Access to Messages</b> ใน Instagram → Messages and story replies → Message controls → Connected Tools</li>
+            <li>Meta App ต้อง Published เพื่อรับ Webhooks; Standard Access ใช้ทดสอบเฉพาะคนที่มี role ใน App ส่วนลูกค้าจริงต้องขอ Advanced Access/App Review สำหรับสิทธิ์ที่ใช้</li>
           </ol>
           <p className="text-xs text-muted">Webhook ได้เฉพาะข้อความ “ตั้งแต่ตอนนี้เป็นต้นไป” — ของเก่าใช้ปุ่มดึงย้อนหลังด้านล่าง · ถ้าแอป Meta ยังเป็นโหมด Development จะได้รับเฉพาะข้อความจากคนที่มี role ในแอป (Admin/Developer/Tester)</p>
         </div>

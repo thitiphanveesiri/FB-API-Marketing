@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, Send, StickyNote, Phone, Mail, CalendarClock, ArrowLeft } from "lucide-react";
+import { Paperclip, Send, StickyNote, Phone, Mail, CalendarClock, ArrowLeft, Camera } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
@@ -66,11 +66,13 @@ export default function InboxPage() {
   const ad = lead?.adId ? data.ads.find((a) => a.id === lead.adId) : null;
 
   const [sending, setSending] = useState(false);
-  const real = source === "sheets" && !!lead && channelOf(lead) === "facebook"; // connected to the sheet: replies go to Messenger for real
+  const real = source === "sheets" && !!lead && (channelOf(lead) === "facebook" || channelOf(lead) === "instagram");
+  const realInstagram = !!lead && channelOf(lead) === "instagram";
   const send = async () => {
     if (!lead || (!text.trim() && !attach) || sending) return;
     if (mode === "reply" && real) {
       if (!text.trim()) return;
+      if (realInstagram && new TextEncoder().encode(text.trim()).length >= 1000) { toast("ข้อความ Instagram ต้องสั้นกว่า 1,000 ไบต์", "error"); return; }
       setSending(true); const r = await sendReply(lead.id, text.trim()); setSending(false);
       if (!r.ok) { toast(r.message, "error"); return; }
       setText(""); toast(r.saved ? "ส่งข้อความถึงลูกค้าแล้ว" : "ส่งข้อความถึงลูกค้าแล้ว (บันทึกลงชีตไม่สำเร็จ — จะเข้าชีตเองผ่าน Webhook ห้ามกดส่งซ้ำ)", r.saved ? "success" : "info"); return;
@@ -86,7 +88,7 @@ export default function InboxPage() {
         <h1 className="text-xl font-semibold">Inbox</h1>
         <Badge tone="green">From Google Sheet</Badge>
         <button onClick={() => setLive((v) => !v)} aria-pressed={live} title="Re-read the sheet every 30 seconds while this tab is open" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", live ? "border-brand-2 bg-brand-faint text-brand" : "border-line text-muted")}><span className={cn("h-1.5 w-1.5 rounded-full", live ? "animate-pulse bg-brand" : "bg-gray-300")} />{live ? "Live · refreshes every 30 s" : "Live off"}</button>
-        <span className="text-xs text-muted">New messages arrive through the Facebook webhook. Replies sent here go to the customer on Messenger (within 24 h of their last message) and are recorded under your name for SLA. Replies sent from Business Suite are recorded without a sender. Internal notes are saved.</span>
+        <span className="text-xs text-muted">ข้อความ Facebook และ Instagram ใหม่เข้าผ่าน Webhook; ตอบจาก Inbox ได้ภายในช่วงเวลาที่ Meta อนุญาต (ระบบจำกัดไว้ 24 ชั่วโมง) และบันทึกชื่อผู้ตอบเพื่อคำนวณ SLA</span>
       </div>
       <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_1fr_300px]">
         {/* LEFT */}
@@ -99,7 +101,7 @@ export default function InboxPage() {
             </div>
           </div>
           <ul className="min-h-0 flex-1 overflow-y-auto">
-            {list.length === 0 && <EmptyState title="No conversations" hint={ch !== "all" && ch !== "facebook" && perChannel[ch] === 0 ? `ยังไม่มีแชท ${CHANNELS.find((c) => c.id === ch)?.label} — ช่องทางนี้ยังไม่ได้เชื่อมต่อ (ตอนนี้เชื่อมได้เฉพาะ Facebook)` : "Nothing matches this filter."} />}
+            {list.length === 0 && <EmptyState title="No conversations" hint={ch !== "all" && ch !== "facebook" && perChannel[ch] === 0 ? `ยังไม่มีแชท ${CHANNELS.find((c) => c.id === ch)?.label} — เชื่อม Instagram ผ่านเพจ Facebook ในหน้า Upload หรือเลือกการเชื่อมต่อของช่องทางนี้` : "Nothing matches this filter."} />}
             {list.map((l) => (
               <li key={l.id}>
                 <button onClick={() => open(l)} className={cn("flex w-full gap-2.5 border-b border-line/60 px-3 py-2.5 text-left hover:bg-gray-50", sel === l.id && "bg-brand-faint")}>
@@ -124,11 +126,11 @@ export default function InboxPage() {
               <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
                 <button className="rounded p-1 hover:bg-gray-100 lg:hidden" onClick={() => setMobileView("list")} aria-label="Back to list"><ArrowLeft size={18} /></button>
                 <Avatar name={lead.name} hue={hueOf(lead.name)} size={34} />
-                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{lead.name}</p><p className="flex items-center gap-1 text-xs text-muted"><Facebook size={11} className="text-[#1877f2]" />{pageName(lead.pageId)}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{lead.name}</p><p className="flex items-center gap-1 text-xs text-muted">{channelOf(lead) === "instagram" ? <Camera size={11} className="text-pink-600" /> : <Facebook size={11} className="text-[#1877f2]" />}{channelOf(lead) === "instagram" ? "Instagram" : pageName(lead.pageId)}</p></div>
                 <Select value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-44" />
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-gray-50 p-4">
-                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">Conversation loaded from your sheet — not live Messenger</p>
+                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">Conversation loaded from your sheet — new messages arrive by webhook</p>
                 {msgs.map((m) => (
                   <div key={m.id} className={m.direction === "out" ? "flex justify-end" : m.direction === "note" ? "flex justify-center" : "flex"}>
                     <div className={cn("max-w-[78%] rounded-2xl px-3.5 py-2 text-sm", m.direction === "out" ? "bg-brand text-white" : m.direction === "note" ? "w-full max-w-[90%] border border-dashed border-amber-300 bg-amber-50 text-amber-900" : "border border-line bg-surface")}>
@@ -156,8 +158,9 @@ export default function InboxPage() {
                     <Btn variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()} disabled={mode === "note" || real} title={real ? "ส่งไฟล์แนบจากระบบยังไม่รองรับ" : undefined}><Paperclip size={18} /></Btn>
                     <TextArea className="flex-1" rows={2} placeholder={mode === "note" ? "Write an internal note…" : "Type a message…"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Message"
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
-                    <Btn variant="primary" onClick={send} disabled={(!text.trim() && !attach) || sending}><Send size={16} /> {mode === "note" ? "Save" : sending ? "กำลังส่ง…" : "Send"}</Btn>
+                    <Btn variant="primary" onClick={send} disabled={(!text.trim() && !attach) || sending || (mode === "reply" && realInstagram && new TextEncoder().encode(text.trim()).length >= 1000)}><Send size={16} /> {mode === "note" ? "Save" : sending ? "กำลังส่ง…" : "Send"}</Btn>
                   </div>
+                  {mode === "reply" && realInstagram && <p className={cn("mt-1 text-xs", new TextEncoder().encode(text.trim()).length >= 1000 ? "text-red-600" : "text-muted")}>Instagram ข้อความต้องสั้นกว่า 1,000 ไบต์ ({new TextEncoder().encode(text.trim()).length}/999)</p>}
                 </div>
               ) : <p className="border-t border-line p-3 text-center text-sm text-muted">Your role has read-only access.</p>}
             </>
@@ -172,7 +175,7 @@ export default function InboxPage() {
               <div className="space-y-1.5">
                 <p className="flex items-center gap-2"><Phone size={14} className="text-muted" />{lead.phone}</p>
                 <p className="flex items-center gap-2 break-all"><Mail size={14} className="text-muted" />{lead.email}</p>
-                <p className="flex items-center gap-2"><Facebook size={14} className="text-[#1877f2]" />{pageName(lead.pageId)}</p>
+                <p className="flex items-center gap-2">{channelOf(lead) === "instagram" ? <Camera size={14} className="text-pink-600" /> : <Facebook size={14} className="text-[#1877f2]" />}{channelOf(lead) === "instagram" ? "Instagram" : pageName(lead.pageId)}</p>
               </div>
               <dl className="space-y-2 rounded-xl bg-gray-50 p-3">
                 <div><dt className="text-xs text-muted">Source Ad ID</dt><dd>{ad ? <>{ad.id}<span className="block text-xs text-muted">{ad.name}</span></> : "Unattributed"}</dd></div>

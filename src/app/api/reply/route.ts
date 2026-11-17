@@ -7,6 +7,7 @@ import { localStamp } from "@/lib/fbSync";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { roleCan } from "@/lib/queries";
+import { instagramRecipientOf } from "@/lib/instagramWebhook";
 
 export const maxDuration = 30;
 
@@ -24,15 +25,26 @@ export async function POST(req: Request) {
     const lead = mapped.dataset.leads.find((l) => l.id === b.leadId);
     if (!lead) return fail(404, "ไม่พบลีดนี้");
     if (me.role === "Sales Representative" && lead.repId !== me.id) return fail(403, "ตอบได้เฉพาะลีดที่ได้รับมอบหมาย");
-    if (channelOf(lead) !== "facebook") return fail(400, "ตอนนี้ตอบจากระบบได้เฉพาะ Facebook Messenger");
-    const ch = (await loadChannels(true)).find((c) => c.channel === "facebook" && c.active && c.accessToken && c.sheetPageId === lead.pageId);
-    if (!ch) return fail(400, "เพจนี้ยังไม่ได้เชื่อม Messenger (ไปที่หน้า Upload → เชื่อมช่องทางแชท)");
+    const channel = channelOf(lead);
+    if (channel !== "facebook" && channel !== "instagram") return fail(400, "ช่องทางนี้ยังตอบจากระบบไม่ได้");
+    if (channel === "instagram" && Buffer.byteLength(text, "utf8") >= 1000) return fail(400, "ข้อความ Instagram ต้องสั้นกว่า 1,000 ไบต์");
+    const channels = await loadChannels(true);
+    const ch = channel === "instagram"
+      ? channels.find((item) => item.channel === "instagram" && item.active && item.accessToken && item.sheetPageId === lead.pageId && instagramRecipientOf(lead.id, item.accountId) !== null)
+      : channels.find((item) => item.channel === "facebook" && item.active && item.accessToken && item.sheetPageId === lead.pageId);
+    if (!ch) return fail(400, channel === "instagram" ? "บัญชี Instagram นี้ยังไม่ได้เชื่อมข้อความ (ไปที่หน้า Upload → เชื่อมเพจ Facebook ที่ผูก Instagram ไว้)" : "เพจนี้ยังไม่ได้เชื่อม Messenger (ไปที่หน้า Upload → เชื่อมช่องทางแชท)");
 
     const tz = process.env.APP_TZ || "Asia/Bangkok", base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
     const since = minutesSinceCustomer(mapped.dataset.messages[lead.id] ?? [], tz);
+    if (channel === "instagram" && since == null) return fail(400, "ส่งข้อความ Instagram ได้หลังจากลูกค้าทักมาเท่านั้น");
     if (since != null && since > WINDOW_HOURS * 60) return fail(400, `ส่งไม่ได้: ลูกค้าทักล่าสุดเกิน ${WINDOW_HOURS} ชั่วโมงแล้ว (กฎของ Meta) — ตอบใน Business Suite หรือรอให้ลูกค้าทักมาใหม่`);
-    const psid = await psidOf(lead.id, ch.accountId, ch.accessToken, base, lead.fbUserId);
-    const mid = await sendText({ pageId: ch.accountId, token: ch.accessToken, psid, text, base });
+    const instagram = channel === "instagram" ? instagramRecipientOf(lead.id, ch.accountId) : null;
+    const pageId = channel === "instagram" ? ch.channelId.slice("instagram:".length) : ch.accountId;
+    const psid = instagram ?? await psidOf(lead.id, ch.accountId, ch.accessToken, base, lead.fbUserId);
+    const mid = await sendText({
+      pageId, token: ch.accessToken, psid, text, base, channel,
+      ...(channel === "instagram" ? { apiVersion: "v27.0" } : {}),
+    });
 
     const at = localStamp(new Date().toISOString(), tz);
     // From here the customer HAS the message. If the sheet write fails we still answer ok (saved:false): an error here would make the
