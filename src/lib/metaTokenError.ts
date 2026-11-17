@@ -11,5 +11,5 @@ export function expiredMetaTokenMessage(kind: MetaTokenKind): string {
   if (kind === "ads") {
     return "Meta แจ้งว่าโทเคนบัญชีโฆษณาหมดอายุหรือถูกยกเลิก ไปที่ Upload → เชื่อมช่องทางแชท → โฆษณา → แก้ไขบัญชี แล้วใส่ Access Token ใหม่ที่มีสิทธิ์ ads_read จากนั้นลองดึงอีกครั้ง";
   }
-  return "Meta แจ้งว่าโทเคนเพจหมดอายุหรือถูกยกเลิก ไปที่ Upload → เชื่อมช่องทางแชท → แก้ไขเพจ แล้วใส่ Access Token ใหม่ จากนั้นลองดึงอีกครั้ง หากตั้งโทเคนผ่าน Vercel ให้แก้ FB_PAGES หรือ FB_PAGE_TOKEN แล้ว Redeploy";
+  return "Meta แจ้งว่าโทเคนเพจที่ระบบใช้อยู่หมดอายุหรือถูกยกเลิก ไปที่ Upload → เชื่อมช่องทางแชท → แก้ไขเพจ แล้วบันทึก Access Token ใหม่ จากนั้นลองดึงอีกครั้ง หากเพจนี้ยังไม่ได้เชื่อมใน Upload ให้ตรวจ FB_PAGES หรือ FB_PAGE_TOKEN ใน Vercel แล้ว Redeploy (ถ้ามีเพจเดียวกันในทั้งสองที่ ระบบใช้ค่าจาก Upload)";
 }

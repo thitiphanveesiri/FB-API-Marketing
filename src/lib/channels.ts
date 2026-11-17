@@ -56,12 +56,13 @@ export async function saveChannel(c: Partial<Channel> & { channelId: string; cha
   invalidateChannels();
 }
 
-/** Facebook pages usable for backfilling (env variables first, then pages connected on the Upload page). */
+/** Facebook pages usable for backfilling (Upload connections first, env variables as fallback). */
 export async function fbSyncConfigs(): Promise<FbPageCfg[]> {
-  const out = [...fbConfigs()];
+  const out: FbPageCfg[] = [];
   try {
     for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accessToken && c.accountId && !out.some((o) => o.fbPageId === c.accountId))
       out.push({ fbPageId: c.accountId, token: c.accessToken, sheetPageId: c.sheetPageId || undefined, name: c.name || undefined });
-  } catch { /* sheet unreachable: env pages only */ }
+  } catch { return fbConfigs(); }
+  for (const c of fbConfigs()) if (!out.some((o) => o.fbPageId === c.fbPageId)) out.push(c);
   return out;
 }
