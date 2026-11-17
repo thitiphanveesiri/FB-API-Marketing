@@ -1,16 +1,19 @@
 // Pull ads + daily results straight from a Meta ad account (Marketing API) and turn them into sheet rows.
 // Pure apart from the injected fetch. One call = one small batch (Vercel time limits).
-import { FbError, graph, type FetchFn, type Graph } from "./fbSync";
+import { FbError, graph, metaFetch, type FetchFn, type Graph } from "./fbSync";
 import type { SyncWrite } from "./fbSync";
 
 export type AdsPhase = "ads" | "insights" | "done";
-export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number }
+/** tier = level of detail of the ad list; win = which 30-day window of the daily results; lim = rows per page of the daily results (smaller after Meta says "too much data"). */
+export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number; win?: number; lim?: number }
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
 /** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
 export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string> }
 export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warning?: string; byPage?: Record<string, number> }
 
-const ADS_PER_CALL = 40, INSIGHT_ROWS_PER_CALL = 200;
+const ADS_PER_CALL = 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
+/** One request to our own route must finish inside the platform limit (60 s). Past this many ms no further fallback is attempted: fail with a clear message instead. */
+const BUDGET_MS = 40000;
 const ALL_STATUS = JSON.stringify(["ACTIVE", "PAUSED", "DELETED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED", "PENDING_BILLING_INFO", "CAMPAIGN_PAUSED", "ARCHIVED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]);
 
 export const actId = (raw: string) => "act_" + raw.replace(/\D/g, "");
@@ -29,8 +32,8 @@ interface RawAd { id: string; name?: string; effective_status?: string; updated_
 interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; actions?: Action[] }
 
 export async function adsStep(i: AdsInput): Promise<AdsOutput> {
-  const f = i.fetchFn ?? ((u: string) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>), base = i.base ?? "https://graph.facebook.com";
-  const acct = actId(i.accountId), now = i.now ?? new Date();
+  const f = i.fetchFn ?? metaFetch, base = i.base ?? "https://graph.facebook.com";
+  const acct = actId(i.accountId), now = i.now ?? new Date(), t0 = Date.now(), overBudget = () => Date.now() - t0 > BUDGET_MS;
   const counts: AdsCounts = { ads: 0, campaigns: 0, rows: 0 }, writes: SyncWrite[] = [];
 
   if (i.state.phase === "ads") {
@@ -44,9 +47,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       { fields: "id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url}", filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและการจับคู่เพจจากตัวโฆษณา" },
       { fields: "id,name,effective_status,updated_time,campaign{id,name}", filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณาและการจับคู่เพจจากตัวโฆษณา" },
     ];
+    // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
     const fetchAds = (t: number) => graph(`${acct}/ads`, {
       fields: TIERS[t].fields, ...(TIERS[t].filter ? { effective_status: ALL_STATUS } : {}), limit: String(TIERS[t].limit), ...(i.state.after ? { after: i.state.after } : {}),
-    }, i.token, f, base);
+    }, i.token, f, base, 900, t >= TIERS.length - 1 ? 1 : 0);
     let tier = Math.min(TIERS.length - 1, Math.max(0, i.state.tier ?? (i.state.fallback ? TIERS.length - 1 : 0)));
     let j: Graph | undefined, lastErr: FbError | undefined;
     for (; tier < TIERS.length; tier++) {
@@ -54,7 +58,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       catch (e) {
         if (!(e instanceof FbError)) throw e;
         lastErr = e;
-        if (e.rateLimited || (e.code !== 100 && e.code !== 1 && e.code !== 2) || i.state.after) break; // only the first batch can change level (a paging cursor belongs to its query)
+        if (e.rateLimited || (e.code !== 100 && e.code !== 1 && e.code !== 2) || i.state.after || overBudget()) break; // only the first batch can change level (a paging cursor belongs to its query)
       }
     }
     if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
@@ -77,24 +81,38 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
+    const notes: string[] = [];
+    if (tier > 0) notes.push(`Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})`);
+    if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
+    else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
       counts, byPage,
-      ...(tier > 0 ? { warning: `Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})` } : {}),
+      ...(notes.length ? { warning: notes.join(" · ") } : {}),
     };
   }
 
   if (i.state.phase === "insights") {
-    const since = day(new Date(now.getTime() - i.days * 86400000)), until = day(now);
+    // Daily results are fetched in 30-day windows (newest first), and with fewer rows per page whenever Meta says it is too much data. One huge
+    // 90-day ad-level query is what a big account cannot answer.
+    const windows = Math.max(1, Math.ceil(i.days / WINDOW_DAYS)), win = Math.min(windows - 1, Math.max(0, i.state.win ?? 0));
+    const untilD = new Date(now.getTime() - win * WINDOW_DAYS * 86400000), sinceD = new Date(Math.max(now.getTime() - i.days * 86400000, untilD.getTime() - (WINDOW_DAYS - 1) * 86400000));
+    const since = day(sinceD), until = day(untilD);
     // Full field list first; if Meta rejects it (code 100) the same query is retried with the core fields only, and later batches keep using them.
     const FULL = "ad_id,spend,reach,impressions,clicks,inline_link_clicks,actions", CORE = "ad_id,spend,impressions,clicks,actions";
-    const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_ROWS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, i.token, f, base);
-    let j: Graph, core = i.state.fallback === true;
-    try {
-      try { j = await insights(core ? CORE : FULL); }
-      catch (e) { if (core || !(e instanceof FbError) || e.code !== 100 || i.state.after) throw e; core = true; j = await insights(CORE); }
-    } catch (e) { if (e instanceof FbError) throw new FbError(`ดึงสถิติรายวันไม่สำเร็จ: ${e.message}`, e.rateLimited, e.code); throw e; }
+    let lim = Math.min(INSIGHT_LIMITS.length - 1, Math.max(0, i.state.lim ?? 0)), core = i.state.fallback === true, j: Graph | undefined;
+    const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_LIMITS[lim]), ...(i.state.after ? { after: i.state.after } : {}) },
+      i.token, f, base, 900, lim >= INSIGHT_LIMITS.length - 1 ? 1 : 0);
+    for (;;) {
+      try { j = await insights(core ? CORE : FULL); break; }
+      catch (e) {
+        if (!(e instanceof FbError)) throw e;
+        if (e.code === 100 && !core && !i.state.after) { core = true; continue; }
+        if ((e.code === 1 || e.code === 2) && lim < INSIGHT_LIMITS.length - 1 && !overBudget()) { lim++; continue; } // too much data / timeout → smaller pages
+        throw new FbError(`ดึงสถิติรายวันไม่สำเร็จ (ช่วง ${since} ถึง ${until}): ${e.message}`, e.rateLimited, e.code);
+      }
+    }
     const rows: SyncWrite["rows"] = [];
     for (const r of (j.data ?? []) as RawInsight[]) {
       if (!r.ad_id || !r.date_start) continue;
@@ -103,8 +121,12 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     }
     counts.rows = rows.length;
     if (rows.length) writes.push({ tab: "ad_performance", keyCols: ["date", "ad_id"], rows, mode: "upsert" });
-    const more = !!j.paging?.next && !!j.paging.cursors?.after;
-    return { next: more ? { phase: "insights", after: j.paging!.cursors!.after, ...(core ? { fallback: true } : {}) } : { phase: "done" }, writes, counts, ...(core ? { warning: "Meta ปฏิเสธฟิลด์ reach/คลิกลิงก์ จึงดึงสถิติแบบพื้นฐาน (รีชอาจเป็น 0)" } : {}) };
+    const more = !!j.paging?.next && !!j.paging.cursors?.after, carry = { ...(core ? { fallback: true } : {}), ...(lim > 0 ? { lim } : {}) };
+    const next: AdsState = more ? { phase: "insights", after: j.paging!.cursors!.after, win, ...carry } : win + 1 < windows ? { phase: "insights", win: win + 1, ...carry } : { phase: "done" };
+    const notes: string[] = [];
+    if (core) notes.push("Meta ปฏิเสธฟิลด์ reach/คลิกลิงก์ จึงดึงสถิติแบบพื้นฐาน (รีชอาจเป็น 0)");
+    if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลมากเกินไป จึงดึงทีละน้อยลง (${INSIGHT_LIMITS[lim]} แถว/ครั้ง)`);
+    return { next, writes, counts, ...(notes.length ? { warning: notes.join(" · ") } : {}) };
   }
   return { next: { phase: "done" }, writes, counts };
 }
@@ -125,4 +147,15 @@ export async function listAdAccounts(token: string, f: FetchFn, base: string): P
     .filter((a) => ![2, 101].includes(Number(a.account_status)))
     .map((a) => ({ id: String(a.account_id ?? a.id ?? "").replace(/\D/g, ""), name: a.name ?? "" }))
     .filter((a) => a.id.length >= 5);
+}
+
+const ACCOUNT_STATUS: Record<number, string> = { 1: "ใช้งานปกติ", 2: "ถูกปิดใช้งาน", 3: "มียอดค้างชำระ", 7: "รอตรวจสอบความเสี่ยง", 8: "รอชำระเงิน", 9: "อยู่ในช่วงผ่อนผัน", 100: "รอชำระเงิน", 101: "ปิดบัญชีแล้ว", 201: "ใช้งานอยู่", 202: "ปิดแล้ว" };
+/** Meta returned an empty ad list. That is not an error, so say what the usual causes are (and the account's own status) instead of silently reporting 0. */
+async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: string): Promise<string> {
+  let who = acct;
+  try {
+    const a = (await graph(acct, { fields: "name,account_status" }, token, f, base, 900, 0)) as unknown as { name?: string; account_status?: number };
+    who = `${a.name || acct}${a.account_status != null ? ` (สถานะบัญชี: ${ACCOUNT_STATUS[a.account_status] ?? a.account_status})` : ""}`;
+  } catch (e) { if (e instanceof FbError) who = `${acct} (เปิดข้อมูลบัญชีไม่ได้: ${e.message.slice(0, 90)})`; }
+  return `Meta ไม่ส่งโฆษณาใดกลับมาจากบัญชี ${who} — ตรวจว่า (1) เลือกบัญชีโฆษณาถูกบัญชี (2) เจ้าของโทเคนถูกเพิ่มในบัญชีนี้ที่ Business Settings → Ad accounts → Add people (มีสิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ได้เป็นคนที่เข้าถึงบัญชีนี้ Meta จะตอบรายการว่างโดยไม่แจ้ง error) (3) บัญชีมีโฆษณาอยู่จริง`;
 }

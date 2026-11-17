@@ -25,7 +25,8 @@ export async function POST(req: Request) {
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
-    const out = await syncStep({ cfg, sheetPageId: b.sheetPageId, days, state: { phase, after }, ds, tz: process.env.APP_TZ || "Asia/Bangkok", base: process.env.FB_GRAPH_BASE });
+    const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" ? b.state.chatList : undefined;
+    const out = await syncStep({ cfg, sheetPageId: b.sheetPageId, days, state: { phase, after, chatList }, ds, tz: process.env.APP_TZ || "Asia/Bangkok", base: process.env.FB_GRAPH_BASE });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);
