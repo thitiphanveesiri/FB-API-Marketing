@@ -4,7 +4,7 @@ import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { fbSyncConfigs, loadChannels } from "@/lib/channels";
 import { ensureSystemPage, fetchPageName } from "@/lib/autoPage";
-import { FbError, syncStep, type SyncState } from "@/lib/fbSync";
+import { FbError, MAX_COMMENT_POSTS_PER_BATCH, syncStep, type SyncState } from "@/lib/fbSync";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 
 export const maxDuration = 60;
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
       } catch { return undefined; }
     };
     const commentBatch = Array.isArray(b.state?.commentBatch)
-      ? b.state.commentBatch.slice(0, 5).flatMap((post) => {
+      ? b.state.commentBatch.slice(0, MAX_COMMENT_POSTS_PER_BATCH).flatMap((post) => {
         const id = commentId(post?.id);
         return id ? [{ id, url: commentUrl(post.url), after: commentCursor(post.after), basic: post.basic === true }] : [];
       })
