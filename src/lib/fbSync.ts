@@ -103,7 +103,7 @@ const IG_CHATS_PER_CALL = 2, IG_MSG_PAGES = 2, IG_MSG_LIMIT = 50, IG_MIN_TIMEOUT
 export function inboxHint(e: FbError, isIg: boolean): string | null {
   if (e.rateLimited) return null;
   if (e.code === 100) return isIg
-    ? "อ่านกล่องข้อความ Instagram ของเพจนี้ไม่ได้ — ตรวจ 3 อย่าง: (1) IG ยังผูกกับเพจนี้อยู่ (Business Suite) (2) แอป Meta มีสิทธิ์ instagram_manage_messages และแอปอยู่โหมด Live หรือบัญชีนี้เป็นผู้ดูแลแอป (3) ในแอป Instagram → Settings → Messages and story replies → Connected tools → เปิด Allow access to messages"
+    ? "อ่านรายการแชท Instagram ของบัญชีนี้ไม่ได้ — ตรวจ 3 อย่าง: (1) IG ยังผูกกับเพจนี้อยู่ (Business Suite) (2) แอป Meta มีสิทธิ์ instagram_manage_messages และแอปอยู่โหมด Live หรือบัญชีนี้เป็นผู้ดูแลแอป (3) ในแอป Instagram → Settings → Messages and story replies → Connected tools → เปิด Allow access to messages"
     : "อ่านกล่องข้อความ Messenger ของเพจนี้ไม่ได้ — ตรวจว่าเพจยังผูกกับแอป Meta และโทเคนมีสิทธิ์ pages_messaging";
   if (e.code === 1 || e.code === 2) return "Meta ขัดข้องตอนอ่านรายการแชทของเพจนี้ (ฝั่ง Meta ไม่ใช่โทเคนหรือ Google Sheet) — ลองดึงซ้ำภายหลัง หรือลดช่วงย้อนหลังเหลือ 3 วัน ถ้าซ้ำที่เพจเดิมทุกครั้ง ให้เปิดกล่องข้อความของเพจใน Business Suite และตรวจว่าแอปมีสิทธิ์ pages_messaging";
   return null;
@@ -142,8 +142,14 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
-    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: isIg ? "instagram" : "messenger" } : {}), fields, limit: String(isIg ? IG_CHATS_PER_CALL : CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
+    // Instagram's inbox lives on the IG account node (`/<IG_ID>/conversations`); the Page node only serves Messenger.
+    const convQuery = (fields: string, platform: boolean) => graph(
+      isIg ? `${i.igId ?? ""}/conversations` : `${fb}/conversations`,
+      { ...(isIg ? { platform: "instagram" } : platform ? { platform: "messenger" } : {}), fields, limit: String(isIg ? IG_CHATS_PER_CALL : CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) },
+      tok, f, base, 900, 0,
+    );
     const isTransient = (e: unknown) => e instanceof FbError && (e.code === 1 || e.code === 2);
+    if (isIg && !i.igId) throw new FbError("ยังไม่ทราบบัญชี Instagram ของเพจนี้ — เชื่อมเพจใหม่ที่หน้า Upload (ระบบจะอ่าน IG ID ให้)", false, 100);
     let j: Graph, chatList = i.state.chatList;
     if (chatList === "no-platform" && !isIg) j = await convQuery("id,updated_time", false);
     else if (chatList === "light") {

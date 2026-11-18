@@ -4,9 +4,10 @@ import { connection, NextResponse } from "next/server";
 import { adminOnly, noStore } from "@/lib/adminGate";
 import { loadChannels, type Channel } from "@/lib/channels";
 import { FbError, graph, inboxHint, metaFetchWith } from "@/lib/fbSync";
+import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 60;
-interface Check { id: string; name: string; ok: boolean; detail: string }
+interface Check { id: string; name: string; ok: boolean; detail: string; token?: string }
 
 const graphBase = () => process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
 
@@ -34,9 +35,26 @@ export async function GET(req: Request) {
   const f = metaFetchWith(8000);
 
   /** Reads one conversation to prove the inbox itself is reachable — this is the call that answers 500/code 100 during a pull. */
-  const probe = async (c: Channel, platform: "messenger" | "instagram"): Promise<string | null> => {
-    try { await graph(`${encodeURIComponent(c.accountId)}/conversations`, { fields: "id", limit: "1", platform }, c.accessToken, f, graphBase(), 900, 0); return null; }
-    catch (e) { return e instanceof FbError ? inboxHint(e, platform === "instagram") ?? why(e) : why(e); }
+  const probe = async (path: string, kind: "messenger" | "instagram", token: string): Promise<string | null> => {
+    const params: Record<string, string> = kind === "instagram" ? { fields: "id", limit: "1", platform: "instagram" } : { fields: "id", limit: "1", platform: "messenger" };
+    try { await graph(path, params, token, f, graphBase(), 900, 0); return null; }
+    catch (e) { return e instanceof FbError ? inboxHint(e, kind === "instagram") ?? why(e) : why(e); }
+  };
+
+  /** Expiry and scopes straight from Meta: a Page token dies with the user token that made it, which is what turns a pull into a 502. */
+  const tokenInfo = async (c: Channel): Promise<string> => {
+    if (!c.appSecret) return "";
+    try {
+      const appId = process.env.META_APP_ID?.trim() || (await graph("app", { fields: "id" }, c.accessToken, f, graphBase(), 900, 0) as { id?: string }).id;
+      if (!appId) return "";
+      const r = await f(`${graphBase()}/${metaApiVersion()}/debug_token?${new URLSearchParams({ input_token: c.accessToken, access_token: `${appId}|${c.appSecret}` })}`);
+      const d = ((await r.json().catch(() => ({}))) ?? {}) as { data?: { is_valid?: boolean; expires_at?: number; scopes?: string[] } };
+      if (!d.data) return "";
+      if (!d.data.is_valid) return "โทเคนถูกเพิกถอน";
+      const need = ["pages_read_engagement", "pages_messaging", ...(igs.some((g) => g.channelId === `instagram:${c.accountId}`) ? ["instagram_basic", "instagram_manage_messages"] : [])];
+      const missing = need.filter((s) => !(d.data!.scopes ?? []).includes(s));
+      return `${d.data.expires_at ? `หมดอายุ ${new Date(d.data.expires_at * 1000).toISOString().slice(0, 10)}` : "ไม่มีวันหมดอายุ (System User token)"}${missing.length ? ` · ขาดสิทธิ์ ${missing.join(", ")}` : ""}`;
+    } catch { return ""; }
   };
 
   const pages = await Promise.all(fb.map(async (c): Promise<Check> => {
@@ -44,12 +62,13 @@ export async function GET(req: Request) {
       const j = (await graph(encodeURIComponent(c.accountId), { fields: "name,instagram_business_account{id,username}" }, c.accessToken, f, graphBase(), 900, 1)) as { name?: string; instagram_business_account?: { id?: string; username?: string } };
       const ig = j.instagram_business_account;
       // The two failures that look like a "502" while the token is fine: Meta 500s on the page's conversation list, and code 100 (cannot read that inbox).
-      const [messenger, insta] = await Promise.all([
-        probe(c, "messenger"),
-        ig ? probe(c, "instagram") : Promise.resolve(null),
+      const [messenger, insta, token] = await Promise.all([
+        probe(`${encodeURIComponent(c.accountId)}/conversations`, "messenger", c.accessToken),
+        ig?.id ? probe(`${encodeURIComponent(ig.id)}/conversations`, "instagram", c.accessToken) : Promise.resolve(null),
+        tokenInfo(c),
       ]);
       return {
-        id: c.accountId, name: j.name || c.name || c.accountId, ok: !messenger && !insta,
+        id: c.accountId, name: j.name || c.name || c.accountId, ok: !messenger && !insta, token,
         detail: [
           ig ? `โทเคนใช้ได้ · Instagram @${ig.username ?? ig.id}` : "โทเคนใช้ได้ · เพจนี้ยังไม่ผูกบัญชี Instagram",
           messenger ? `Messenger: ${messenger}` : "Messenger อ่านได้",
@@ -60,9 +79,11 @@ export async function GET(req: Request) {
   }));
 
   const instagram = await Promise.all(igs.map(async (c): Promise<Check> => {
-    const token = fb.find((x) => `facebook:${x.accountId}` === c.channelId)?.accessToken ?? "";
+    const pageId = c.channelId.startsWith("instagram:") ? c.channelId.slice("instagram:".length) : "";
+    // the IG channel keeps its own copy of the Page token; fall back to the Facebook row when it is blank
+    const token = c.accessToken || fb.find((x) => x.accountId === pageId)?.accessToken || "";
     const name = c.name || c.channelId;
-    if (!token) return { id: c.accountId, name, ok: false, detail: "ไม่พบโทเคนเพจ Facebook ของเพจนี้ — เชื่อมเพจ Facebook ก่อน" };
+    if (!token) return { id: c.accountId, name, ok: false, detail: "ไม่พบโทเคนเพจ Facebook ที่ผูกกับ Instagram นี้ — เชื่อมเพจ Facebook ก่อน" };
     try {
       const j = (await graph(encodeURIComponent(c.accountId), { fields: "username" }, token, f, graphBase(), 900, 1)) as { username?: string };
       return { id: c.accountId, name, ok: true, detail: `อ่านบัญชีได้ · @${j.username ?? c.accountId}` };
@@ -75,12 +96,14 @@ export async function GET(req: Request) {
 
   const bad = [...pages, ...instagram].filter((x) => !x.ok);
   const count = (list: Check[]) => `${list.length} รายการ (มีปัญหา ${list.filter((x) => !x.ok).length})`;
+  const tokens = pages.filter((p) => p.token).map((p) => `${p.name}: ${p.token}`).join(" · ");
   const message = [
     `ตรวจสอบแล้ว · Google Sheet: ${sheet}`,
     `Facebook ${count(pages)}`,
     `Instagram ${count(instagram)}`,
+    tokens ? `โทเคน — ${tokens}` : "",
     bad.length ? `พบปัญหา: ${bad.map((x) => `${x.name}: ${x.detail}`).join(" | ")}` : "ทุกการเชื่อมต่อปกติ — ถ้ายังได้ 502 ให้ดู Logs ของ Vercel (Deployments → Functions)",
-  ].join(" · ");
+  ].filter(Boolean).join(" · ");
 
   return NextResponse.json({ ok: true, message, sheet, pages, instagram }, noStore);
 }
