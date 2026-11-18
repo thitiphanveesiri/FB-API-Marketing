@@ -51,16 +51,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Meta's own hiccups (HTTP 5xx, code 1 "unknown" / 2 "unexpected error") are usually gone a moment later: retry twice before giving up. */
 const transient = (status: number, code?: number) => status >= 500 || code === 1 || code === 2;
 
-/** fetch for Meta that gives up after META_TIMEOUT_MS (default 12 s) instead of hanging until the platform kills the whole request. A timeout looks like
+/** fetch for Meta that gives up after `ms` instead of hanging until the platform kills the whole request. A timeout looks like
  *  Meta's own "code 1" (too much data) so callers can fall back to a lighter query right away. */
-export const metaFetch: FetchFn = async (u) => {
-  const ms = Math.max(3000, Number(process.env.META_TIMEOUT_MS) || 12000);
-  try { return (await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(ms) })) as Awaited<ReturnType<FetchFn>>; }
+export const metaFetchWith = (ms: number): FetchFn => async (u) => {
+  try { return (await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
   catch (e) {
-    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(ms / 1000)} วินาที` } }) };
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(Math.max(3000, ms) / 1000)} วินาที` } }) };
     throw e;
   }
 };
+/** Default timeout: META_TIMEOUT_MS (default 12 s). */
+export const metaFetch: FetchFn = (u) => metaFetchWith(Number(process.env.META_TIMEOUT_MS) || 12000)(u);
 
 /** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
  *  failed once will fail again, and every repeat eats the time budget). */
@@ -94,14 +95,19 @@ export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: Sync
 
 export const MAX_COMMENT_POSTS_PER_BATCH = 50;
 const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = MAX_COMMENT_POSTS_PER_BATCH, COMMENT_PARALLEL = 5;
+/** Instagram conversations are much slower to list than Messenger: ask for fewer chats and fewer message pages, with a longer per-request timeout. */
+const IG_CHATS_PER_CALL = 2, IG_MSG_PAGES = 2, IG_MSG_LIMIT = 50, IG_MIN_TIMEOUT_MS = 25000, IG_MAX_TIMEOUT_MS = 25000, IG_TIME_BUDGET_MS = 35000;
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
-  const f = i.fetchFn ?? metaFetch, base = i.base ?? "https://graph.facebook.com";
+  const isIg = i.channel === "instagram";
+  const timeoutMs = Number(process.env.META_TIMEOUT_MS) || 12000;
+  const f = i.fetchFn ?? (isIg ? metaFetchWith(Math.min(IG_MAX_TIMEOUT_MS, Math.max(timeoutMs, IG_MIN_TIMEOUT_MS))) : metaFetch), base = i.base ?? "https://graph.facebook.com";
+  const t0 = Date.now();
   const now = i.now ?? new Date(), since = now.getTime() - i.days * 86400000, tok = i.cfg.token;
   // Ask Meta which page this token belongs to: catches the two usual set-up mistakes (a user token instead of a Page token, or the wrong FB_PAGE_ID)
   const who = (await graph("me", { fields: "id,name,category" }, tok, f, base, 900, 0).catch((e) => { if (e instanceof FbError && e.code === 100 && /category/i.test(e.message)) throw new FbError("โทเคนนี้เป็นโทเคนของผู้ใช้ ไม่ใช่ของเพจ — เชื่อมเพจใหม่ที่หน้า Upload (วางโทเคนผู้ใช้ได้ ระบบจะแลกเป็นโทเคนเพจให้) หรือใช้ me/accounts ใน Graph API Explorer เพื่อเอา access_token ของเพจ", false, 100); if (e instanceof FbError && !e.rateLimited) throw new FbError(`โทเคนใช้ไม่ได้: ${e.message} — สร้างโทเคนเพจใหม่`, false, e.code); throw e; })) as unknown as { id?: string; name?: string; category?: string };
   if (!who.id || !who.category) throw new FbError(`FB_PAGE_TOKEN เป็นโทเคนของผู้ใช้${who.name ? ` (${who.name})` : ""} ไม่ใช่โทเคนของเพจ — ใน Graph API Explorer รัน me/accounts แล้วคัดลอก access_token ของเพจที่ต้องการมาใช้แทน`);
-  const isIg = i.channel === "instagram", self = isIg ? (i.igId ?? "") : who.id; // Instagram chats: the business side is the Instagram account, not the Page
+  const self = isIg ? (i.igId ?? "") : who.id; // Instagram chats: the business side is the Instagram account, not the Page
   const fb = who.id; // always the page the token really belongs to (a mismatched FB_PAGE_ID is harmless then)
   const counts: SyncCounts = {
     chats: 0,
@@ -121,13 +127,16 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
-    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: isIg ? "instagram" : "messenger" } : {}), fields, limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
+    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: isIg ? "instagram" : "messenger" } : {}), fields, limit: String(isIg ? IG_CHATS_PER_CALL : CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
     const isTransient = (e: unknown) => e instanceof FbError && (e.code === 1 || e.code === 2);
     let j: Graph, chatList = i.state.chatList;
     if (chatList === "no-platform" && !isIg) j = await convQuery("id,updated_time", false);
     else if (chatList === "light") {
       try { j = await convQuery("id,updated_time", true); }
       catch (e) { if (!isTransient(e)) throw e; if (isIg) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+    } else if (isIg) {
+      // participants makes Meta very slow on big Instagram inboxes; the customer is read from the messages instead
+      j = await convQuery("id,updated_time", true);
     } else {
       try { j = await convQuery("id,updated_time,participants", true); }
       catch (e) {
@@ -137,7 +146,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         catch (e2) { if (!isTransient(e2)) throw e2; if (isIg) throw e2; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
       }
     }
-    let skippedChats = 0, partialChats = 0;
+    let skippedChats = 0, partialChats = 0, budgetCuts = 0;
     const convs = (j.data ?? []) as FbConv[];
     const fresh = convs.filter((c) => ms(c.updated_time) >= since);
     const cutoff = fresh.length < convs.length; // list is newest-first: an old one means the rest is older still
@@ -151,10 +160,12 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const lists = await Promise.all(fresh.map(async (c) => {
       const all: FbMsg[] = []; let after: string | undefined;
       try {
-      for (let p = 0; p < MSG_PAGES; p++) {
+      for (let p = 0; p < (isIg ? IG_MSG_PAGES : MSG_PAGES); p++) {
+        // Instagram threads can be very long: stop before the route hits the 60 s platform limit; the newest messages are already saved
+        if (p > 0 && isIg && Date.now() - t0 > IG_TIME_BUDGET_MS) { budgetCuts++; break; }
         // a heavy page of messages (many attachments) can make Meta answer 500: ask again for fewer messages without the attachment details
-        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: "100", ...(after ? { after } : {}) }, tok, f, base, 900, 0)
-          .catch((e) => { if (!(e instanceof FbError) || (e.code !== 1 && e.code !== 2)) throw e; return graph(`${c.id}/messages`, { fields: "id,message,from,created_time", limit: "25", ...(after ? { after } : {}) }, tok, f, base, 900, 0); });
+        const m = await graph(`${c.id}/messages`, { fields: "id,message,from,created_time,attachments", limit: isIg ? String(IG_MSG_LIMIT) : "100", ...(after ? { after } : {}) }, tok, f, base, 900, 0)
+          .catch((e) => { if (!(e instanceof FbError) || (e.code !== 1 && e.code !== 2)) throw e; if (isIg && Date.now() - t0 > 30000) throw e; return graph(`${c.id}/messages`, { fields: "id,message,from,created_time", limit: "25", ...(after ? { after } : {}) }, tok, f, base, 900, 0); });
         all.push(...((m.data ?? []) as FbMsg[]));
         if (!m.paging?.next) break; after = m.paging.cursors?.after; if (!after) break;
       }
@@ -183,7 +194,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
     if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
-    const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
+    const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: isIg ? "done" : "comments" }, writes, counts, ...(warning ? { warning } : {}) };
   }
 

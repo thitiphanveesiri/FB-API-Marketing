@@ -25,8 +25,10 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   await connection();
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
+  let ig = false;
   try {
     const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState; channel?: string };
+    ig = b.channel === "instagram";
     const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId); if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่า (เชื่อมเพจในหน้า Upload ก่อน)");
     const ds = g.mapped.dataset;
     let sheetPageId = [b.sheetPageId, cfg.sheetPageId].find((id) => !!id && ds.pages.some((p) => p.id === id)) ?? "";
@@ -80,7 +82,11 @@ export async function POST(req: Request) {
     if (out.writes.length) invalidateCache();
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning }, noStore);
   } catch (e) {
-    if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e.message, { rateLimited: e.rateLimited });
+    if (e instanceof FbError) {
+      const slowIg = ig && (e.code === 1 || e.code === 2);
+      const message = isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : `${e.message}${slowIg ? " — Instagram ตอบช้ากว่ากำหนด: ลดจำนวนวันย้อนหลัง (เช่น 3 วัน) แล้วดึงซ้ำ" : ""}`;
+      return fail(e.rateLimited ? 429 : 502, message, { rateLimited: e.rateLimited });
+    }
     const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;
     if (sheetStatus) {
       invalidateCache();
