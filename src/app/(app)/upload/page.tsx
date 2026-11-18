@@ -8,7 +8,7 @@ import { roleCan } from "@/lib/queries";
 import FbSyncCard from "@/components/FbSyncCard";
 import ChannelsCard from "@/components/ChannelsCard";
 import AdsSyncCard from "@/components/AdsSyncCard";
-import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, validate, ValidationResult } from "@/lib/importer";
+import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, leadNameKey, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
 import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
 import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
@@ -55,15 +55,22 @@ export default function UploadPage() {
   const allowed = roleCan.upload(user.role);
 
   const existingPerfKeys = useMemo(() => new Set(data.perf.map((p) => `${p.adId}|${p.date}`)), [data.perf]);
+  const pageLeads = useMemo(() => data.leads.filter((l) => l.pageId === pageId), [data.leads, pageId]);
+  /** Name → lead id, but null when two leads on the page share the name: an upload only links when the match is unambiguous. */
+  const leadIdsByName = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const l of pageLeads) { const k = leadNameKey(l.name); m.set(k, m.has(k) ? null : l.id); }
+    return m;
+  }, [pageLeads]);
   const validation: ValidationResult | null = useMemo(() => {
     if (step < 5 || rows.length === 0) return null;
     return validate({
       type, mapping, rows, mode, importId: "IMP-PREVIEW", existingPerfKeys, existingAdIds: new Set(data.ads.map((a) => a.id)), existingLeadIds: new Set(data.leads.map((l) => l.id)), existingInsightKeys: new Set(data.insights.map((i) => `${i.pageId}|${i.date}`)),
-      leadIdByName: new Map(data.leads.filter((l) => l.pageId === pageId).map((l) => [l.name.toLowerCase(), l.id])),
+      existingLeads: pageLeads, leadIdByName: leadIdsByName,
       existingMessageIds: new Set(Object.values(data.messages).flat().map((m) => m.id)), existingCommentIds: new Set(data.comments.map((c) => c.id)),
       pageId, repsByName: new Map(data.users.filter((u) => u.role === "Sales Representative").map((u) => [u.name.toLowerCase(), u.id])), nextLeadNo: data.leads.length + 1,
     });
-  }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys]);
+  }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys, pageLeads, leadIdsByName]);
 
   const reset = () => { setStep(0); setFileName(""); setHeaders([]); setRows([]); setMapping({}); setErr(""); setSummary(null); setMode("incremental"); };
 
@@ -132,7 +139,10 @@ export default function UploadPage() {
       id, at: nowStamp(), pageId, dataType: type, fileName, mode, total: validation.total, imported: validation.ok, failed: validation.failed, duplicates: validation.duplicates,
       errors: validation.issues.map((i) => ({ row: i.row, message: `[${i.level}] ${i.message}` })), by: user.name, rows, mapping,
     };
-    const patches = type === "Sales Performance" ? validation.salesPatches.map((p) => ({ lead_id: p.leadId, set: { assigned_to: p.repName, ...(p.firstResponseMin != null ? { first_response_min: p.firstResponseMin } : {}), ...(p.followUps != null ? { follow_ups: p.followUps } : {}) } })) : [];
+    const patches = [
+      ...(type === "Sales Performance" ? validation.salesPatches.map((p) => ({ lead_id: p.leadId, set: { assigned_to: p.repName, ...(p.firstResponseMin != null ? { first_response_min: p.firstResponseMin } : {}), ...(p.followUps != null ? { follow_ups: p.followUps } : {}) } })) : []),
+      ...validation.leadPatches.map((p) => ({ lead_id: p.leadId, set: p.set })),
+    ];
     setBusy(true);
     const ok = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches, {
       users: validation.newReps.map((r) => ({ user_id: r.id, name: r.name })),
@@ -142,7 +152,7 @@ export default function UploadPage() {
     setBusy(false);
     if (!ok) return; // the store already showed why it was not saved; stay on this step so nothing is lost
     setSummary(rec); setStep(7);
-    toast(`บันทึก ${validation.ok} จาก ${validation.total} แถวลง Google Sheet แล้ว`);
+    toast(`บันทึก ${validation.ok} จาก ${validation.total} แถวลง Google Sheet แล้ว${validation.merged ? ` · อัปเดต ${validation.merged} ลีดที่จับคู่กับข้อมูล Facebook` : ""}`);
   };
 
   const reimport = (rec: ImportRecord) => {
@@ -220,7 +230,7 @@ export default function UploadPage() {
 
         {step === 5 && validation && (<div className="space-y-4"><h2 className="font-semibold">ขั้นที่ 6 · ตรวจสอบข้อมูล</h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            {[["Total rows", validation.total, ""], ["Will import", validation.ok, "text-emerald-600"], ["Failed", validation.failed, validation.failed ? "text-red-500" : ""], ["Duplicates", validation.duplicates, validation.duplicates ? "text-amber-600" : ""], ["Warnings", validation.warnings, validation.warnings ? "text-amber-600" : ""]].map(([k, v, c]) => (
+            {([["Total rows", validation.total, ""], ["Will import", validation.ok, "text-emerald-600"], ...(validation.merged ? [["Updated", validation.merged, "text-brand"]] : []), ["Failed", validation.failed, validation.failed ? "text-red-500" : ""], ["Duplicates", validation.duplicates, validation.duplicates ? "text-amber-600" : ""], ["Warnings", validation.warnings, validation.warnings ? "text-amber-600" : ""]] as [string, number, string][]).map(([k, v, c]) => (
               <div key={String(k)} className="rounded-xl border border-line p-3"><p className="text-xs text-muted">{k}</p><p className={cn("text-2xl font-semibold tabnum", String(c))}>{v}</p></div>))}</div>
           {validation.issues.length > 0 ? (<div><div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold">Issues ({validation.issues.length})</h3>
             <Btn size="sm" onClick={() => download(`error-report-${fileName}.csv`, errorsToCsv(validation.issues))}><Download size={13} /> Download error report</Btn></div>
@@ -237,6 +247,7 @@ export default function UploadPage() {
           <ul className="space-y-1 rounded-xl bg-gray-50 p-3 text-sm"><li><b>{validation.ok}</b> rows will be imported into <b>{data.pages.find((p) => p.id === pageId)?.name}</b> as <b>{type}</b>.</li>
             {(isAdsType(type) || type === "Page Insights" || type === "Chat Messages" || type === "Post Comments") && validation.periodStart && <li>Period covered: {fmtDate(validation.periodStart)} – {fmtDate(validation.periodEnd)}.</li>}
             {isAdsType(type) && <li>{validation.newAdIds.length} new ad(s) will be created. {validation.replaceKeys.size > 0 ? `${validation.replaceKeys.size} existing ad/day records will be replaced.` : "No existing records will be changed."}</li>}
+            {validation.merged > 0 && <li><b>{validation.merged}</b> row(s) match a lead already pulled from Facebook and will update that lead (no duplicate card on the Board).</li>}
             <li>{validation.failed} failed and {validation.duplicates} duplicate rows will be skipped.</li></ul>
           <div className="flex gap-2"><Btn onClick={() => setStep(5)}>Back</Btn><Btn variant="primary" onClick={commit} disabled={validation.ok === 0 || busy}>{busy ? "กำลังบันทึกลง Google Sheet…" : "ยืนยันและบันทึก"}</Btn></div></div>)}
 

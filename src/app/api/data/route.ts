@@ -9,6 +9,19 @@ import { getCached, setCached } from "@/lib/sheetCache";
 
 const noStore = { headers: { "Cache-Control": "no-store" } };
 
+/** sheet page id → Facebook page id from the channel connections: lets the Board open that page's inbox in Meta Business Suite.
+ *  Page ids are public (they are in every page URL); tokens stay on the server. */
+function facebookPageIds(channels: string[][] | undefined): Record<string, string> {
+  const head = (channels?.[0] ?? []).map((h) => String(h).trim().toLowerCase());
+  const at = (row: string[], name: string) => { const i = head.indexOf(name); return i < 0 ? "" : String(row[i] ?? "").trim(); };
+  const out: Record<string, string> = {};
+  for (const row of channels?.slice(1) ?? []) {
+    const page = at(row, "sheet_page_id"), id = at(row, "account_id");
+    if (at(row, "channel").toLowerCase() === "facebook" && page && id && at(row, "active").toLowerCase() !== "false" && !out[page]) out[page] = id;
+  }
+  return out;
+}
+
 export async function GET(req: Request) {
   await connection(); // per-request: env vars, cookies and the sheet must be read at request time
   const sheets = sheetsConfigured();
@@ -23,7 +36,8 @@ export async function GET(req: Request) {
   try {
     const fresh = new URL(req.url).searchParams.get("fresh") === "1";
     let mapped = fresh ? null : getCached();
-    if (!mapped) { mapped = mapSheets(await readTabs()); setCached(mapped); }
+    const tabs = await readTabs(fresh); // 15 s cache: also holds the channel → Facebook page mapping
+    if (!mapped) { mapped = mapSheets(tabs); setCached(mapped); }
     const { dataset, warnings, counts, missingTabs } = mapped;
     let scoped: Dataset = dataset;
     let me = null as { id: string; role: string } | null;
@@ -36,7 +50,7 @@ export async function GET(req: Request) {
     }
     const isAdmin = !me || me.role === "Administrator";
     return NextResponse.json({ source: "sheets", me, dataset: scoped, warnings: isAdmin ? warnings.slice(0, 200) : [], warningCount: isAdmin ? warnings.length : 0,
-      counts: isAdmin ? counts : undefined, missingTabs: isAdmin ? missingTabs : [], fetchedAt: new Date().toISOString() }, noStore);
+      counts: isAdmin ? counts : undefined, missingTabs: isAdmin ? missingTabs : [], fbPages: facebookPageIds(tabs.channels), fetchedAt: new Date().toISOString() }, noStore);
   } catch (e) {
     console.error("[api/data]", e); // details stay in server logs; the browser gets a generic message
     return NextResponse.json({ source: "error", message: "Could not read the Google Sheet. Check the Vercel environment variables, the sheet ID and sharing." }, { status: 502, ...noStore });

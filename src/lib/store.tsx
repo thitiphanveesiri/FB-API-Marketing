@@ -20,7 +20,7 @@ export interface ConfirmOpts {
 export interface ConfirmState extends ConfirmOpts { resolve: (r: { ok: boolean; reason?: string }) => void }
 
 export type Source = "loading" | "setup" | "sheets" | "error" | "forbidden";
-export interface SourceMeta { fetchedAt?: string; warnings: SheetWarning[]; warningCount: number; missingTabs: string[]; counts?: Record<string, number>; message?: string }
+export interface SourceMeta { fetchedAt?: string; warnings: SheetWarning[]; warningCount: number; missingTabs: string[]; counts?: Record<string, number>; message?: string; fbPages?: Record<string, string> }
 
 interface Store {
   source: Source;
@@ -105,14 +105,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [sourceMeta, setSourceMeta] = useState<SourceMeta | null>(null);
 
-  const applyResponse = useCallback((first: boolean, j: { source: string; me?: { id?: string; email?: string; name?: string } | null; email?: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; message?: string }) => {
+  const applyResponse = useCallback((first: boolean, j: { source: string; me?: { id?: string; email?: string; name?: string } | null; email?: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; fbPages?: Record<string, string>; message?: string }) => {
     if (j.source === "sheets" && j.dataset) {
       setAnchor(localToday()); // real data uses the real date, not the demo's fixed one
       const ds = j.dataset;
       setData(ds); if (first) setF(defaultFilters());
       setUserId(j.me?.id ?? (ds.users.find((u) => u.role === "Administrator") ?? ds.users[0]).id);
       setAuthed(!!j.me);
-      setSourceMeta({ fetchedAt: j.fetchedAt, warnings: j.warnings ?? [], warningCount: j.warningCount ?? 0, missingTabs: j.missingTabs ?? [], counts: j.counts });
+      setSourceMeta({ fetchedAt: j.fetchedAt, warnings: j.warnings ?? [], warningCount: j.warningCount ?? 0, missingTabs: j.missingTabs ?? [], counts: j.counts, fbPages: j.fbPages });
       setSource("sheets");
     } else if (j.source === "unauthenticated") { // full page load on purpose: drops all in-memory data
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination

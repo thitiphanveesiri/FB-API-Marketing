@@ -91,6 +91,9 @@ export const FIELDS: Record<ImportDataType, FieldDef[]> = {
 };
 export const isAdsType = (t: ImportDataType) => t === "Ads Performance" || t === "Campaign Performance" || t === "Ad-Level Performance";
 
+/** Customer names are compared the way the Facebook sync links a chat to a lead: case and extra spaces ignored. */
+export const leadNameKey = (name: string) => String(name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F ()_]/g, "").trim(); // keep Thai letters so Thai headers can match
 
 // Compare headers loosely: "Lead_Status", "lead-status" and "lead status" are the same.
@@ -221,6 +224,9 @@ export interface ValidationResult {
   periodStart: string | null;
   periodEnd: string | null;
   salesPatches: { leadId: string; repName: string; firstResponseMin: number | null; followUps: number | null }[];
+  /** Rows that matched a lead already in the sheet (pulled from Facebook): they update that lead instead of adding a duplicate. */
+  leadPatches: { leadId: string; set: Record<string, string> }[];
+  merged: number;
 }
 
 export interface ValidateCtx {
@@ -233,7 +239,9 @@ export interface ValidateCtx {
   existingAdIds: Set<string>;
   existingLeadIds: Set<string>;
   existingInsightKeys: Set<string>;
-  leadIdByName?: Map<string, string>; // lower-case customer name → lead id (this page)
+  /** Leads already in the sheet for this page — what an upload may match and update (id, or a unique customer name). */
+  existingLeads?: Lead[];
+  leadIdByName?: Map<string, string | null>; // lower-case customer name → lead id on this page; null when two leads share the name
   existingMessageIds?: Set<string>;
   existingCommentIds?: Set<string>;
   pageId: string;
@@ -243,7 +251,7 @@ export interface ValidateCtx {
 
 export function validate(ctx: ValidateCtx): ValidationResult {
   const fields = FIELDS[ctx.type];
-  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], newReps: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [] };
+  const res: ValidationResult = { total: ctx.rows.length, ok: 0, failed: 0, duplicates: 0, warnings: 0, issues: [], perf: [], leads: [], insights: [], newReps: [], messages: [], comments: [], replaceInsightKeys: new Set(), newAdIds: [], replaceKeys: new Set(), periodStart: null, periodEnd: null, salesPatches: [], leadPatches: [], merged: 0 };
   const get = (row: Record<string, string>, key: string) => { const h = ctx.mapping[key]; return h ? String(row[h] ?? "").trim() : ""; };
   // One date order for the whole file, decided from all mapped date columns (see detectDateOrder).
   const dateKeys = fields.filter((f) => f.kind === "date" || ["sentAt", "commentedAt", "repliedAt"].includes(f.key)).map((f) => ctx.mapping[f.key]).filter(Boolean);
@@ -303,8 +311,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       res.ok++;
     } else if (ctx.type === "Lead Data" || ctx.type === "Inbox Conversations") {
       const id = vals.leadId || "";
-      if (id && (ctx.existingLeadIds.has(id) || seen.has(id))) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
-      if (id) seen.add(id);
+      if (id && seen.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
       const date = pd(vals.date)!;
       const st = parseStatus(vals.status);
       if (vals.status && !st) { res.issues.push({ row: n, message: `Unknown status "${vals.status}" — set to Not Responded`, level: "warning" }); res.warnings++; }
@@ -316,9 +323,41 @@ export function validate(ctx: ValidateCtx): ValidationResult {
         if (!nr) { nr = { id: repIdFor(vals.repName), name: vals.repName }; newReps.set(k, nr); res.newReps.push(nr); res.issues.push({ row: n, message: `New salesperson "${vals.repName}" will be added (name only — add an email in Settings if they need to sign in)`, level: "warning" }); res.warnings++; }
         repId = nr.id;
       }
+      // The Facebook sync already created this customer: match by Lead/Conversation ID first, then by one unique name on this page
+      // (the same rule the sync uses), so the uploaded row fills in that lead instead of showing up twice on the Board.
+      // Extra spaces in the file must not rewrite an existing name that only differs in whitespace.
+      const name = String(vals.name ?? "").trim().replace(/\s+/g, " ");
+      const byNameId = name ? ctx.leadIdByName?.get(leadNameKey(name)) ?? null : null;
+      const existing = id
+        ? ctx.existingLeads?.find((l) => l.id === id)
+        : byNameId ? ctx.existingLeads?.find((l) => l.id === byNameId) : undefined;
+      if (existing) {
+        if (seen.has(existing.id)) { res.duplicates++; res.issues.push({ row: n, message: `Lead ${existing.id} was already updated from another row in this file`, level: "duplicate" }); return; }
+        seen.add(existing.id);
+        const set: Record<string, string> = {};
+        if (name && name !== existing.name) set.name = name;
+        if (vals.phone && vals.phone !== existing.phone) set.phone = vals.phone;
+        const ad = vals.adId || adIdFromLabels(vals.labels);
+        if (ad && ad !== (existing.adId ?? "")) set.ad_id = ad;
+        if (vals.repName && (repId ?? "") !== (existing.repId ?? "")) set.assigned_to = repId ?? "";
+        if (st && st !== existing.status) { set.status = st; if ((QUALITIES as readonly string[]).includes(st)) set.quality = st; }
+        if (vals.channel && parseChannel(vals.channel) !== (existing.channel ?? "facebook")) set.channel = parseChannel(vals.channel);
+        if (ctx.type === "Inbox Conversations") {
+          const at = `${pd(vals.lastContactAt || "") ?? date}T09:00:00`;
+          if (at > existing.lastContactAt) set.last_contact_at = at.replace("T", " ").slice(0, 16);
+          if (vals.lastMessage && at >= existing.lastContactAt && vals.lastMessage !== existing.lastMessage) set.last_message = vals.lastMessage;
+        }
+        if (!Object.keys(set).length) { res.duplicates++; res.issues.push({ row: n, message: `${existing.name} (${existing.id}) already has everything this row contains`, level: "duplicate" }); return; }
+        res.leadPatches.push({ leadId: existing.id, set });
+        res.merged++; res.ok++;
+        return;
+      }
+      // A Lead ID that exists on another page belongs to that page: never move or overwrite it from here.
+      if (id && ctx.existingLeadIds.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
+      if (id) seen.add(id);
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
-        id: leadId, name: vals.name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
+        id: leadId, name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
         lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel: parseChannel(vals.channel), source: "import",
       });
@@ -327,7 +366,7 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const at = pdt(vals.sentAt); const dir = parseDirection(vals.direction);
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.sentAt}" — the time of day is required (e.g. 2026-11-01 14:05)`, level: "error" }); return; }
       if (!dir) { res.failed++; res.issues.push({ row: n, message: `Cannot tell who sent "${vals.direction}" — use customer/staff (ลูกค้า/เพจ)`, level: "error" }); return; }
-      const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId) ? vals.leadId : ctx.leadIdByName?.get(vals.name.toLowerCase()) ?? "";
+      const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId) ? vals.leadId : ctx.leadIdByName?.get(leadNameKey(vals.name)) ?? "";
       if (!leadId) { res.failed++; res.issues.push({ row: n, message: `Chat not found for "${vals.leadId || vals.name || "—"}" — upload the Inbox conversations first, or fix the ID/name`, level: "error" }); return; }
       const id = `MSG-${leadId}-${at.replace(/\D/g, "")}-${dir}`;
       if (seen.has(id) || ctx.existingMessageIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Already have this ${dir === "in" ? "customer" : "staff"} message at ${at.replace("T", " ").slice(0, 16)}`, level: "duplicate" }); return; }

@@ -94,7 +94,7 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       if (op.insights.length) w.push({ tab: "page_insights", keyCols: ["page_id", "date"], mode: op.replace ? "upsert" : "insert", rows: m("page_insights", op.insights) });
       if (op.messages?.length) w.push({ tab: "messages", keyCols: ["message_id"], mode: "insert", rows: m("messages", op.messages) });
       if (op.comments?.length) w.push({ tab: "post_comments", keyCols: ["comment_id"], mode: "insert", rows: m("post_comments", op.comments) });
-      if (op.patches?.length) w.push({ tab: "leads", keyCols: ["lead_id"], mode: "updateOnly", rows: op.patches.map((p) => ({ lead_id: str(p.lead_id, "lead_id"), ...clean("leads", p.set, ["assigned_to", "first_response_min", "follow_ups"]) })) });
+      if (op.patches?.length) w.push({ tab: "leads", keyCols: ["lead_id"], mode: "updateOnly", rows: op.patches.map((p) => ({ lead_id: str(p.lead_id, "lead_id"), ...clean("leads", p.set, [...LEAD_SETTABLE, "name", "phone", "ad_id", "channel"]) })) });
       w.push({ tab: "import_log", keyCols: ["import_id"], mode: "insert", rows: [{ ...clean("import_log", op.record), by: me.name, at: now }] });
       return w;
     }

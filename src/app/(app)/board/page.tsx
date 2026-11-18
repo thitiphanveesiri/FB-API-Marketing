@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
-import { CalendarClock, GripVertical } from "lucide-react";
+import { CalendarClock, ExternalLink, GripVertical } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
@@ -24,7 +24,7 @@ const COLUMN_TONE: Record<LeadQuality, string> = {
 };
 const columnOf = (l: Lead): LeadQuality => ((BOARD_COLUMNS as readonly string[]).includes(l.status) ? (l.status as LeadQuality) : l.quality);
 
-function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
+function Card({ lead, dragging, onOpen, fbHref }: { lead: Lead; dragging?: boolean; onOpen?: () => void; fbHref?: string }) {
   const { data } = useStore();
   const ad = lead.adId ?? "ไม่มีโฆษณา";
   const rep = data.users.find((u) => u.id === lead.repId);
@@ -32,12 +32,14 @@ function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
   const overdue = lead.followUpDate && lead.followUpDate < ANCHOR;
   return (
     <div className={cn("rounded-xl border border-line bg-surface p-3 text-left shadow-card", dragging && "rotate-1 shadow-pop ring-2 ring-brand-2")}>
-      <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
-      <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
-      <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+      <button type="button" onClick={onOpen} className="block w-full text-left" aria-label={`เปิด ${lead.name}`}>
+        <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
+        <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
+        <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+      </button>
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
         <span className="flex items-center gap-1">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] rounded-full border border-dashed border-gray-300" />}{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span>
-        <span>{relTime(lead.lastContactAt, NOW_ISO)}</span>
+        <span className="flex items-center gap-1">{relTime(lead.lastContactAt, NOW_ISO)}{fbHref && <a href={fbHref} target="_blank" rel="noopener noreferrer" title="เปิด Inbox ของเพจนี้ใน Facebook" aria-label="เปิด Inbox ของเพจนี้ใน Facebook" className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-[#1877F2]"><ExternalLink size={12} /></a>}</span>
       </div>
       {lead.followUpDate && <p className={cn("mt-1.5 flex items-center gap-1 text-[11px]", overdue ? "font-semibold text-red-500" : "text-muted")}><CalendarClock size={11} /> นัดติดตาม {fmtShort(lead.followUpDate)}{overdue && " (เลยกำหนด)"}</p>}
     </div>
@@ -46,18 +48,25 @@ function Card({ lead, dragging }: { lead: Lead; dragging?: boolean }) {
 
 function DraggableCard({ lead, onOpen, enabled }: { lead: Lead; onOpen: () => void; enabled: boolean }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: lead.id, disabled: !enabled });
+  const { sourceMeta } = useStore();
+  const fbPage = channelOf(lead) === "facebook" ? sourceMeta?.fbPages?.[lead.pageId] : undefined;
+  const fbHref = fbPage ? `https://business.facebook.com/latest/inbox/all/?asset_id=${encodeURIComponent(fbPage)}` : undefined;
   return (
     <div ref={setNodeRef} className={cn("group relative", isDragging && "opacity-30")}>
-      <button onClick={onOpen} className="block w-full text-left" aria-label={`เปิด ${lead.name}`}><Card lead={lead} /></button>
+      <Card lead={lead} onOpen={onOpen} fbHref={fbHref} />
       {enabled && <button {...listeners} {...attributes} aria-label={`ลาก ${lead.name}`} className="absolute right-1 top-6 cursor-grab touch-none rounded p-1 text-gray-300 hover:bg-gray-100 hover:text-gray-500 active:cursor-grabbing"><GripVertical size={14} /></button>}
     </div>
   );
 }
 
+const COLUMN_PAGE = 30;
+
 function Column({ status, leads, onOpen, enabled }: { status: LeadQuality; leads: Lead[]; onOpen: (id: string) => void; enabled: boolean }) {
   const { isOver, setNodeRef } = useDroppable({ id: status });
+  const [shown, setShown] = useState(COLUMN_PAGE); // like the Facebook inbox: older chats appear as you scroll
   const overdue = leads.filter((l) => l.followUpDate && l.followUpDate < ANCHOR).length;
   const unassigned = leads.filter((l) => !l.repId).length;
+  const more = leads.length > shown;
   return (
     <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border transition-colors", isOver ? "border-brand-2 bg-brand-faint" : COLUMN_TONE[status])} aria-label={statusTh(status)}>
       <header className="border-b border-line px-3 py-2.5">
@@ -65,10 +74,15 @@ function Column({ status, leads, onOpen, enabled }: { status: LeadQuality; leads
         <p className="mt-0.5 text-[11px] text-muted">{COLUMN_HELP[status]}</p>
         <p className="mt-1 text-[11px] text-muted">{overdue > 0 && <span className="mr-2 text-red-500">{overdue} เลยกำหนด</span>}{unassigned > 0 && <span>{unassigned} ยังไม่มีผู้ดูแล</span>}{overdue === 0 && unassigned === 0 && "เรียบร้อยดี"}</p>
       </header>
-      <div className="max-h-[calc(100vh-320px)] min-h-[120px] space-y-2 overflow-y-auto p-2">
+      <div className="max-h-[calc(100vh-320px)] min-h-[120px] space-y-2 overflow-y-auto p-2"
+        onScroll={(e) => {
+          if (!more) return;
+          const el = e.currentTarget;
+          if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) setShown((s) => Math.min(s + COLUMN_PAGE, leads.length));
+        }}>
         {leads.length === 0 && <p className="py-6 text-center text-xs text-gray-400">วางแชทที่นี่</p>}
-        {leads.slice(0, 40).map((l) => <DraggableCard key={l.id} lead={l} enabled={enabled} onOpen={() => onOpen(l.id)} />)}
-        {leads.length > 40 && <p className="py-1 text-center text-xs text-muted">มีอีก {leads.length - 40} รายการ — ใช้ช่องค้นหาหรือตัวกรองเพื่อดูเพิ่ม</p>}
+        {leads.slice(0, shown).map((l) => <DraggableCard key={l.id} lead={l} enabled={enabled} onOpen={() => onOpen(l.id)} />)}
+        {more && <p className="py-1 text-center text-xs text-muted">เลื่อนลงเพื่อดูอีก {leads.length - shown} รายการ</p>}
       </div>
     </section>
   );
@@ -121,7 +135,7 @@ export default function Board() {
         </div>
       </div>
       <ChannelFilter value={ch} onChange={setCh} counts={perChannel} />
-      <p className="text-xs text-muted">ลากการ์ดด้วยไอคอนจับ (⋮⋮) ไปวางในกล่องที่ต้องการ หรือเปิดการ์ดแล้วเปลี่ยนสถานะจากเมนู การย้ายที่มีความเสี่ยงจะขอให้ยืนยันก่อน และทุกการย้ายถูกบันทึกลง Google Sheet {!canEdit && "· บทบาทของคุณดูได้อย่างเดียว"}</p>
+      <p className="text-xs text-muted">การ์ดเรียงตามข้อความล่าสุดเหมือน Facebook Inbox และเลื่อนลงในคอลัมน์เพื่อโหลดรายการเก่าเพิ่ม · ลากการ์ดด้วยไอคอนจับ (⋮⋮) ไปวางในกล่องที่ต้องการ หรือเปิดการ์ดแล้วเปลี่ยนสถานะจากเมนู การย้ายที่มีความเสี่ยงจะขอให้ยืนยันก่อน และทุกการย้ายถูกบันทึกลง Google Sheet {!canEdit && "· บทบาทของคุณดูได้อย่างเดียว"}</p>
       {data.leads.length === 0 && <p className="rounded-xl border border-dashed border-line bg-surface px-4 py-6 text-center text-sm text-muted">ยังไม่มีแชทในระบบ — ไปที่หน้า <b>Upload</b> เพื่อนำเข้าข้อมูลแชท/ลูกค้าจากเพจ Facebook</p>}
       <DndContext sensors={sensors} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>
         <div className="flex gap-3 overflow-x-auto pb-3">
