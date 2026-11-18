@@ -5,7 +5,7 @@ import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
 
-interface Cfg { fbPageId: string; sheetPageId: string; name?: string }
+interface Cfg { fbPageId: string; sheetPageId: string; name?: string; instagram?: boolean }
 const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
 interface Totals {
   chats: number;
@@ -49,7 +49,7 @@ export default function FbSyncCard() {
     const nameMatches = p.name ? data.pages.filter((x) => norm(x.name) === norm(p.name!)) : [];
     const byName = nameMatches.length === 1 ? nameMatches[0] : undefined;
     const sheet = (p.sheetPageId && data.pages.some((x) => x.id === p.sheetPageId) ? p.sheetPageId : "") || byName?.id || "";
-    return { fb: p.fbPageId, sheet, label: p.name || (sheet ? sysName(sheet) : "") || p.fbPageId };
+    return { fb: p.fbPageId, instagram: !!p.instagram, sheet, label: p.name || (sheet ? sysName(sheet) : "") || p.fbPageId };
   });
   const chosen = which === "all" ? resolved : resolved.filter((r) => r.fb === which);
   /** Chats + comments of the chosen pages (one after another, each in its own small batches so one page cannot time out another), then the ad accounts. */
@@ -64,6 +64,10 @@ export default function FbSyncCard() {
         if (stop.current) break;
         const tag = targets.length > 1 ? `[${n + 1}/${targets.length}] ${t.label} · ` : `${t.label} · `;
         try { await pull(t.fb, t.sheet, tot, tag); } catch (e) { failed.push(`${t.label}: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
+        // the Instagram account linked to this page: its direct messages are pulled right after the page, into the same page in the system
+        if (t.instagram && !stop.current) {
+          try { await pull(t.fb, t.sheet, tot, `${tag}Instagram · `, "instagram"); } catch (e) { failed.push(`${t.label} (Instagram): ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
+        }
       }
       // ads: once per ad account (an account can serve several pages; each ad is filed under the page it posts as)
       if (withAds && ads.length && !stop.current) {
@@ -81,13 +85,13 @@ export default function FbSyncCard() {
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }
   };
-  const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string) => {
+  const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string, channel?: "instagram") => {
     let state: { phase: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
     {
       while (state.phase !== "done" && !stop.current) {
         if (state.phase === "comments") commentSteps++;
         setLog(tag + (state.phase === "chats" ? `กำลังดึงแชท… (${tot.chats} แชท, ${tot.messages} ข้อความ)` : `กำลังดึงคอมเมนต์… (${tot.posts ?? 0} โพสต์, ${tot.comments} คอมเมนต์ · ชุดที่ ${commentSteps})`));
-        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId || undefined, days: Number(days) || 7, state }) });
+        const r = await fetch("/api/fb-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fbPageId: fbId, sheetPageId: sheetId || undefined, days: Number(days) || 7, state, ...(channel ? { channel } : {}) }) });
         const j = await readSyncResponse(r);
         if (j.rateLimited) {
           if (++rateWaits > MAX_RATE_WAITS) throw new Error(`${j.message || "Meta จำกัดจำนวนคำขอ"} — รอ ${MAX_RATE_WAITS} รอบแล้วยังถูกจำกัด หยุดดึงเพื่อไม่ให้ค้าง ลองใหม่อีกครั้งในอีกสักพัก (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`);

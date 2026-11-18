@@ -19,6 +19,13 @@ function CopyBox({ label, value }: { label: string; value: string }) {
 }
 
 /** Administrators only: connect chat channels with an access token (stored in the Google Sheet) and a webhook. */
+interface AdsRes { added: number; existing: number; refreshed?: number; names: string[]; message: string }
+interface ExtendRes { extended: boolean; days: number | null; note: string }
+const adsText = (a: AdsRes) => a.added + a.existing + (a.refreshed ?? 0) > 0
+  ? `พบบัญชีโฆษณา ${a.added + a.existing} บัญชี (${a.names.join(", ")})${a.refreshed ? ` · เปลี่ยนโทเคนที่หมดอายุให้ ${a.refreshed} บัญชี` : ""}` : a.message;
+/** Did the long-lived swap work? A short-lived token silently dies in 1–2 hours, so a failure here is worth saying out loud. */
+const extendText = (e: ExtendRes | null) => !e ? "" : e.extended ? `ต่ออายุโทเคนอัตโนมัติแล้ว${e.days ? ` (~${e.days} วัน)` : ""} — โทเคนเพจที่ได้ไม่หมดอายุ` : e.note;
+
 export default function ChannelsCard() {
   const { data, user, reloadData, toast } = useStore();
   const [list, setList] = useState<Ch[] | null>(null); const [hook, setHook] = useState(""); const [verify, setVerify] = useState("");
@@ -29,7 +36,7 @@ export default function ChannelsCard() {
   const [adAcct, setAdAcct] = useState(""); const [adToken, setAdToken] = useState(""); const [adForcePage, setAdForcePage] = useState(false); const [adEdit, setAdEdit] = useState(false); const [editingAdChannel, setEditingAdChannel] = useState<string | null>(null); const [adMsg, setAdMsg] = useState("");
   const [fbDest, setFbDest] = useState(""); const [allToken, setAllToken] = useState(""); const [allSecret, setAllSecret] = useState("");
   const [allBusy, setAllBusy] = useState(false); const [allMsg, setAllMsg] = useState("");
-  const [allRes, setAllRes] = useState<{ results: ConnectRes[]; ads: { added: number; existing: number; names: string[]; message: string } | null } | null>(null);
+  const [allRes, setAllRes] = useState<{ results: ConnectRes[]; ads: AdsRes | null; extend: ExtendRes | null } | null>(null);
   const admin = user.role === "Administrator";
 
   const load = useCallback(async (): Promise<ChannelList | null> => {
@@ -72,13 +79,13 @@ export default function ChannelsCard() {
       const j = await r.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!j.ok) { setChoices(Array.isArray(j.pages) ? j.pages : []); setMsg(j.message || "บันทึกไม่สำเร็จ"); return; }
       setChoices([]); setFbPageId(""); setToken(""); setSecret(""); setFbDest(""); setEditing(null); await refresh(); await reloadData(true);
-      const ads = j.ads as { added: number; existing: number; names: string[]; message: string } | null;
-      const adsNote = !ads ? "" : ads.added + ads.existing > 0 ? ` · พบบัญชีโฆษณา ${ads.added + ads.existing} บัญชี (${ads.names.join(", ")}) ดึงพร้อมแชทได้เลย` : ` · ${ads.message}`;
-      const adsBad = !!ads && ads.added + ads.existing === 0;
+      const ads = j.ads as AdsRes | null, ext = j.extend as ExtendRes | null;
+      const adsNote = !ads ? "" : ` · ${adsText(ads)}${ads.added + ads.existing + (ads.refreshed ?? 0) > 0 ? " ดึงพร้อมแชทได้เลย" : ""}`;
+      const adsBad = !!ads && ads.added + ads.existing + (ads.refreshed ?? 0) === 0, extNote = extendText(ext) ? ` · ${extendText(ext)}` : "";
       const igNote = j.instagram
         ? ` · พบ Instagram @${j.instagram.username || j.instagram.id}; อย่าลืมเปิด Instagram → messages ใน Meta App Dashboard`
         : j.instagramLookupMessage ? ` · ค้นหา Instagram ไม่สำเร็จ: ${j.instagramLookupMessage}` : "";
-      toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + igNote + adsNote, j.subscribed === false || !!j.instagramLookupMessage || adsBad ? "info" : undefined);
+      toast((j.subscribed === false ? `เชื่อมเพจ ${j.name || ""} แล้ว แต่สมัครรับแชทอัตโนมัติไม่สำเร็จ: ${j.subscribeMessage}` : `เชื่อมเพจ ${j.name || ""} แล้ว`) + igNote + adsNote + extNote, j.subscribed === false || !!j.instagramLookupMessage || adsBad || (!!ext && !ext.extended) ? "info" : undefined);
     } catch { setMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setBusy(false); }
   };
   const connectAll = async () => {
@@ -92,7 +99,7 @@ export default function ChannelsCard() {
       const result = await response.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
       if (!result.ok) { setAllMsg(result.message || "เชื่อมไม่สำเร็จ"); return; }
       const connected = (result.results ?? []) as ConnectRes[];
-      setAllRes({ results: connected, ads: result.ads ?? null });
+      setAllRes({ results: connected, ads: result.ads ?? null, extend: result.extend ?? null });
       setAllToken(""); setAllSecret("");
       await refresh(); await reloadData(true);
       const successCount = connected.filter((page) => page.ok).length;
@@ -154,7 +161,8 @@ export default function ChannelsCard() {
                 {page.ok && page.instagram && <span className="block text-xs text-pink-700">พบ Instagram ที่ผูกกับเพจนี้: @{page.instagram.username || page.instagram.id} · เปิดใช้ Instagram → messages ใน Meta App Dashboard</span>}
                 {page.ok && page.instagramLookupMessage && <span className="block text-xs text-amber-700">ค้นหา Instagram ไม่สำเร็จ (คงสถานะการเชื่อมเดิมไว้): {page.instagramLookupMessage}</span>}
               </div>))}
-            {allRes.ads && <p className="text-xs text-muted">{allRes.ads.added + allRes.ads.existing > 0 ? `พบบัญชีโฆษณา ${allRes.ads.added + allRes.ads.existing} บัญชี (${allRes.ads.names.join(", ")})` : allRes.ads.message}</p>}
+            {allRes.ads && <p className="text-xs text-muted">{adsText(allRes.ads)}</p>}
+            {allRes.extend && <p className={allRes.extend.extended ? "text-xs text-muted" : "rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"}>{extendText(allRes.extend)}</p>}
           </div>}
         </div>
 

@@ -2,9 +2,10 @@ import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
 import { checkAdAccount, actId, listAdAccounts } from "@/lib/adsSync";
-import { FbError } from "@/lib/fbSync";
+import { FbError, type FetchFn } from "@/lib/fbSync";
 import { type Channel, defaultVerifyToken, invalidateChannels, loadChannels, newVerifyToken, saveChannel, toPublic } from "@/lib/channels";
-import { inspectToken, TokenError } from "@/lib/fbToken";
+import { inspectToken, TokenError, type TokenInfo } from "@/lib/fbToken";
+import { extendUserToken, type ExtendResult } from "@/lib/metaExtend";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
@@ -16,24 +17,45 @@ const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
 
 /** A user token that has ads_read also sees the ad accounts: connect them too, so one token covers chats AND ads.
- *  An ad account that is already connected keeps its own token (it may be a never-expiring system-user token). Never throws. */
-async function connectAdAccounts(userToken: string, sheetPageId: string, all: Channel[]): Promise<{ added: number; existing: number; names: string[]; message: string }> {
+ *  An ad account whose stored token still works keeps it (it may be a never-expiring system-user token); one whose token Meta says is dead
+ *  (expired / revoked) gets the new token — that is why pasting a fresh token revives ad pulls that had stopped. Never throws. */
+async function connectAdAccounts(userToken: string, sheetPageId: string, all: Channel[]): Promise<{ added: number; existing: number; refreshed: number; names: string[]; message: string }> {
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>;
   try {
-    const accts = await listAdAccounts(userToken, (u) => fetch(u, { cache: "no-store" }) as ReturnType<Parameters<typeof listAdAccounts>[1]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
-    if (!accts.length) return { added: 0, existing: 0, names: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ถ้าต้องการดึงโฆษณาด้วย ให้เพิ่มสิทธิ์ ads_read แล้วสร้างโทเคนใหม่" };
-    let added = 0, existing = 0; const names: string[] = [];
+    const accts = await listAdAccounts(userToken, f, base);
+    if (!accts.length) return { added: 0, existing: 0, refreshed: 0, names: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ถ้าต้องการดึงโฆษณาด้วย ให้เพิ่มสิทธิ์ ads_read แล้วสร้างโทเคนใหม่" };
+    let added = 0, existing = 0, refreshed = 0; const names: string[] = [];
     for (const a of accts) {
       const channelId = `ads:${a.id}`, prev = all.find((x) => x.channelId === channelId && x.accessToken);
-      if (prev) { existing++; names.push(prev.name || a.name || a.id); continue; }
+      names.push(prev?.name || a.name || a.id);
+      if (prev) {
+        let dead = false;
+        try { await checkAdAccount(actId(a.id), prev.accessToken, f, base); } catch (e) { dead = isExpiredMetaToken(e); }
+        if (!dead) { existing++; continue; }
+        await saveChannel({ channelId, channel: "ads", accountId: a.id, name: prev.name || a.name || `act_${a.id}`, accessToken: userToken, sheetPageId: prev.sheetPageId || sheetPageId, active: true });
+        refreshed++; continue;
+      }
       await saveChannel({ channelId, channel: "ads", accountId: a.id, name: a.name || `act_${a.id}`, accessToken: userToken, sheetPageId, active: true });
-      added++; names.push(a.name || a.id);
+      added++;
     }
-    return { added, existing, names, message: "" };
+    return { added, existing, refreshed, names, message: "" };
   } catch (e) {
     const permission = e instanceof FbError && (e.code === 200 || e.code === 10 || e.code === 100);
-    return { added: 0, existing: 0, names: [], message: permission ? "โทเคนนี้ไม่มีสิทธิ์ ads_read จึงยังไม่ได้เชื่อมบัญชีโฆษณา (เพิ่มสิทธิ์ ads_read ใน Graph API Explorer แล้วสร้างโทเคนใหม่)" : "เชื่อมบัญชีโฆษณาไม่สำเร็จ (เชื่อมแยกได้ในส่วนโฆษณาด้านล่าง)" };
+    return { added: 0, existing: 0, refreshed: 0, names: [], message: permission ? "โทเคนนี้ไม่มีสิทธิ์ ads_read จึงยังไม่ได้เชื่อมบัญชีโฆษณา (เพิ่มสิทธิ์ ads_read ใน Graph API Explorer แล้วสร้างโทเคนใหม่)" : "เชื่อมบัญชีโฆษณาไม่สำเร็จ (เชื่อมแยกได้ในส่วนโฆษณาด้านล่าง)" };
   }
 }
+
+/** The one place a pasted USER token is handled: swap it for a long-lived one (Page tokens taken from a short-lived user token die within hours; from a
+ *  long-lived one they do not expire), then re-read the pages it manages. A Page token is returned untouched. Never throws: when extending is not possible
+ *  the original answer comes back with a note saying why. */
+async function widenToken(token: string, info: TokenInfo, appSecret: string): Promise<{ info: TokenInfo; userToken: string; extend: ExtendResult | null }> {
+  if (info.kind !== "user") return { info, userToken: "", extend: null };
+  const base = process.env.FB_GRAPH_BASE || undefined, extend = await extendUserToken(token, appSecret, base);
+  if (!extend.extended) return { info, userToken: token, extend };
+  try { const again = await inspectToken(extend.token, base); if (again.kind === "user" && again.pages.length) return { info: again, userToken: extend.token, extend }; } catch { /* keep the first answer */ }
+  return { info, userToken: extend.token, extend };
+}
+const extendJson = (e: ExtendResult | null) => e ? { extended: e.extended, days: e.days ?? null, note: e.note } : null;
 
 /** Admin only. Never returns tokens or secrets — only whether they are set and the last 4 characters of the token. */
 export async function GET(req: Request) {
@@ -95,10 +117,13 @@ export async function POST(req: Request) {
 
     let existing = all.find((x) => x.channelId === b.channelId);
     let accountId = existing?.accountId ?? "", name = existing?.name ?? "", subscribed: boolean | null = null, subscribeMessage = "";
-    let pageToken = token || existing?.accessToken || "", viaUserToken = false;
+    let pageToken = token || existing?.accessToken || "", viaUserToken = false, userToken = "", extend: ExtendResult | null = null;
     if (token) {
       // ask Meta what this token is. A Page token is used as is; a USER token is exchanged for the token of the page it manages.
-      let info; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      let info: TokenInfo; try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : e instanceof TokenError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
+      // the secret of any connected page works too: every page of one Meta app shares it
+      const wide = await widenToken(token, info, secret || existing?.appSecret || all.find((c) => c.channel === "facebook" && c.active && c.appSecret)?.appSecret || process.env.META_APP_SECRET?.trim() || "");
+      info = wide.info; userToken = wide.userToken; extend = wide.extend;
       let j: { id: string; name: string };
       if (info.kind === "page") j = info;
       else {
@@ -136,9 +161,9 @@ export async function POST(req: Request) {
       const previousInstagram = all.find((item) => item.channelId === `instagram:${accountId}`);
       if (previousInstagram?.active) await upsertRows("channels", ["channel_id"], [{ channel_id: previousInstagram.channelId, active: false, updated_at: new Date().toISOString() }], "upsert");
     }
-    const ads = viaUserToken ? await connectAdAccounts(token, sheetPageId, all) : null;
+    const ads = viaUserToken ? await connectAdAccounts(userToken, sheetPageId, all) : null;
     invalidateCache();
-    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage, instagram, instagramLookupMessage, ads }, noStore);
+    return NextResponse.json({ ok: true, channelId, name, subscribed, subscribeMessage, instagram, instagramLookupMessage, ads, extend: extendJson(extend) }, noStore);
   } catch (e) {
     console.error("[api/channels]", e instanceof Error ? scrub(e.message) : "error");
     return fail(502, "บันทึกลง Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง");
@@ -154,11 +179,13 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
   if (!secretIn) return fail(400, "ใส่ App Secret ของ Meta App ที่ออกโทเคนนี้ เพื่อยืนยันลายเซ็น Webhook");
   const secret = secretIn;
 
-  let info;
+  let info: TokenInfo;
   try { info = await inspectToken(token, process.env.FB_GRAPH_BASE || undefined); }
   catch (error) {
     return fail(400, isExpiredMetaToken(error) ? expiredMetaTokenMessage("facebook") : error instanceof TokenError ? error.message : "เชื่อมต่อ Meta ไม่สำเร็จ");
   }
+  const wide = await widenToken(token, info, secret); // long-lived user token → Page tokens that do not expire
+  info = wide.info;
   const pages = info.kind === "page" ? [{ id: info.id, name: info.name, token }] : info.pages;
   const uniquePages = [...new Map(pages.map((page) => [page.id, page])).values()];
   if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic และ instagram_manage_messages แล้วสร้าง Access Token ใหม่");
@@ -229,8 +256,8 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
     })));
   }
   const firstSheet = mapping[0]?.pick.id ?? "";
-  const ads = info.kind === "user" && firstSheet ? await connectAdAccounts(token, firstSheet, all) : null;
-  return NextResponse.json({ ok: true, connectedAll: true, results, ads }, noStore);
+  const ads = info.kind === "user" && firstSheet ? await connectAdAccounts(wide.userToken || token, firstSheet, all) : null;
+  return NextResponse.json({ ok: true, connectedAll: true, results, ads, extend: extendJson(wide.extend) }, noStore);
 }
 
 interface ConnectResult {

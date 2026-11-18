@@ -88,7 +88,7 @@ interface FbConv { id: string; updated_time: string; participants?: { data?: FbP
 interface FbComment { id: string; from?: FbPerson; message?: string; created_time: string; comments?: { data?: { from?: FbPerson; created_time: string }[] } }
 interface FbPost { id: string; permalink_url?: string; comments?: { summary?: { total_count?: number } } }
 
-export interface SyncInput { cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
+export interface SyncInput { channel?: "instagram"; igId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
 
 export const MAX_COMMENT_POSTS_PER_BATCH = 50;
@@ -100,6 +100,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   // Ask Meta which page this token belongs to: catches the two usual set-up mistakes (a user token instead of a Page token, or the wrong FB_PAGE_ID)
   const who = (await graph("me", { fields: "id,name,category" }, tok, f, base, 900, 0).catch((e) => { if (e instanceof FbError && e.code === 100 && /category/i.test(e.message)) throw new FbError("โทเคนนี้เป็นโทเคนของผู้ใช้ ไม่ใช่ของเพจ — เชื่อมเพจใหม่ที่หน้า Upload (วางโทเคนผู้ใช้ได้ ระบบจะแลกเป็นโทเคนเพจให้) หรือใช้ me/accounts ใน Graph API Explorer เพื่อเอา access_token ของเพจ", false, 100); if (e instanceof FbError && !e.rateLimited) throw new FbError(`โทเคนใช้ไม่ได้: ${e.message} — สร้างโทเคนเพจใหม่`, false, e.code); throw e; })) as unknown as { id?: string; name?: string; category?: string };
   if (!who.id || !who.category) throw new FbError(`FB_PAGE_TOKEN เป็นโทเคนของผู้ใช้${who.name ? ` (${who.name})` : ""} ไม่ใช่โทเคนของเพจ — ใน Graph API Explorer รัน me/accounts แล้วคัดลอก access_token ของเพจที่ต้องการมาใช้แทน`);
+  const isIg = i.channel === "instagram", self = isIg ? (i.igId ?? "") : who.id; // Instagram chats: the business side is the Instagram account, not the Page
   const fb = who.id; // always the page the token really belongs to (a mismatched FB_PAGE_ID is harmless then)
   const counts: SyncCounts = {
     chats: 0,
@@ -119,20 +120,20 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
-    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: "messenger" } : {}), fields, limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
+    const convQuery = (fields: string, platform: boolean) => graph(`${fb}/conversations`, { ...(platform ? { platform: isIg ? "instagram" : "messenger" } : {}), fields, limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) }, tok, f, base, 900, 0);
     const isTransient = (e: unknown) => e instanceof FbError && (e.code === 1 || e.code === 2);
     let j: Graph, chatList = i.state.chatList;
-    if (chatList === "no-platform") j = await convQuery("id,updated_time", false);
+    if (chatList === "no-platform" && !isIg) j = await convQuery("id,updated_time", false);
     else if (chatList === "light") {
       try { j = await convQuery("id,updated_time", true); }
-      catch (e) { if (!isTransient(e)) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+      catch (e) { if (!isTransient(e)) throw e; if (isIg) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
     } else {
       try { j = await convQuery("id,updated_time,participants", true); }
       catch (e) {
         if (!isTransient(e)) throw e;
         chatList = "light";
         try { j = await convQuery("id,updated_time", true); }
-        catch (e2) { if (!isTransient(e2)) throw e2; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+        catch (e2) { if (!isTransient(e2)) throw e2; if (isIg) throw e2; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
       }
     }
     let skippedChats = 0, partialChats = 0;
@@ -143,7 +144,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const mine = i.ds.leads.filter((l) => l.pageId === i.sheetPageId);
     const byId = new Set(mine.map((l) => l.id));
     const byName = new Map<string, string | null>(); // lower-cased name → lead id (null when two leads share the name)
-    for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
+    if (!isIg) for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); } // Instagram chats are never merged by name (the same person may also write on Facebook)
 
     const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = []; const psidRows = new Map<string, SyncWrite["rows"][number]>();
     const lists = await Promise.all(fresh.map(async (c) => {
@@ -165,16 +166,16 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     fresh.forEach((c, n) => {
       const list = lists[n].filter((m) => ms(m.created_time) >= since); if (!list.length) return;
       counts.chats++;
-      const customer = (c.participants?.data ?? []).find((p) => p.id !== fb) ?? list.find((m) => m.from?.id && m.from.id !== fb)?.from;
-      const name = customer?.name?.trim() || list.find((m) => m.from?.id && m.from.id !== fb)?.from?.name?.trim() || "ลูกค้า Facebook";
+      const customer = (c.participants?.data ?? []).find((p) => p.id !== self && p.id !== fb) ?? list.find((m) => m.from?.id && m.from.id !== self && m.from.id !== fb)?.from;
+      const name = customer?.name?.trim() || list.find((m) => m.from?.id && m.from.id !== self && m.from.id !== fb)?.from?.name?.trim() || (isIg ? "ลูกค้า Instagram" : "ลูกค้า Facebook");
       let leadId = byId.has(c.id) ? c.id : byName.get(name.toLowerCase()) ?? "";
       if (!leadId) {
         leadId = c.id; byId.add(leadId); counts.newLeads++;
-        const last = list[list.length - 1], repliedByPage = list.some((m) => m.from?.id === fb);
+        const last = list[list.length - 1], repliedByPage = list.some((m) => m.from?.id === self);
         leadRows.push({ lead_id: leadId, name, page_id: i.sheetPageId, ad_id: "", assigned_to: "", status: repliedByPage ? "Average" : "Not Responded", quality: repliedByPage ? "Average" : "Not Responded", valid: true,
-          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false, channel: "facebook", fb_user_id: customer?.id ?? "" });
-      } else if (customer?.id && !mine.find((l) => l.id === leadId)?.fbUserId) psidRows.set(leadId, { lead_id: leadId, fb_user_id: customer.id, channel: "facebook" }); // older lead: remember who to message
-      for (const m of list) msgRows.push({ message_id: m.id, lead_id: leadId, direction: m.from?.id === fb ? "out" : "in", text: (m.message || (m.attachments ? "[ไฟล์แนบ]" : "")).slice(0, 2000), sent_at: localStamp(m.created_time, i.tz), attachment_name: "" });
+          created_at: localStamp(list[0].created_time, i.tz).slice(0, 10), last_contact_at: localStamp(last.created_time, i.tz), last_message: (last.message || "[ไฟล์แนบ]").slice(0, 300), phone: "", email: "", unread: false, channel: isIg ? "instagram" : "facebook", fb_user_id: customer?.id ?? "" });
+      } else if (customer?.id && !mine.find((l) => l.id === leadId)?.fbUserId) psidRows.set(leadId, { lead_id: leadId, fb_user_id: customer.id, channel: isIg ? "instagram" : "facebook" }); // older lead: remember who to message
+      for (const m of list) msgRows.push({ message_id: m.id, lead_id: leadId, direction: m.from?.id === self ? "out" : "in", text: (m.message || (m.attachments ? "[ไฟล์แนบ]" : "")).slice(0, 2000), sent_at: localStamp(m.created_time, i.tz), attachment_name: "" });
     });
     counts.messages = msgRows.length;
     if (leadRows.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leadRows, mode: "insert" });
@@ -182,7 +183,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
     const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
-    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" }, writes, counts, ...(warning ? { warning } : {}) };
+    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: isIg ? "done" : "comments" }, writes, counts, ...(warning ? { warning } : {}) };
   }
 
   if (i.state.phase === "comments") {

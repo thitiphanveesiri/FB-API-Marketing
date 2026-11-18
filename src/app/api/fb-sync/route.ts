@@ -12,14 +12,15 @@ export async function GET(req: Request) {
   await connection();
   const g = await adminOnly(req, false); if ("err" in g) return g.err;
   // never send tokens to the browser: only which Facebook pages are configured
-  return NextResponse.json({ ok: true, pages: (await fbSyncConfigs()).map((c) => ({ fbPageId: c.fbPageId, sheetPageId: c.sheetPageId ?? "", name: c.name ?? "" })) }, noStore);
+  const channels = await loadChannels().catch(() => []);
+  return NextResponse.json({ ok: true, pages: (await fbSyncConfigs()).map((c) => ({ fbPageId: c.fbPageId, sheetPageId: c.sheetPageId ?? "", name: c.name ?? "", instagram: channels.some((x) => x.channelId === `instagram:${c.fbPageId}` && x.channel === "instagram" && x.active && !!x.accountId) })) }, noStore);
 }
 
 export async function POST(req: Request) {
   await connection();
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
   try {
-    const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState };
+    const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState; channel?: string };
     const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId); if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่า (เชื่อมเพจในหน้า Upload ก่อน)");
     const ds = g.mapped.dataset;
     let sheetPageId = [b.sheetPageId, cfg.sheetPageId].find((id) => !!id && ds.pages.some((p) => p.id === id)) ?? "";
@@ -33,8 +34,10 @@ export async function POST(req: Request) {
       sheetPageId = made.id;
       if (made.created) invalidateCache();
     }
+    const igChannel = b.channel === "instagram" ? (await loadChannels()).find((x) => x.channelId === `instagram:${cfg.fbPageId}` && x.channel === "instagram" && x.active && x.accountId) : undefined;
+    if (b.channel === "instagram" && !igChannel) return fail(400, "เพจนี้ยังไม่ได้เชื่อม Instagram (เชื่อมเพจใหม่ในหน้า Upload — ต้องผูกบัญชี Instagram Business กับเพจก่อน)");
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
-    const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
+    const phase = (b.state?.phase === "comments" && b.channel !== "instagram") || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" ? b.state.chatList : undefined;
     const commentCursor = (value: unknown) => typeof value === "string" && /^[\w=+/.-]{1,400}$/.test(value) ? value : undefined;
@@ -58,6 +61,7 @@ export async function POST(req: Request) {
     const commentsFeedDone = typeof b.state?.commentsFeedDone === "boolean" ? b.state.commentsFeedDone : undefined;
     const commentBasic = b.state?.commentBasic === true ? true : undefined;
     const out = await syncStep({
+      ...(igChannel ? { channel: "instagram" as const, igId: igChannel.accountId } : {}),
       cfg,
       sheetPageId,
       days,
