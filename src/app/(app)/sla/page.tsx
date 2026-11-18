@@ -1,10 +1,11 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Download, Moon, Timer, TrafficCone } from "lucide-react";
+import Link from "next/link";
+import { Download, MessageSquare, Moon, Timer, TrafficCone } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { Badge, Btn, Card, DataTable, Drawer, EmptyState, KpiCard, Select, Column } from "@/components/ui";
+import { Badge, Card, DataTable, Drawer, EmptyState, KpiCard, Select, Column } from "@/components/ui";
 import FilterBar from "@/components/FilterBar";
-import { BAND_TH, ChatEvent, CommentEvent, RepSla, SLA_RULES, computeSla } from "@/lib/sla";
+import { BAND_TH, ChatEvent, RepSla, SLA_RULES, computeSla } from "@/lib/sla";
 import { nowStamp } from "@/lib/dates";
 
 const hm = (iso: string) => iso.slice(0, 10) + " " + iso.slice(11, 16);
@@ -21,7 +22,6 @@ export default function SlaPage() {
   const { data, user, filters } = useStore();
   const [repId, setRepId] = useState("all");
   const [open, setOpen] = useState<string | null>(null);
-  const [commentView, setCommentView] = useState<"all" | "late">("all");
   const isRep = user.role === "Sales Representative";
   const now = useMemo(() => nowStamp().slice(0, 16), []);
 
@@ -60,6 +60,7 @@ export default function SlaPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">ตรวจการตอบแชท</h1>
         <div className="ml-auto flex items-end gap-2">
+          {!isRep && <Link href="/comments" className="flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm hover:bg-gray-50"><MessageSquare size={14} /> คอมเมนต์ใต้โพสต์</Link>}
           {!isRep && <Select value={repId} onChange={setRepId} options={[{ value: "all", label: "เซลล์ทุกคน" }, ...data.users.filter((u) => u.role === "Sales Representative" && u.active).map((u) => ({ value: u.id, label: u.name }))]} />}
           <button onClick={exportAll} className="flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm hover:bg-gray-50"><Download size={14} /> ส่งออก CSV</button>
         </div>
@@ -98,14 +99,6 @@ export default function SlaPage() {
           <Card title="รายการที่ตอบช้า" subtitle={`${late.length} รายการในช่วงที่เลือก`}>
             <EventTable events={late} leadName={leadName} pageName={pageName} repName={repName} />
           </Card>
-
-          {!isRep && <Card title="คอมเมนต์ใต้โพสต์" subtitle={commentView === "late" ? `${res.commentEvents.filter((c) => c.late).length} คอมเมนต์ที่ตอบเกิน ${SLA_RULES.commentMinutes} นาที` : `ทั้งหมด ${res.commentEvents.length} คอมเมนต์ในช่วงที่เลือก`}
-            right={<div className="flex gap-1">
-              <Btn size="sm" variant={commentView === "all" ? "primary" : "secondary"} onClick={() => setCommentView("all")}>ทั้งหมด</Btn>
-              <Btn size="sm" variant={commentView === "late" ? "primary" : "secondary"} onClick={() => setCommentView("late")}>ตอบช้า</Btn>
-            </div>}>
-            <CommentTable events={commentView === "late" ? res.commentEvents.filter((c) => c.late) : res.commentEvents} pageName={pageName} />
-          </Card>}
         </>
       )}
 
@@ -132,17 +125,4 @@ function EventTable({ events, leadName, pageName, repName, all }: { events: Chat
     { key: "d", header: "ผล", align: "right", sort: (e) => e.deduct, render: (e) => (e.deduct ? <b className="text-red-500">−{pts(e.deduct)}</b> : e.late ? <span className="text-xs text-muted">สถิติ ไม่หัก</span> : e.nightReply ? <span className="text-xs text-muted">ตอบช่วงดึก</span> : "ทัน") },
   ];
   return <DataTable columns={cols} rows={events} rowKey={(e) => e.leadId + e.inAt} defaultSort={{ key: "t", dir: "desc" }} emptyTitle="ไม่มีรายการ" pageSize={8} />;
-}
-
-function CommentTable({ events, pageName }: { events: CommentEvent[]; pageName: (id: string) => string }) {
-  const cols: Column<CommentEvent>[] = [
-    { key: "t", header: "คอมเมนต์เมื่อ", sort: (e) => e.comment.at, render: (e) => hm(e.comment.at) },
-    { key: "c", header: "ผู้คอมเมนต์", sort: (e) => e.comment.commenter, render: (e) => e.comment.commenter || "—" },
-    { key: "x", header: "ข้อความ", render: (e) => <span className="block max-w-[280px] truncate text-muted" title={e.comment.text}>{e.comment.text || "—"}</span> },
-    { key: "p", header: "เพจ", render: (e) => pageName(e.comment.pageId) },
-    { key: "po", header: "โพสต์", render: (e) => e.comment.postId || "—" },
-    { key: "w", header: "ใช้เวลา", align: "right", sort: (e) => e.minutes, render: (e) => (e.open ? <Badge tone="red">ยังไม่ตอบ · {dur(e.minutes)}</Badge> : dur(e.minutes)) },
-    { key: "d", header: "ผล (ทุกคนในทีม)", align: "right", sort: (e) => e.deduct, render: (e) => (e.deduct ? <b className="text-red-500">−{pts(e.deduct)}</b> : e.late ? <span className="text-xs text-muted">ไม่หัก (นอกช่วงเวลา/วันหยุด)</span> : <span className="text-xs text-muted">ทัน</span>) },
-  ];
-  return <DataTable columns={cols} rows={events} rowKey={(e) => e.comment.id} defaultSort={{ key: "t", dir: "desc" }} emptyTitle="ไม่มีคอมเมนต์ในช่วงนี้" pageSize={8} />;
 }

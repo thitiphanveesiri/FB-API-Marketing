@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing } from "lucide-react";
+import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing, MessageSquare } from "lucide-react";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
@@ -17,6 +17,7 @@ const NAV = [
   { key: "settings", label: "Setting", href: "/settings", icon: Settings },
   { key: "quality", label: "Quality", href: "/quality", icon: ClipboardCheck },
   { key: "sla", label: "SLA", href: "/sla", icon: Timer },
+  { key: "comments", label: "Comments", href: "/comments", icon: MessageSquare },
   { key: "followup", label: "ติดตาม", href: "/followup", icon: BellRing },
 ];
 

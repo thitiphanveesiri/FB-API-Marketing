@@ -88,9 +88,9 @@ export const allLeadsFor = (d: Dataset, f: Filters, r: Range | null) => leadsFor
 export const roleCan = {
   nav(role: Role, path: string): boolean {
     const map: Record<Role, string[]> = {
-      Administrator: ["dashboard", "inbox", "board", "upload", "settings", "quality", "sla", "followup", "account"],
-      "Marketing Manager": ["dashboard", "upload", "quality", "account", "settings"],
-      "Sales Manager": ["dashboard", "inbox", "board", "quality", "sla", "followup", "account"],
+      Administrator: ["dashboard", "inbox", "board", "upload", "settings", "quality", "sla", "comments", "followup", "account"],
+      "Marketing Manager": ["dashboard", "upload", "quality", "comments", "account", "settings"],
+      "Sales Manager": ["dashboard", "inbox", "board", "quality", "sla", "comments", "followup", "account"],
       "Sales Representative": ["dashboard", "inbox", "board", "sla", "followup", "account"],
       Agency: ["dashboard", "account"],
       Viewer: ["dashboard", "account"],
