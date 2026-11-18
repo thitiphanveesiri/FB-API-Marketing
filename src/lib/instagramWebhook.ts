@@ -73,21 +73,25 @@ export function buildInstagramWrites(
   const writes: InstagramWrites = { newLeads: [], leadUpdates: [], messages: [] };
   const leads = dataset.leads.filter((lead) => lead.pageId === channel.sheetPageId && lead.channel === "instagram");
   const knownLeadIds = new Set(leads.map((lead) => lead.id));
+  const anywhere = new Map(dataset.leads.map((lead) => [lead.id, lead]));
   const leadByCustomer = new Map<string, string>();
   const latest = new Map<string, Row>();
   for (const event of [...events].sort((a, b) => a.at - b.at)) {
     let leadId = leadByCustomer.get(event.customerId);
     if (!leadId) {
       leadId = `IG-${channel.accountId}-${event.customerId}`;
+      const existing = anywhere.get(leadId);
       if (!knownLeadIds.has(leadId)) {
         knownLeadIds.add(leadId);
-        const name = event.username ? `@${event.username}` : `Instagram user ${event.customerId.slice(-4)}`;
-        const stamp = localStamp(new Date(event.at).toISOString(), timezone);
-        writes.newLeads.push({
-          lead_id: leadId, name, page_id: channel.sheetPageId, ad_id: event.adId ?? "", assigned_to: "",
-          status: event.out ? "Average" : "Not Responded", quality: event.out ? "Average" : "Not Responded",
-          valid: true, created_at: stamp.slice(0, 10), phone: "", email: "", unread: !event.out, channel: "instagram",
-        });
+        if (!existing) {
+          const name = event.username ? `@${event.username}` : `Instagram user ${event.customerId.slice(-4)}`;
+          const stamp = localStamp(new Date(event.at).toISOString(), timezone);
+          writes.newLeads.push({
+            lead_id: leadId, name, page_id: channel.sheetPageId, ad_id: event.adId ?? "", assigned_to: "",
+            status: event.out ? "Average" : "Not Responded", quality: event.out ? "Average" : "Not Responded",
+            valid: true, created_at: stamp.slice(0, 10), phone: "", email: "", unread: !event.out, channel: "instagram",
+          });
+        }
       }
       leadByCustomer.set(event.customerId, leadId);
     }
@@ -97,8 +101,10 @@ export function buildInstagramWrites(
       sender_type: event.out ? "unknown" : "customer", sender_app: "", text: event.text,
       sent_at: stamp, attachment_name: "",
     });
+    const existing = anywhere.get(leadId);
     latest.set(leadId, {
       lead_id: leadId, last_contact_at: stamp, last_message: event.text.slice(0, 300), unread: !event.out,
+      ...(existing && existing.pageId !== channel.sheetPageId ? { page_id: channel.sheetPageId } : {}),
     });
   }
   writes.leadUpdates.push(...latest.values());

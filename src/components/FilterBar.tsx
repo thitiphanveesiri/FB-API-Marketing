@@ -36,7 +36,7 @@ export default function FilterBar({ hide = [] }: { hide?: ("rep" | "adStatus")[]
         </div>
         <TextInput label="Start date" type="date" max={ANCHOR} value={filters.start} onChange={(e) => e.target.value && setFilters({ start: e.target.value })} error={dateErr} className="w-36" />
         <TextInput label="End date" type="date" max={ANCHOR} value={filters.end} onChange={(e) => e.target.value && setFilters({ end: e.target.value })} className="w-36" />
-        <Select label="Facebook Page" value={filters.pageId} onChange={(v) => setFilters({ pageId: v, campaignId: "all" })} className="w-44"
+        <Select label="Page" value={filters.pageId} onChange={(v) => setFilters({ pageId: v, campaignId: "all" })} className="w-44"
           options={[{ value: "all", label: "All Pages" }, ...data.pages.map((p) => ({ value: p.id, label: p.name }))]} />
         <Select label="Campaign" value={filters.campaignId} onChange={(v) => setFilters({ campaignId: v })} className="w-44"
           options={[{ value: "all", label: "All Campaigns" }, ...camps.map((c) => ({ value: c.id, label: c.name }))]} />

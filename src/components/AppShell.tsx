@@ -122,7 +122,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
           <label className="ml-1 hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-sm md:flex">
             <Facebook size={15} className="text-[#1877f2]" aria-hidden />
-            <span className="sr-only">Facebook Page</span>
+            <span className="sr-only">Page</span>
             <select value={filters.pageId} onChange={(e) => setFilters({ pageId: e.target.value })} className="max-w-[190px] bg-transparent py-0.5 text-sm font-medium focus:outline-none">
               <option value="all">All Pages</option>
               {pagesForUser.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}

@@ -3,7 +3,7 @@ import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { fbSyncConfigs, loadChannels } from "@/lib/channels";
-import { ensureSystemPage, fetchPageName } from "@/lib/autoPage";
+import { ensureIgSystemPage, ensureSystemPage, fetchPageName } from "@/lib/autoPage";
 import { FbError, MAX_COMMENT_POSTS_PER_BATCH, syncStep, type SyncState } from "@/lib/fbSync";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 
@@ -42,8 +42,22 @@ export async function POST(req: Request) {
       sheetPageId = made.id;
       if (made.created) invalidateCache();
     }
-    const igChannel = b.channel === "instagram" ? (await loadChannels()).find((x) => x.channelId === `instagram:${cfg.fbPageId}` && x.channel === "instagram" && x.active && x.accountId) : undefined;
+    const channelsNow = await loadChannels();
+    const igChannel = b.channel === "instagram" ? channelsNow.find((x) => x.channelId === `instagram:${cfg.fbPageId}` && x.channel === "instagram" && x.active && x.accountId) : undefined;
+    const previousSheetPageId = igChannel?.sheetPageId && ds.pages.some((p) => p.id === igChannel.sheetPageId) ? igChannel.sheetPageId : sheetPageId;
     if (b.channel === "instagram" && !igChannel) return fail(400, "เพจนี้ยังไม่ได้เชื่อม Instagram (เชื่อมเพจใหม่ในหน้า Upload — ต้องผูกบัญชี Instagram Business กับเพจก่อน)");
+    if (igChannel) {
+      // Instagram lives in its own page row, so the Page filter can show it separately from the Facebook page
+      const igPage = await ensureIgSystemPage({
+        pages: ds.pages,
+        channels: channelsNow,
+        fbPageId: cfg.fbPageId,
+        igAccountId: igChannel.accountId,
+        name: cfg.name || (await fetchPageName(cfg.fbPageId, cfg.token)),
+      });
+      sheetPageId = igPage.id;
+      if (igPage.created) invalidateCache();
+    }
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = (b.state?.phase === "comments" && b.channel !== "instagram") || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
@@ -69,7 +83,7 @@ export async function POST(req: Request) {
     const commentsFeedDone = typeof b.state?.commentsFeedDone === "boolean" ? b.state.commentsFeedDone : undefined;
     const commentBasic = b.state?.commentBasic === true ? true : undefined;
     const out = await syncStep({
-      ...(igChannel ? { channel: "instagram" as const, igId: igChannel.accountId } : {}),
+      ...(igChannel ? { channel: "instagram" as const, igId: igChannel.accountId, legacyPageId: previousSheetPageId } : {}),
       cfg,
       sheetPageId,
       days,

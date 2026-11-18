@@ -90,7 +90,7 @@ interface FbConv { id: string; updated_time: string; participants?: { data?: FbP
 interface FbComment { id: string; from?: FbPerson; message?: string; created_time: string; comments?: { data?: { from?: FbPerson; created_time: string }[] } }
 interface FbPost { id: string; permalink_url?: string; comments?: { summary?: { total_count?: number } } }
 
-export interface SyncInput { channel?: "instagram"; igId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
+export interface SyncInput { channel?: "instagram"; igId?: string; legacyPageId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
 
 export const MAX_COMMENT_POSTS_PER_BATCH = 50;
@@ -156,6 +156,14 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const byName = new Map<string, string | null>(); // lower-cased name → lead id (null when two leads share the name)
     if (!isIg) for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); } // Instagram chats are never merged by name (the same person may also write on Facebook)
 
+    // Instagram used to be filed under the Facebook page: on the first pull into the Instagram page, re-home those leads
+    // so the conversation moves with its messages instead of being duplicated.
+    const elsewhere = isIg ? new Map(i.ds.leads.map((l) => [l.id, l])) : null;
+    const movedRows = new Map<string, SyncWrite["rows"][number]>();
+    // every Instagram lead that still sits on the paired Facebook page moves over (also older chats outside the pull window)
+    if (isIg && i.legacyPageId && i.legacyPageId !== i.sheetPageId) {
+      for (const l of i.ds.leads) if (l.pageId === i.legacyPageId && l.channel === "instagram") movedRows.set(l.id, { lead_id: l.id, page_id: i.sheetPageId });
+    }
     const leadRows: SyncWrite["rows"] = []; const msgRows: SyncWrite["rows"] = []; const psidRows = new Map<string, SyncWrite["rows"][number]>();
     const lists = await Promise.all(fresh.map(async (c) => {
       const all: FbMsg[] = []; let after: string | undefined;
@@ -181,6 +189,12 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       const customer = (c.participants?.data ?? []).find((p) => p.id !== self && p.id !== fb) ?? list.find((m) => m.from?.id && m.from.id !== self && m.from.id !== fb)?.from;
       const name = customer?.name?.trim() || list.find((m) => m.from?.id && m.from.id !== self && m.from.id !== fb)?.from?.name?.trim() || (isIg ? "ลูกค้า Instagram" : "ลูกค้า Facebook");
       let leadId = byId.has(c.id) ? c.id : byName.get(name.toLowerCase()) ?? "";
+      const found = !leadId ? elsewhere?.get(c.id) : undefined;
+      const moved = found?.channel === "instagram" ? found : undefined;
+      if (moved) {
+        leadId = moved.id; byId.add(leadId);
+        if (moved.pageId !== i.sheetPageId) movedRows.set(leadId, { lead_id: leadId, page_id: i.sheetPageId });
+      }
       if (!leadId) {
         leadId = c.id; byId.add(leadId); counts.newLeads++;
         const last = list[list.length - 1], repliedByPage = list.some((m) => m.from?.id === self);
@@ -193,6 +207,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     if (leadRows.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leadRows, mode: "insert" });
     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
     if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
+    if (movedRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...movedRows.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
     const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: isIg ? "done" : "comments" }, writes, counts, ...(warning ? { warning } : {}) };

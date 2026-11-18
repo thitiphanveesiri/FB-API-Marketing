@@ -14,7 +14,7 @@ export const fail = (status: number, message: string, extra: object = {}) => Nex
 async function readMapped(): Promise<{ mapped: MapResult } | { err: NextResponse }> {
   const hit = getCached(); if (hit) return { mapped: hit };
   try { const mapped = mapSheets(await readTabs()); setCached(mapped); return { mapped }; }
-  catch (e) { const m = e instanceof Error ? e.message : ""; const quota = /\b429\b/.test(m); return { err: fail(quota ? 429 : 502, quota ? "Google Sheets จำกัดจำนวนคำขอ — รอสักครู่แล้วระบบจะลองต่อ" : "อ่านข้อมูลจาก Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง", { rateLimited: quota }) }; }
+  catch (e) { const m = e instanceof Error ? e.message : ""; const quota = /\b429\b/.test(m); return { err: fail(quota ? 429 : 502, quota ? "Google Sheets จำกัดจำนวนคำขอ — รอสักครู่แล้วระบบจะลองต่อ" : `อ่านข้อมูลจาก Google Sheet ไม่สำเร็จ ลองใหม่อีกครั้ง${m ? ` (${m.replace(/EAA[\w-]{20,}/g, "…").slice(0, 140)})` : ""}`, { rateLimited: quota }) }; }
 }
 
 export async function adminOnly(req: Request, write: boolean): Promise<{ err: NextResponse } | { mapped: MapResult }> {

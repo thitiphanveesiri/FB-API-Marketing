@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
@@ -29,6 +29,7 @@ export default function FbSyncCard() {
   const [pages, setPages] = useState<Cfg[] | null>(null);
   const [which, setWhich] = useState("all"); const [days, setDays] = useState("7");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<Totals | null>(null);
+  const [checking, setChecking] = useState(false);
   const [ads, setAds] = useState<Acct[]>([]); const [withAds, setWithAds] = useState(true); const [adsDone, setAdsDone] = useState<AdsTotals | null>(null);
   const [cfgError, setCfgError] = useState(""); const [acctError, setAcctError] = useState("");
   const stop = useRef(false);
@@ -88,9 +89,20 @@ export default function FbSyncCard() {
       setDone(tot);
       const notes = [...(tot.warnings ?? []), ...(adsTot.warnings ?? [])];
       const warning = notes.length ? ` หมายเหตุ: ${notes.join(" · ")}` : "";
-      setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
+      setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้) · กด “ตรวจสอบการเชื่อมต่อ” เพื่อดูว่า Sheet หรือโทเคนเพจมีปัญหา` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }
+  };
+  /** Tells which connection is broken (Sheet / page token / Instagram) before - or instead of - guessing why a pull answered 502. */
+  const checkConnections = async () => {
+    setChecking(true); setLog("กำลังตรวจสอบการเชื่อมต่อ (Google Sheet + โทเคนเพจ + Instagram)…");
+    try {
+      const r = await fetch("/api/fb-sync/health", { cache: "no-store" });
+      const j = await readSyncResponse(r);
+      setLog(j.ok ? j.message || "ตรวจสอบเสร็จแล้ว" : `ตรวจสอบไม่สำเร็จ: ${j.message || `HTTP ${r.status}`}`);
+    } catch (e) {
+      setLog(`ตรวจสอบไม่สำเร็จ: ${e instanceof Error ? e.message : "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้"}`);
+    } finally { setChecking(false); }
   };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string, channel?: "instagram") => {
     let state: { phase: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
@@ -130,7 +142,8 @@ export default function FbSyncCard() {
           <div className="flex flex-wrap items-end gap-2">
             {pages.length > 1 && <Select label="เพจ Facebook" value={which} onChange={setWhich} options={[{ value: "all", label: `ทุกเพจ (${pages.length})` }, ...resolved.map((r) => ({ value: r.fb, label: r.label }))]} disabled={busy} />}
             <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "3", label: "3 วัน" }, { value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }]} disabled={busy} />
-            <Btn variant="primary" onClick={() => void run()} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : which === "all" && pages.length > 1 ? "ดึงข้อมูลทั้งหมด" : "ดึงข้อมูลตอนนี้"}</Btn>
+            <Btn variant="primary" onClick={() => void run()} disabled={busy || checking}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : which === "all" && pages.length > 1 ? "ดึงข้อมูลทั้งหมด" : "ดึงข้อมูลตอนนี้"}</Btn>
+            <Btn onClick={() => void checkConnections()} disabled={busy || checking}><ShieldCheck size={14} className={checking ? "animate-pulse" : ""} /> {checking ? "กำลังตรวจสอบ…" : "ตรวจสอบการเชื่อมต่อ"}</Btn>
             {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
           </div>
           {acctError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">อ่านรายการบัญชีโฆษณาไม่สำเร็จ: {acctError} (แชทและคอมเมนต์ยังดึงได้ตามปกติ)</p>}

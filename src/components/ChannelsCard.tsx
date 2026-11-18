@@ -192,6 +192,7 @@ export default function ChannelsCard() {
             <label className="block text-xs font-medium text-muted">App Secret (Meta App → Settings → Basic){editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
               <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} className={`${inp} mt-1`} /></label>
             <Select label="เก็บแชทเข้าเพจในระบบ" value={fbDest} onChange={setFbDest} options={[{ value: "", label: "อัตโนมัติ — ตามเพจ Facebook นี้" }, ...data.pages.filter((page) => page.active).map((page) => ({ value: page.id, label: page.name }))]} />
+            <p className="text-xs text-muted">Instagram ที่ผูกกับเพจนี้จะถูกเก็บในเพจแยก “ชื่อเพจ (Instagram)” เพื่อกรองดูแชท IG แยกจาก Facebook</p>
             {choices.length > 0 && <Select label="เลือกเพจ Facebook ที่จะเชื่อม" value={fbPageId} onChange={setFbPageId} options={[{ value: "", label: "— เลือกเพจ —" }, ...choices.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))]} />}
             {msg && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{msg}</p>}
             <div className="flex gap-2"><Btn variant="primary" onClick={save} disabled={busy || (!editing && !token) || (choices.length > 0 && !fbPageId)}>{busy ? "กำลังตรวจสอบ…" : "บันทึกและเชื่อมต่อ"}</Btn>{editing !== null && <Btn onClick={() => { setEditing(null); setMsg(""); }}>ยกเลิก</Btn>}</div>

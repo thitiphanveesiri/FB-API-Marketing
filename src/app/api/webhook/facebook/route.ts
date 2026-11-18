@@ -1,6 +1,6 @@
 import { after, connection, NextResponse } from "next/server";
 import { defaultVerifyToken, loadChannels } from "@/lib/channels";
-import { ensureSystemPage } from "@/lib/autoPage";
+import { ensureIgSystemPage, ensureSystemPage } from "@/lib/autoPage";
 import { buildWrites, parseEvents, signatureOk } from "@/lib/fbWebhook";
 import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
 import { readTabs } from "@/lib/googleSheets";
@@ -52,9 +52,12 @@ export async function POST(req: Request) {
         : facebookEvents?.filter((event) => event.pageId === ch.accountId) ?? [];
       if (!mine.length) continue;
       const linkedPageId = ch.channel === "instagram" ? ch.channelId.slice("instagram:".length) : ch.accountId;
-      const sheetPageId = mapped.dataset.pages.some((page) => page.id === ch.sheetPageId)
-        ? ch.sheetPageId
-        : (await ensureSystemPage({ pages: mapped.dataset.pages, channels, fbPageId: linkedPageId, name: ch.name })).id;
+      // Instagram has its own page row, so live messages land on the Instagram page instead of the Facebook one
+      const sheetPageId = ch.channel === "instagram"
+        ? (await ensureIgSystemPage({ pages: mapped.dataset.pages, channels, fbPageId: linkedPageId, igAccountId: ch.accountId, name: channels.find((c) => c.channelId === `facebook:${linkedPageId}`)?.name || ch.name })).id
+        : mapped.dataset.pages.some((page) => page.id === ch.sheetPageId)
+          ? ch.sheetPageId
+          : (await ensureSystemPage({ pages: mapped.dataset.pages, channels, fbPageId: linkedPageId, name: ch.name })).id;
       const w = ch.channel === "instagram"
         ? buildInstagramWrites(mine as Parameters<typeof buildInstagramWrites>[0], { accountId: ch.accountId, sheetPageId }, mapped.dataset, tz)
         : await buildWrites(mine as Parameters<typeof buildWrites>[0], { ...ch, sheetPageId }, mapped.dataset, tz, async (psid) => {

@@ -8,7 +8,7 @@ import { inspectToken, TokenError, type TokenInfo } from "@/lib/fbToken";
 import { extendUserToken, type ExtendResult } from "@/lib/metaExtend";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { upsertRows } from "@/lib/sheetsWrite";
-import { ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
+import { ensureIgSystemPage, ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
 import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 60;
@@ -153,11 +153,13 @@ export async function POST(req: Request) {
     const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
     const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
     if (instagram) {
+      const igPage = await ensureIgSystemPage({ pages: g.mapped.dataset.pages, channels: all, fbPageId: accountId, igAccountId: instagram.id, name, remember: false });
       await saveChannel({
         channelId: `instagram:${accountId}`, channel: "instagram", accountId: instagram.id,
         name: instagram.username ? `@${instagram.username}` : instagram.id, accessToken: pageToken,
-        appSecret, verifyToken, sheetPageId, active: true,
+        appSecret, verifyToken, sheetPageId: igPage.id, active: true,
       });
+      if (igPage.created) invalidateCache();
     } else if (instagramLookup.status === "none") {
       const previousInstagram = all.find((item) => item.channelId === `instagram:${accountId}`);
       if (previousInstagram?.active) await upsertRows("channels", ["channel_id"], [{ channel_id: previousInstagram.channelId, active: false, updated_at: new Date().toISOString() }], "upsert");
@@ -233,11 +235,13 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
       const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
       const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
       if (instagram) {
+        const igPage = await ensureIgSystemPage({ pages: systemPages, channels: all, fbPageId: page.id, igAccountId: instagram.id, name: page.name, remember: false });
+        if (igPage.created) invalidateCache();
         await saveChannel({
           channelId: `instagram:${page.id}`, channel: "instagram", accountId: instagram.id,
           name: instagram.username ? `@${instagram.username}` : instagram.id, accessToken: page.token,
           appSecret: secret, verifyToken: previous?.verifyToken || defaultVerifyToken() || newVerifyToken(),
-          sheetPageId: pick.id, active: true,
+          sheetPageId: igPage.id, active: true,
         });
       } else if (instagramLookup.status === "none") {
         const previousInstagram = all.find((item) => item.channelId === `instagram:${page.id}`);
