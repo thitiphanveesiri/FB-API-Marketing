@@ -63,7 +63,7 @@ export async function GET(req: Request) {
   await connection();
   const g = await adminOnly(req, false); if ("err" in g) return g.err;
   try {
-    const list = (await loadChannels(true)).map(toPublic);
+    const list = (await loadChannels()).map(toPublic);
     const verifyToken = list.find((c) => (c.channel === "facebook" || c.channel === "instagram") && c.active && c.verifyToken)?.verifyToken || defaultVerifyToken();
     const webhookUrl = `${origin(req)}/api/webhook/facebook`;
     return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: webhookUrl, instagram: webhookUrl } }, noStore);

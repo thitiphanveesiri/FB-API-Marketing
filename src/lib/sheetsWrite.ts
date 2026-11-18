@@ -2,7 +2,7 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { applyPlan, norm, Obj, planUpsert, UpsertMode } from "./sheetOps";
 import { SHEET_TABS } from "./sheetSchema";
-import { accessToken, forgetSheetTitles, sheetTitles, sheetsFetch } from "./googleSheets";
+import { accessToken, forgetSheetTitles, getCachedTabs, patchCachedTab, sheetTitles, sheetsFetch } from "./googleSheets";
 
 export interface WriteResult { updated: number; appended: number; skipped: number }
 let chain: Promise<unknown> = Promise.resolve();
@@ -34,9 +34,11 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
     };
     // find the real tab title (case-insensitive) or create it
     let title = (await sheetTitles(auth)).find((t) => t.trim().toLowerCase() === tab) ?? (await sheetTitles(auth, true)).find((t) => t.trim().toLowerCase() === tab); // not in the remembered list: look again before creating
-    let grid: string[][] = [];
+    // The rows were already read for this request (gate/channel list): plan from that copy instead of downloading the whole tab again.
+    const reused = title ? getCachedTabs()?.[tab] : undefined;
+    let grid: string[][] = reused ?? [];
     if (!title) { await call(`${base}:batchUpdate`, { method: "POST", body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) }); title = tab; forgetSheetTitles(); }
-    else grid = ((await call(`${base}/values/${encodeURIComponent(A1(title))}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`)) as { values?: (string | number | boolean)[][] }).values?.map((r) => r.map((c) => String(c))) ?? [];
+    else if (!reused) grid = ((await call(`${base}/values/${encodeURIComponent(A1(title))}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`)) as { values?: (string | number | boolean)[][] }).values?.map((r) => r.map((c) => String(c))) ?? [];
     const plan = planUpsert(grid, keyCols, objs, mode);
     const data: { range: string; values: unknown[][] }[] = [];
     for (const h of plan.headerAdds) data.push({ range: `${A1(title)}!${colLetter(h.col)}1`, values: [[h.name]] });
@@ -44,6 +46,7 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
     for (let i = 0; i < data.length; i += 500) await call(`${base}/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 500) }) });
     for (let i = 0; i < plan.appends.length; i += 1000)
       await call(`${base}/values/${encodeURIComponent(`${A1(title)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: plan.appends.slice(i, i + 1000) }) });
+    if (reused) patchCachedTab(tab, applyPlan(grid, plan));
     return { updated: plan.updated, appended: plan.appended, skipped: plan.skipped };
   });
 }

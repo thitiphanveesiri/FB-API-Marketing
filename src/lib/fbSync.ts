@@ -226,8 +226,10 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     counts.messages = msgRows.length;
     if (leadRows.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leadRows, mode: "insert" });
     if (msgRows.length) writes.push({ tab: "messages", keyCols: ["message_id"], rows: msgRows, mode: "insert" });
-    if (psidRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...psidRows.values()], mode: "updateOnly" });
-    if (movedRows.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...movedRows.values()], mode: "updateOnly" });
+    // both are edits to the same lead rows: one write instead of two keeps the Sheets quota use down
+    const leadUpdates = new Map(movedRows);
+    for (const [id, row] of psidRows) leadUpdates.set(id, { ...leadUpdates.get(id), ...row });
+    if (leadUpdates.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...leadUpdates.values()], mode: "updateOnly" });
     const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
     const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: isIg ? "done" : "comments" }, writes, counts, ...(warning ? { warning } : {}) };

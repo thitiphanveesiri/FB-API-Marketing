@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const channel = channelOf(lead);
     if (channel !== "facebook" && channel !== "instagram") return fail(400, "ช่องทางนี้ยังตอบจากระบบไม่ได้");
     if (channel === "instagram" && Buffer.byteLength(text, "utf8") >= 1000) return fail(400, "ข้อความ Instagram ต้องสั้นกว่า 1,000 ไบต์");
-    const channels = await loadChannels(true);
+    const channels = await loadChannels();
     const ch = channel === "instagram"
       ? channels.find((item) => item.channel === "instagram" && item.active && item.accessToken && (item.sheetPageId === lead.pageId || item.channelId === `instagram:${lead.pageId}`) && instagramRecipientOf(lead.id, item.accountId) !== null)
       : channels.find((item) => item.channel === "facebook" && item.active && item.accessToken && item.sheetPageId === lead.pageId);

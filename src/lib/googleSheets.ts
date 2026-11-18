@@ -52,16 +52,16 @@ export async function accessToken(write = false): Promise<string> {
   return j.access_token;
 }
 
-/** GET that waits and retries a few times when Google answers 429 (per-minute read quota), so a short burst does not fail the whole request. */
-export async function sheetsFetch(url: string, init: RequestInit, tries = 3): Promise<Response> {
+/** GET that waits and retries when Google answers 429 (per-minute quota), so a short burst does not fail the whole request. */
+export async function sheetsFetch(url: string, init: RequestInit, tries = 4): Promise<Response> {
   for (let n = 1; ; n++) {
     const r = await fetch(url, init);
     if (r.status !== 429 || n >= tries) return r;
-    await new Promise((res) => setTimeout(res, 1500 * n));
+    const retryAfter = Number(r.headers.get("retry-after")) || 0;
+    await new Promise((res) => setTimeout(res, Math.min(6000, retryAfter ? retryAfter * 1000 : 1200 * 2 ** (n - 1))));
   }
 }
-let titleCache: { at: number; titles: string[] } | null = null;
-/** Tab names of the spreadsheet, remembered for 10 minutes (tabs almost never change) — saves one API call on every read and write. */
+let titleCache: { at: number; titles: string[] } | null = null;/** Tab names of the spreadsheet, remembered for 10 minutes (tabs almost never change) — saves one API call on every read and write. */
 export async function sheetTitles(auth: Record<string, string>, force = false): Promise<string[]> {
   if (!force && titleCache && Date.now() - titleCache.at < 600_000) return titleCache.titles;
   const meta = await sheetsFetch(`https://sheets.googleapis.com/v4/spreadsheets/${process.env.GOOGLE_SHEET_ID}?fields=sheets.properties.title`, { headers: auth, cache: "no-store" });
@@ -72,9 +72,27 @@ export async function sheetTitles(auth: Record<string, string>, force = false): 
 }
 export const forgetSheetTitles = () => { titleCache = null; };
 
+/** The gate, the channel list and the writer all read the same sheet inside one request: share one batchGet for a few seconds
+ *  instead of downloading every tab several times per sync batch (the Sheets API allows only 60 calls per minute). */
+export const TABS_TTL_MS = Number(process.env.SHEET_READ_CACHE_MS) || 15_000;
+let tabCache: { at: number; tabs: RawTabs } | null = null;
+let tabInflight: Promise<RawTabs> | null = null;
+export const getCachedTabs = () => (tabCache && Date.now() - tabCache.at < TABS_TTL_MS ? tabCache.tabs : null);
+export const invalidateTabs = () => { tabCache = null; };
+/** A write already knows the new rows: keep the cached copy usable without granting another read. */
+export const patchCachedTab = (tab: string, grid: string[][]) => { if (tabCache) tabCache = { at: tabCache.at, tabs: { ...tabCache.tabs, [tab]: grid } }; };
+
 /** Reads every known tab that exists in the spreadsheet. Missing optional tabs are simply absent from the result. */
-export async function readTabs(): Promise<RawTabs> {
+export async function readTabs(fresh = false): Promise<RawTabs> {
   if (process.env.SHEETS_LOCAL_JSON) return JSON.parse(await readFile(process.env.SHEETS_LOCAL_JSON, "utf8")) as RawTabs; // dev/testing only
+  if (!fresh) { const hit = getCachedTabs(); if (hit) return hit; if (tabInflight) return tabInflight; }
+  const run = readTabsRemote();
+  if (!fresh) tabInflight = run;
+  try { const tabs = await run; tabCache = { at: Date.now(), tabs }; return tabs; }
+  finally { if (tabInflight === run) tabInflight = null; }
+}
+
+async function readTabsRemote(): Promise<RawTabs> {
   const id = process.env.GOOGLE_SHEET_ID!;
   const auth = { Authorization: `Bearer ${await accessToken()}` };
   const titles = await sheetTitles(auth);

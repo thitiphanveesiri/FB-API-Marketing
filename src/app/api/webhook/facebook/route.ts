@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   if (q.get("hub.mode") !== "subscribe") return text("bad request", 400);
   const t = q.get("hub.verify_token") ?? "", def = defaultVerifyToken();
   if (t && def && t === def) return text(q.get("hub.challenge") ?? "", 200); // works before any page is connected
-  const ch = (await loadChannels(true).catch(() => [])).filter((c) => (c.channel === "facebook" || c.channel === "instagram") && c.active && c.verifyToken);
+  const ch = (await loadChannels().catch(() => [])).filter((c) => (c.channel === "facebook" || c.channel === "instagram") && c.active && c.verifyToken);
   if (t && ch.some((c) => c.verifyToken === t)) return text(q.get("hub.challenge") ?? "", 200);
   return text("forbidden", 403);
 }

@@ -1,6 +1,6 @@
 // SERVER ONLY. Chat-channel connections (tokens live in the Google Sheet "channels" tab; they are never sent to the browser).
 import { createHmac, randomBytes } from "crypto";
-import { readTabs } from "./googleSheets";
+import { invalidateTabs, readTabs } from "./googleSheets";
 import { upsertRows } from "./sheetsWrite";
 import { fbConfigs, type FbPageCfg } from "./fbSync";
 
@@ -14,7 +14,7 @@ export const invalidateChannels = () => { cache = null; };
 
 export async function loadChannels(fresh = false): Promise<Channel[]> {
   if (!fresh && cache && Date.now() - cache.at < TTL) return cache.list;
-  const grid = (await readTabs()).channels ?? [];
+  const grid = (await readTabs(fresh)).channels ?? [];
   const head = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
   const at = (r: string[], n: string) => { const i = head.indexOf(n); return i < 0 ? "" : String(r[i] ?? "").trim(); };
   const list = grid.slice(1).filter((r) => at(r, "channel_id")).map((r): Channel => ({
@@ -54,6 +54,7 @@ export async function saveChannel(c: Partial<Channel> & { channelId: string; cha
   if (c.active !== undefined) row.active = c.active;
   await upsertRows("channels", ["channel_id"], [row], "upsert");
   invalidateChannels();
+  invalidateTabs(); // the cached copy of the sheet still has the old channel row
 }
 
 /** Facebook pages usable for backfilling (Upload connections first, env variables as fallback). A sheet read error is thrown, not hidden:
