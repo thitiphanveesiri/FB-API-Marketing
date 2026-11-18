@@ -9,10 +9,11 @@ import { extendUserToken, type ExtendResult } from "@/lib/metaExtend";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { ensureSystemPage, pickSystemPage } from "@/lib/autoPage";
+import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 60;
-const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v21.0`;
-const INSTAGRAM_GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/v27.0`;
+const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/${metaApiVersion()}`;
+const INSTAGRAM_GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/${metaApiVersion("v27.0")}`;
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
 

@@ -12,15 +12,27 @@ export default function AdsSyncCard() {
   const { user, reloadData, toast } = useStore();
   const [accts, setAccts] = useState<Acct[] | null>(null); const [ch, setCh] = useState(""); const [days, setDays] = useState("30");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<AdsTotals | null>(null);
+  const [acctError, setAcctError] = useState("");
   const stop = useRef(false);
 
   useEffect(() => {
     if (user.role !== "Administrator") return;
     let live = true;
-    fetch("/api/ads-sync", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (!live) return; const a: Acct[] = j.ok ? j.accounts : []; setAccts(a); if (a[0]) setCh(a[0].channelId); }).catch(() => live && setAccts([]));
+    fetch("/api/ads-sync", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (!live) return;
+      const a: Acct[] = j.ok ? j.accounts : [];
+      setAccts(a); if (a[0]) setCh(a[0].channelId);
+      setAcctError(j.ok ? "" : j.message || "อ่านรายการบัญชีโฆษณาไม่สำเร็จ");
+    }).catch((e) => { if (live) { setAccts([]); setAcctError(e instanceof Error ? `เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ: ${e.message}` : "อ่านรายการบัญชีโฆษณาไม่สำเร็จ"); } });
     return () => { live = false; };
   }, [user.role]);
-  if (user.role !== "Administrator" || !accts || accts.length === 0) return null;
+  if (user.role !== "Administrator" || !accts) return null;
+  if (acctError) return (
+    <Card title="ดึงข้อมูลโฆษณาจาก Meta โดยตรง">
+      <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{acctError}</p>
+    </Card>
+  );
+  if (accts.length === 0) return null;
 
   const run = async () => {
     stop.current = false; setBusy(true); setDone(null);

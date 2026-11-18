@@ -1,6 +1,8 @@
 // Works out what kind of access token the admin pasted. A Page token answers GET /me?fields=category; a USER token makes Graph answer
 // "(#100) Tried accessing nonexisting field (category)" because the User node has no such field. We turn that into a helpful result:
 // for a user token we list the pages it manages (GET /me/accounts) and hand back each page's own token.
+import { metaApiVersion } from "./metaApi";
+
 type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 interface G { id?: string; name?: string; category?: string; data?: { id?: string; name?: string; access_token?: string }[]; error?: { message?: string; code?: number } }
 
@@ -13,7 +15,7 @@ const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_
 
 export async function inspectToken(token: string, base = "https://graph.facebook.com", f: FetchFn = (u) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>): Promise<TokenInfo> {
   const call = async (path: string, fields: string) => {
-    const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ fields, limit: "100", access_token: token })}`);
+    const r = await f(`${base}/${metaApiVersion()}/${path}?${new URLSearchParams({ fields, limit: "100", access_token: token })}`);
     return { r, j: ((await r.json().catch(() => ({}))) ?? {}) as G };
   };
   const first = await call("me", "id,name,category");

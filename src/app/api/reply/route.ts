@@ -8,6 +8,7 @@ import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { roleCan } from "@/lib/queries";
 import { instagramRecipientOf } from "@/lib/instagramWebhook";
+import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 30;
 
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
     const psid = instagram ?? await psidOf(lead.id, ch.accountId, ch.accessToken, base, lead.fbUserId);
     const mid = await sendText({
       pageId, token: ch.accessToken, psid, text, base, channel,
-      ...(channel === "instagram" ? { apiVersion: "v27.0" } : {}),
+      ...(channel === "instagram" ? { apiVersion: metaApiVersion("v27.0") } : {}),
     });
 
     const at = localStamp(new Date().toISOString(), tz);

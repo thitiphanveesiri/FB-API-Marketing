@@ -2,6 +2,7 @@
 // Pure apart from the injected fetch, so it can be tested without Meta. One call = one small batch (Vercel time limits).
 import type { Dataset } from "./dataset";
 import type { UpsertMode } from "./sheetOps";
+import { metaApiVersion } from "./metaApi";
 
 export interface FbPageCfg { fbPageId: string; token: string; sheetPageId?: string; name?: string }
 export type Phase = "chats" | "comments" | "done";
@@ -65,7 +66,7 @@ export const metaFetch: FetchFn = async (u) => {
  *  failed once will fail again, and every repeat eats the time budget). */
 export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900, retries = 2): Promise<Graph> {
   for (let attempt = 0; ; attempt++) {
-    const r = await f(`${base}/v21.0/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
+    const r = await f(`${base}/${metaApiVersion()}/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
     const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
     if (r.ok && !j.error) return j;
     const code = j.error?.code;

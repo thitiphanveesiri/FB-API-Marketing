@@ -1,6 +1,8 @@
 // SERVER ONLY. A token made in Graph API Explorer lives 1–2 hours, and so do the Page tokens taken from it. Exchanging it for a long-lived
 // USER token first (≈60 days) makes /me/accounts hand out Page tokens that never expire. Needs the app's id (found from the token itself)
 // and its App Secret. Never throws: on any problem the original token is returned together with a note saying why it was not extended.
+import { metaApiVersion } from "./metaApi";
+
 type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 interface G { id?: string; access_token?: string; expires_in?: number; error?: { message?: string; code?: number } }
 export interface ExtendResult { token: string; extended: boolean; days?: number; note: string }
@@ -11,7 +13,7 @@ export async function extendUserToken(token: string, appSecret: string, base = "
   const keep = (note: string): ExtendResult => ({ token, extended: false, note });
   if (!appSecret) return keep("ไม่มี App Secret จึงต่ออายุโทเคนไม่ได้ — โทเคนอาจหมดอายุภายใน 1–2 ชั่วโมง (ใส่ App Secret แล้วเชื่อมใหม่)");
   const get = async (path: string, params: Record<string, string>) => {
-    const r = await f(`${base}/v21.0/${path}?${new URLSearchParams(params)}`);
+    const r = await f(`${base}/${metaApiVersion()}/${path}?${new URLSearchParams(params)}`);
     return { r, j: ((await r.json().catch(() => ({}))) ?? {}) as G };
   };
   try {

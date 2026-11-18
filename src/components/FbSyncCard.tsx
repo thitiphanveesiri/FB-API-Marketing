@@ -30,15 +30,22 @@ export default function FbSyncCard() {
   const [which, setWhich] = useState("all"); const [days, setDays] = useState("7");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<Totals | null>(null);
   const [ads, setAds] = useState<Acct[]>([]); const [withAds, setWithAds] = useState(true); const [adsDone, setAdsDone] = useState<AdsTotals | null>(null);
+  const [cfgError, setCfgError] = useState(""); const [acctError, setAcctError] = useState("");
   const stop = useRef(false);
 
   useEffect(() => {
     if (user.role !== "Administrator") return;
     let live = true;
     fetch("/api/fb-sync", { cache: "no-store" }).then((r) => r.json()).then((j) => {
-      if (!live) return; setPages(j.ok ? j.pages : []);
-    }).catch(() => live && setPages([]));
-    fetch("/api/ads-sync", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (live && j.ok) setAds(j.accounts); }).catch(() => undefined);
+      if (!live) return;
+      setPages(j.ok ? j.pages : []);
+      setCfgError(j.ok ? "" : j.message || `อ่านรายการเพจไม่สำเร็จ (HTTP ${j.status ?? 0})`);
+    }).catch((e) => { if (live) { setPages([]); setCfgError(e instanceof Error ? `เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ: ${e.message}` : "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } });
+    fetch("/api/ads-sync", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (!live) return;
+      if (j.ok) { setAds(j.accounts); setAcctError(""); }
+      else setAcctError(j.message || "อ่านรายการบัญชีโฆษณาไม่สำเร็จ");
+    }).catch((e) => { if (live) setAcctError(e instanceof Error ? e.message : "อ่านรายการบัญชีโฆษณาไม่สำเร็จ"); });
     return () => { live = false; };
   }, [user.role]);
   if (user.role !== "Administrator" || pages === null) return null;
@@ -115,7 +122,9 @@ export default function FbSyncCard() {
   return (
     <Card title="ดึงข้อมูลจาก Facebook โดยตรง (แชท + คอมเมนต์ + โฆษณา)" subtitle="กดครั้งเดียวได้แชททีละข้อความ คอมเมนต์ พร้อมเวลา (ใช้คิดคะแนน SLA) และสถิติโฆษณา โดยไม่ต้องอัปโหลดไฟล์">
       {pages.length === 0 ? (
-        <p className="text-sm text-muted">ยังไม่ได้เชื่อมเพจ: วาง Access Token ในการ์ด “เชื่อมช่องทางแชท” ด้านบน หรือเพิ่มตัวแปร <b>FB_PAGE_ID</b> และ <b>FB_PAGE_TOKEN</b> ใน Vercel (Settings → Environment Variables) แล้ว Redeploy — ดูขั้นตอนใน docs/DEPLOY.md หัวข้อ 6c</p>
+        cfgError
+          ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{cfgError}</p>
+          : <p className="text-sm text-muted">ยังไม่ได้เชื่อมเพจ: วาง Access Token ในการ์ด “เชื่อมช่องทางแชท” ด้านบน หรือเพิ่มตัวแปร <b>FB_PAGE_ID</b> และ <b>FB_PAGE_TOKEN</b> ใน Vercel (Settings → Environment Variables) แล้ว Redeploy — ดูขั้นตอนใน docs/DEPLOY.md หัวข้อ 6c</p>
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">
@@ -124,9 +133,10 @@ export default function FbSyncCard() {
             <Btn variant="primary" onClick={() => void run()} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : which === "all" && pages.length > 1 ? "ดึงข้อมูลทั้งหมด" : "ดึงข้อมูลตอนนี้"}</Btn>
             {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
           </div>
+          {acctError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">อ่านรายการบัญชีโฆษณาไม่สำเร็จ: {acctError} (แชทและคอมเมนต์ยังดึงได้ตามปกติ)</p>}
           {ads.length > 0
             ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={withAds} onChange={(e) => setWithAds(e.target.checked)} disabled={busy} className="accent-[#087a58]" /> ดึงโฆษณาพร้อมกัน ({ads.length} บัญชี: {ads.map((a) => a.name || a.accountId).join(", ")}) · ย้อนหลังตามช่วงที่เลือก (สูงสุด 90 วัน)</label>
-            : <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้เชื่อมบัญชีโฆษณา จึงไม่มีข้อมูลโฆษณา (Dashboard โฆษณาจะว่าง) — วาง <b>โทเคนผู้ใช้ที่มีสิทธิ์ ads_read</b> ในการ์ด “เชื่อมช่องทางแชท” ระบบจะเชื่อมบัญชีโฆษณาให้เองพร้อมเพจ หรือกรอก Ad Account ID เองในการ์ดโฆษณาด้านล่าง</p>}
+            : !acctError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้เชื่อมบัญชีโฆษณา จึงไม่มีข้อมูลโฆษณา (Dashboard โฆษณาจะว่าง) — วาง <b>โทเคนผู้ใช้ที่มีสิทธิ์ ads_read</b> ในการ์ด “เชื่อมช่องทางแชท” ระบบจะเชื่อมบัญชีโฆษณาให้เองพร้อมเพจ หรือกรอก Ad Account ID เองในการ์ดโฆษณาด้านล่าง</p>}
           {log && <p className="text-sm" role="status">{log}</p>}
           {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.chats} แชท ({done.messages} ข้อความ, ลีดใหม่ {done.newLeads}) และ {done.comments} คอมเมนต์จาก {done.posts ?? 0} โพสต์{done.comments === 0 ? ` · Meta รายงานโพสต์มีคอมเมนต์ ${done.postsWithReportedComments} โพสต์ (ไม่มี summary ${done.postsWithoutCommentSummary}); อ่านคอมเมนต์ ${done.commentItemsReceived} รายการจาก ${done.commentPagesRead} หน้า (เกินช่วงวันที่เลือก ${done.commentsOutsideRange}, เพจตอบเอง ${done.pageCommentsSkipped})` : ""}{adsDone ? ` · โฆษณา ${adsDone.ads} รายการ (${adsDone.campaigns} แคมเปญ) สถิติรายวัน ${adsDone.rows} แถว` : ""}{adsDone?.byPage && Object.keys(adsDone.byPage).length ? ` · แคมเปญแยกตามเพจ: ${Object.entries(adsDone.byPage).map(([id, count]) => `${sysName(id)} ${count}`).join(", ")}` : ""} · ไปดูผลที่หน้า <b>SLA</b> (ต้องมอบหมายเซลล์ให้แต่ละแชทที่หน้า Board ก่อน จึงจะมีคะแนน)</p>}
           <p className="text-xs text-muted">ครั้งแรกเริ่มที่ 7 วันก่อนเพื่อทดสอบ · ดึงซ้ำได้ ข้อความเดิมจะไม่ซ้ำ · แชทจะถูกจับคู่กับลีดเดิมด้วยชื่อลูกค้า (ถ้าชื่อซ้ำกันหลายคนจะสร้างลีดใหม่) · จำนวนโพสต์รวมเผื่อย้อนหลังอีก 14 วันเพื่อเก็บคอมเมนต์ในช่วงที่เลือกจากโพสต์เก่า</p>

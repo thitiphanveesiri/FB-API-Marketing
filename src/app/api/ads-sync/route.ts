@@ -29,14 +29,21 @@ export async function POST(req: Request) {
     const phase = b.state?.phase === "insights" || b.state?.phase === "done" ? b.state.phase : "ads";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const pageMap: Record<string, string> = {};
+    const stalePages: string[] = [];
     if (!ch.forceSheetPage) {
-      for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) pageMap[c.accountId] = c.sheetPageId;
+      const known = new Set(g.mapped.dataset.pages.map((p) => p.id));
+      for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) {
+        if (known.has(c.sheetPageId)) pageMap[c.accountId] = c.sheetPageId;
+        else stalePages.push(c.name || c.accountId);
+      }
     }
     const pageNames = Object.fromEntries(g.mapped.dataset.pages.map((p) => [p.id, p.name]));
     const out = await adsStep({ pageNames, accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
-    return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: out.warning, byPage: out.byPage }, noStore);
+    // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.
+    const warnings = [out.warning, stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
+    return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: warnings.length ? warnings.join(" · ") : undefined, byPage: out.byPage }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e.message, { rateLimited: e.rateLimited });
     const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;

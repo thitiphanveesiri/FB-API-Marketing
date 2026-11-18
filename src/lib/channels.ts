@@ -56,13 +56,12 @@ export async function saveChannel(c: Partial<Channel> & { channelId: string; cha
   invalidateChannels();
 }
 
-/** Facebook pages usable for backfilling (Upload connections first, env variables as fallback). */
+/** Facebook pages usable for backfilling (Upload connections first, env variables as fallback). A sheet read error is thrown, not hidden:
+ *  the caller must show it, otherwise the sync card looks like "no pages connected". */
 export async function fbSyncConfigs(): Promise<FbPageCfg[]> {
   const out: FbPageCfg[] = [];
-  try {
-    for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accessToken && c.accountId && !out.some((o) => o.fbPageId === c.accountId))
-      out.push({ fbPageId: c.accountId, token: c.accessToken, sheetPageId: c.sheetPageId || undefined, name: c.name || undefined });
-  } catch { return fbConfigs(); }
+  for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accessToken && c.accountId && !out.some((o) => o.fbPageId === c.accountId))
+    out.push({ fbPageId: c.accountId, token: c.accessToken, sheetPageId: c.sheetPageId || undefined, name: c.name || undefined });
   for (const c of fbConfigs()) if (!out.some((o) => o.fbPageId === c.fbPageId)) out.push(c);
   return out;
 }

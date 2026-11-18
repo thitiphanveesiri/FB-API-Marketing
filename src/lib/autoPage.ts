@@ -3,6 +3,7 @@ import type { FbPage } from "./types";
 import type { Channel } from "./channels";
 import { upsertRows } from "./sheetsWrite";
 import { saveChannel } from "./channels";
+import { metaApiVersion } from "./metaApi";
 
 const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 export const systemPageIdFor = (fbPageId: string) => `FB-${fbPageId}`;
@@ -27,7 +28,7 @@ export function pickSystemPage(
 
 export async function fetchPageName(fbPageId: string, token: string, base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com"): Promise<string> {
   try {
-    const response = await fetch(`${base}/v21.0/${fbPageId}?${new URLSearchParams({ fields: "name", access_token: token })}`, {
+    const response = await fetch(`${base}/${metaApiVersion()}/${fbPageId}?${new URLSearchParams({ fields: "name", access_token: token })}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });

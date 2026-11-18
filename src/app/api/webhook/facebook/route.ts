@@ -8,6 +8,7 @@ import { mapSheets } from "@/lib/sheetMapper";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { notifyInbound } from "@/lib/push";
 import { buildInstagramWrites, parseInstagramEvents } from "@/lib/instagramWebhook";
+import { metaApiVersion } from "@/lib/metaApi";
 
 // PUBLIC endpoint (Meta calls it). It is excluded from the login gate in src/proxy.ts; every request is authenticated by Meta's signature instead.
 export const maxDuration = 30;
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
       const w = ch.channel === "instagram"
         ? buildInstagramWrites(mine as Parameters<typeof buildInstagramWrites>[0], { accountId: ch.accountId, sheetPageId }, mapped.dataset, tz)
         : await buildWrites(mine as Parameters<typeof buildWrites>[0], { ...ch, sheetPageId }, mapped.dataset, tz, async (psid) => {
-            const r = await fetch(`${base}/v21.0/${psid}?${new URLSearchParams({ fields: "name", access_token: ch.accessToken })}`, { cache: "no-store" });
+            const r = await fetch(`${base}/${metaApiVersion()}/${psid}?${new URLSearchParams({ fields: "name", access_token: ch.accessToken })}`, { cache: "no-store" });
             const j = (await r.json().catch(() => ({}))) as { name?: string }; return r.ok ? j.name ?? "" : "";
           });
       const newMessages = w.messages.filter((m) => {

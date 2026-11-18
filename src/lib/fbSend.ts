@@ -1,5 +1,6 @@
 // SERVER ONLY. Send a Messenger reply through the Send API.
 import { localStamp } from "./fbSync";
+import { metaApiVersion } from "./metaApi";
 import { minutesBetween } from "./sla";
 import type { Message } from "./types";
 
@@ -12,7 +13,7 @@ export async function psidOf(leadId: string, pageId: string, token: string, base
   if (stored && /^\d{5,25}$/.test(stored)) return stored; // saved by the webhook / sync
   if (leadId.startsWith("FB-")) return leadId.slice(3);
   if (/^t_/.test(leadId)) {
-    const r = await fetch(`${base}/v21.0/${leadId}?${new URLSearchParams({ fields: "participants", access_token: token })}`, { cache: "no-store" });
+    const r = await fetch(`${base}/${metaApiVersion()}/${leadId}?${new URLSearchParams({ fields: "participants", access_token: token })}`, { cache: "no-store" });
     const j = (await r.json().catch(() => ({}))) as { participants?: { data?: { id?: string }[] }; error?: { message?: string } };
     const id = j.participants?.data?.find((p) => p.id && p.id !== pageId)?.id;
     if (r.ok && id) return id;
@@ -27,7 +28,7 @@ export function minutesSinceCustomer(msgs: Message[], tz: string, now = new Date
 }
 
 export async function sendText(o: { pageId: string; token: string; psid: string; text: string; base: string; apiVersion?: string; channel?: "facebook" | "instagram" }): Promise<string> {
-  const r = await fetch(`${o.base}/${o.apiVersion ?? "v21.0"}/${o.pageId}/messages?${new URLSearchParams({ access_token: o.token })}`, {
+  const r = await fetch(`${o.base}/${o.apiVersion ?? metaApiVersion()}/${o.pageId}/messages?${new URLSearchParams({ access_token: o.token })}`, {
     method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
     body: JSON.stringify({ recipient: { id: o.psid }, messaging_type: "RESPONSE", message: { text: o.text } }),
   });

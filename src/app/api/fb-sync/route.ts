@@ -12,8 +12,14 @@ export async function GET(req: Request) {
   await connection();
   const g = await adminOnly(req, false); if ("err" in g) return g.err;
   // never send tokens to the browser: only which Facebook pages are configured
-  const channels = await loadChannels().catch(() => []);
-  return NextResponse.json({ ok: true, pages: (await fbSyncConfigs()).map((c) => ({ fbPageId: c.fbPageId, sheetPageId: c.sheetPageId ?? "", name: c.name ?? "", instagram: channels.some((x) => x.channelId === `instagram:${c.fbPageId}` && x.channel === "instagram" && x.active && !!x.accountId) })) }, noStore);
+  try {
+    const channels = await loadChannels();
+    const pages = (await fbSyncConfigs()).map((c) => ({ fbPageId: c.fbPageId, sheetPageId: c.sheetPageId ?? "", name: c.name ?? "", instagram: channels.some((x) => x.channelId === `instagram:${c.fbPageId}` && x.channel === "instagram" && x.active && !!x.accountId) }));
+    return NextResponse.json({ ok: true, pages }, noStore);
+  } catch (e) {
+    const why = e instanceof Error ? e.message.slice(0, 140) : "";
+    return fail(502, `อ่านการเชื่อมต่อเพจจาก Google Sheet ไม่สำเร็จ${why ? ` (${why})` : ""}`);
+  }
 }
 
 export async function POST(req: Request) {

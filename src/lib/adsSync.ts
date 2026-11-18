@@ -63,14 +63,16 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     }
     if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
     const ads = (j.data ?? []) as RawAd[];
-    const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [];
+    const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
     for (const a of ads) {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
       const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
       const fbPage = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || "";
       // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
       const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
-      const mapped = (fbPage ? i.pageMap?.[fbPage] : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
+      const viaMap = fbPage ? i.pageMap?.[fbPage] : undefined;
+      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap]) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
+      if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
       adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
         updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "" });
@@ -85,6 +87,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (tier > 0) notes.push(`Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})`);
     if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
+    if (unmapped.size && !i.state.after) notes.push(`เพจที่โฆษณาใช้ลงประกาศยังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
