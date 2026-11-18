@@ -32,7 +32,9 @@ export async function POST(req: Request) {
     const stalePages: string[] = [];
     if (!ch.forceSheetPage) {
       const known = new Set(g.mapped.dataset.pages.map((p) => p.id));
-      for (const c of await loadChannels()) if (c.channel === "facebook" && c.active && c.accountId && c.sheetPageId) {
+      // Ads boosted from Instagram carry the IG account id in effective_object_story_id, so Instagram channels map to their own
+      // page as well; without this those ads fall back to the account's default page.
+      for (const c of await loadChannels()) if ((c.channel === "facebook" || c.channel === "instagram") && c.active && c.accountId && c.sheetPageId) {
         if (known.has(c.sheetPageId)) pageMap[c.accountId] = c.sheetPageId;
         else stalePages.push(c.name || c.accountId);
       }
