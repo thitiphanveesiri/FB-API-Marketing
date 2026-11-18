@@ -112,7 +112,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
     const ct = pick(["Image", "Video", "Carousel"] as const, r.get("creative_type")) ?? "Image";
     const adPage = r.get("page_id");
     if (adPage && !pageIds.has(adPage)) warn("ads", r.n, `page_id "${adPage}" not found in pages — the campaign's page is used`);
-    ads.push({ id, name: name || id, campaignId: cid, ...(adPage && pageIds.has(adPage) ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, updatedAt: dateOnly(r.get("updated_at")) ?? "" });
+    ads.push({ id, name: name || id, campaignId: cid, ...(adPage && pageIds.has(adPage) ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, ...(r.get("caption") ? { caption: r.get("caption") } : {}), ...(r.get("headline") ? { headline: r.get("headline") } : {}), updatedAt: dateOnly(r.get("updated_at")) ?? "" });
   }
   const adIds = new Set(ads.map((a) => a.id));
 

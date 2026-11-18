@@ -28,7 +28,18 @@ const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n
 type Action = { action_type?: string; value?: string };
 const act = (a: Action[] | undefined, types: string[]) => (a ?? []).filter((x) => x.action_type && types.includes(x.action_type)).reduce((s, x) => Math.max(s, num(x.value)), 0);
 
-interface RawAd { id: string; name?: string; effective_status?: string; updated_time?: string; campaign?: { id?: string; name?: string; objective?: string }; creative?: { thumbnail_url?: string; image_url?: string; video_id?: string; object_type?: string; effective_object_story_id?: string; object_story_spec?: { page_id?: string } } }
+interface RawAd {
+  id: string; name?: string; effective_status?: string; updated_time?: string; campaign?: { id?: string; name?: string; objective?: string };
+  creative?: {
+    thumbnail_url?: string; image_url?: string; video_id?: string; object_type?: string; effective_object_story_id?: string; body?: string; title?: string;
+    object_story_spec?: {
+      page_id?: string;
+      link_data?: { message?: string; name?: string; description?: string };
+      video_data?: { message?: string; title?: string; link_description?: string };
+      photo_data?: { caption?: string };
+    };
+  };
+}
 interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; actions?: Action[] }
 
 export async function adsStep(i: AdsInput): Promise<AdsOutput> {
@@ -43,10 +54,12 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // Every level keeps the creative's Page (object_story_spec / effective_object_story_id): page mapping is what files an ad
     // under the right page, so dropping it while Meta refuses heavier fields would send the whole campaign to the default page.
     const PAGE = "effective_object_story_id,object_story_spec{page_id}";
+    // Ad copy for the hover preview. The richest levels ask for it together with the Page; the lightest levels leave it out.
+    const COPY = "body,title,object_story_spec{page_id,link_data{message,name,description},video_data{message,title,link_description},photo_data{caption}}";
     const TIERS = [
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${PAGE}}`, filter: true, limit: ADS_PER_CALL, note: "" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${PAGE}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
       { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญ" },
       { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
     ];
@@ -72,6 +85,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
       const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
       const fbPage = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || "";
+      // Ad copy: top-level body/title on the creative, or the text on the underlying story for page-post creatives.
+      const story = c.object_story_spec ?? {};
+      const caption = (c.body || story.link_data?.message || story.video_data?.message || story.photo_data?.caption || "").trim();
+      const headline = (c.title || story.link_data?.name || story.video_data?.title || "").trim();
       // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
       const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
       const viaMap = fbPage ? i.pageMap?.[fbPage] : undefined;
@@ -81,7 +98,9 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
       // The ad's own page (when known) wins on the dashboard, so one campaign can serve several pages.
       adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
-        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "" });
+        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "",
+        // Blank copy is left out so a lighter tier (or Meta returning no text) does not erase text already in the sheet.
+        ...(caption ? { caption: caption.slice(0, 4000) } : {}), ...(headline ? { headline: headline.slice(0, 300) } : {}) });
     }
     counts.ads = adRows.length; counts.campaigns = camps.size;
     const byPage: Record<string, number> = {};

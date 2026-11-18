@@ -113,6 +113,9 @@ export interface Ad {
   pageId?: string;
   status: AdStatus;
   creative: { type: "Image" | "Video" | "Carousel"; hue: number; url?: string; video?: string };
+  /** Primary text (the ad's main copy) and headline, as Meta returns them for the creative. */
+  caption?: string;
+  headline?: string;
   updatedAt: string;
 }
 export interface DailyPerf {

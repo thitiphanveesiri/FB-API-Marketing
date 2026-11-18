@@ -6,7 +6,8 @@ import { AlertTriangle, CheckCircle2, Clock, MessageSquareOff, TrendingDown } fr
 import { useDash } from "@/lib/useDash";
 import { aggregate, chatQuality, derive, fmtCompact, fmtInt, fmtMoney, fmtPct, leadStats, pctChange, Num } from "@/lib/metrics";
 import CreativeCell from "@/components/CreativeCell";
-import { Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, KpiCard, Select, Skeleton, useBrief } from "@/components/ui";
+import AdPreview from "@/components/AdPreview";
+import { Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, HoverPreview, KpiCard, Select, Skeleton, useBrief } from "@/components/ui";
 import { ChartCard, TimeChart } from "@/components/charts";
 import { Ad } from "@/lib/types";
 import { fmtShort, ANCHOR } from "@/lib/dates";
@@ -89,8 +90,10 @@ export default function AdsPerformance() {
 
   const cols: Column<Row>[] = [
     { key: "name", header: "Campaign / Ads", sort: (r) => r.ad.name, minW: 230, sticky: true, render: (r) => (
-      <div className="min-w-0"><div className="font-medium text-ink">{r.ad.name}</div><div className="text-xs text-muted">{r.campaign} · {r.ad.id}</div></div>) },
-    { key: "creative", header: "Creative", render: (r) => <CreativeCell ad={r.ad} /> },
+      <HoverPreview content={<AdPreview ad={r.ad} summary={<AdSummary row={r} />} />} className="w-full" focusable>
+        <span className="block min-w-0"><span className="block font-medium text-ink">{r.ad.name}</span><span className="block text-xs text-muted">{r.campaign} · {r.ad.id}</span></span>
+      </HoverPreview>) },
+    { key: "creative", header: "Creative", render: (r) => <CreativeCell ad={r.ad} preview={<AdPreview ad={r.ad} summary={<AdSummary row={r} />} />} /> },
     { key: "reach", header: "Reach", align: "right", sort: (r) => r.reach, render: (r) => fmtInt(r.reach) },
     { key: "imp", header: "Impressions", align: "right", sort: (r) => r.impressions, render: (r) => fmtInt(r.impressions) },
     { key: "cpm", header: "CPM", align: "right", tip: "Cost per 1,000 impressions = Spend ÷ Impressions × 1,000", sort: (r) => r.cpm, render: (r) => fmtMoney(r.cpm, 1) },
@@ -171,7 +174,7 @@ export default function AdsPerformance() {
           : <TimeChart data={chartData} fmt={sel.fmt} series={[{ key: "cur", name: "This period", type: sel.id === "spend" || sel.id === "messages" ? "area" : "line" }, { key: "prev", name: "Previous period", dashed: true, color: "#9ca3af" }]} />}
       </ChartCard>
 
-      <Card title="Campaign performance" subtitle={`${rows.length} ads with delivery in this range · values are Meta-reported unless noted`}
+      <Card title="Campaign performance" subtitle={`${rows.length} ads with delivery in this range · hover the ad name or creative to preview the image, copy and results`}
         right={<Select value={qFilter} onChange={setQFilter} options={[{ value: "all", label: "All chat quality" }, { value: "flag", label: "⚠ High cost / low performance" }, ...["Excellent", "Good", "Average", "Poor", "No data"].map((v) => ({ value: v, label: v }))]} />}>
         <DataTable columns={cols} rows={filtered} rowKey={(r) => r.ad.id} searchText={(r) => `${r.ad.name} ${r.campaign} ${r.ad.id}`} searchPlaceholder="Search campaign or ad…"
           defaultSort={{ key: "spend", dir: "desc" }} onRowClick={setOpen} rowClass={(r) => (lowPerf(r) ? "bg-red-50/40" : undefined)} caption="Campaign performance" emptyTitle="No ads match" emptyHint="Widen the date range or clear filters." />
@@ -208,6 +211,24 @@ function CampaignDetail({ row }: { row: Row }) {
         <p className="mt-1 text-xs text-muted">Meta-reported purchases: {fmtInt(row.purchases)} · CRM-confirmed conversions: {ls.converted}. These are different sources and are not added together.</p>
       </div>
       <Btn onClick={() => router.push("/dashboard/ads-chat")}>Open in Ads & Chat</Btn>
+    </div>
+  );
+}
+
+/** Compact results shown inside the hover preview. */
+function AdSummary({ row }: { row: Row }) {
+  const items: [string, string][] = [
+    ["Spend", fmtMoney(row.spend)], ["Messages", fmtInt(row.messages)], ["Cost / msg", fmtMoney(row.costPerMsg, 1)],
+    ["CTR", fmtPct(row.ctr, 2)], ["CQC", fmtMoney(row.cqc, 0)], ["Purchases", fmtInt(row.purchases)],
+  ];
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2">
+      <div className="grid grid-cols-3 gap-1.5">
+        {items.map(([k, v]) => (
+          <div key={k} className="rounded-md bg-gray-50 px-1.5 py-1"><div className="text-[10px] text-muted">{k}</div><div className="text-xs font-semibold tabnum">{v}</div></div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted"><ChatQualityBadge q={row.quality} />{row.campaign} · {row.page}</div>
     </div>
   );
 }

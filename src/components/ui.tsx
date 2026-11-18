@@ -3,7 +3,8 @@ import clsx from "clsx";
 import {
   ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Download, ChevronLeft, ChevronRight, Info, Search, X, XCircle, Inbox as InboxIcon,
 } from "lucide-react";
-import { ButtonHTMLAttributes, ReactNode, useEffect, useMemo, useState } from "react";
+import { ButtonHTMLAttributes, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useStore, ConfirmState } from "@/lib/store";
 
 export const cn = clsx;
@@ -196,6 +197,43 @@ export function Drawer({ open, onClose, title, children, width = 560 }: { open: 
         <div className="flex-1 overflow-y-auto p-5">{children}</div>
       </aside>
     </div>
+  );
+}
+
+/** Card shown while the pointer (or keyboard focus) rests on the trigger. Portalled so table scroll containers cannot clip it. */
+export function HoverPreview({ content, children, className, focusable }: { content: ReactNode; children: ReactNode; className?: string; focusable?: boolean }) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  const hide = () => setPos(null);
+  const show = () => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    const width = Math.min(380, window.innerWidth - 16);
+    // Open to the right of the trigger; flip left when it would run off-screen.
+    let left = r.right + 10;
+    if (left + width > window.innerWidth - 8) left = Math.max(8, r.left - width - 10);
+    const top = Math.min(Math.max(8, r.top - 8), Math.max(8, window.innerHeight - 470));
+    setPos({ top, left });
+  };
+  useEffect(() => {
+    if (!pos) return;
+    const h = () => setPos(null);
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") h(); };
+    window.addEventListener("scroll", h, true);
+    window.addEventListener("resize", h);
+    window.addEventListener("keydown", k);
+    return () => { window.removeEventListener("scroll", h, true); window.removeEventListener("resize", h); window.removeEventListener("keydown", k); };
+  }, [pos]);
+  return (
+    <span ref={ref} className={cn("relative inline-block max-w-full align-middle", focusable && "rounded outline-none focus-visible:ring-2 focus-visible:ring-brand-2", className)}
+      tabIndex={focusable ? 0 : undefined}
+      onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show} onBlurCapture={hide}>
+      {children}
+      {pos && createPortal(
+        <div role="tooltip" className="pointer-events-none fixed z-40 w-[380px] max-w-[calc(100vw-16px)]" style={{ top: pos.top, left: pos.left }}>{content}</div>,
+        document.body,
+      )}
+    </span>
   );
 }
 

@@ -20,6 +20,7 @@ export const SHEET_TABS: SheetTab[] = [
     C("ad_id", "Meta Ad ID (the number from Ads Manager)", true), C("name", "Ad name", true), C("campaign_id", "→ campaigns.campaign_id", true),
     C("status", "Active | Paused | Learning | Ended"), C("creative_type", "Image | Video | Carousel"), C("updated_at", "YYYY-MM-DD"),
     C("creative_url", "https:// link to the ad image (Google Drive share link works)"), C("video_url", "https:// link to the ad video (.mp4, YouTube, or Facebook link)"),
+    C("caption", "Primary text / ad copy (filled by the Meta ad sync; edits may be replaced on the next sync)"), C("headline", "Ad headline (filled by the Meta ad sync)"),
     C("page_id", "→ pages.page_id the ad posts as (blank = the campaign's page) — lets one campaign serve several pages") ] },
   { tab: "ad_performance", required: true, purpose: "Meta-reported results, one row per ad per day (paste Ads Manager export here)", cols: [
     C("date", "YYYY-MM-DD (or DD/MM/YYYY)", true), C("ad_id", "→ ads.ad_id", true), C("spend", "Amount spent", true), C("reach", "Reach"),

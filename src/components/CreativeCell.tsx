@@ -1,6 +1,7 @@
 "use client";
-import { useState } from "react";
-import { Btn, Modal, TextInput, AdThumb, imageSrc } from "@/components/ui";
+import { useState, type ReactNode } from "react";
+import { Btn, HoverPreview, Modal, TextInput, AdThumb, imageSrc } from "@/components/ui";
+import AdPreview from "@/components/AdPreview";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import type { Ad } from "@/lib/types";
@@ -9,7 +10,7 @@ const youtubeId = (u: string) => u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/
 const isFile = (u: string) => /\.(mp4|webm|mov)(\?|#|$)/i.test(u);
 
 /** Ad thumbnail that opens a viewer for the real image/video; people who can upload data can paste the links. */
-export default function CreativeCell({ ad, size = 40 }: { ad: Ad; size?: number }) {
+export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?: number; preview?: ReactNode }) {
   const { user, setCreative, toast } = useStore();
   const [open, setOpen] = useState(false);
   const [img, setImg] = useState(""); const [vid, setVid] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
@@ -24,9 +25,11 @@ export default function CreativeCell({ ad, size = 40 }: { ad: Ad; size?: number 
   const v = ad.creative.video; const yt = v ? youtubeId(v) : undefined; const src = imageSrc(ad.creative.url);
   return (
     <>
-      <button type="button" onClick={(e) => { e.stopPropagation(); show(); }} aria-label={`ดูครีเอทีฟ ${ad.name}`} className="rounded-lg outline-none ring-brand-2 hover:opacity-90 focus-visible:ring-2">
-        <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={ad.creative.url} hasVideo={!!v} />
-      </button>
+      <HoverPreview content={preview ?? <AdPreview ad={ad} />}>
+        <button type="button" onClick={(e) => { e.stopPropagation(); show(); }} aria-label={`ดูครีเอทีฟ ${ad.name}`} className="rounded-lg outline-none ring-brand-2 hover:opacity-90 focus-visible:ring-2">
+          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={ad.creative.url} hasVideo={!!v} />
+        </button>
+      </HoverPreview>
       <Modal open={open} onClose={() => setOpen(false)} title={ad.name} width={640}
         footer={canEdit ? <><Btn onClick={() => setOpen(false)}>ยกเลิก</Btn><Btn variant="primary" disabled={busy} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึก"}</Btn></> : <Btn onClick={() => setOpen(false)}>ปิด</Btn>}>
         <div className="space-y-3">
@@ -36,6 +39,10 @@ export default function CreativeCell({ ad, size = 40 }: { ad: Ad; size?: number 
             : isFile(v) ? <video src={v} controls className="max-h-[360px] w-full rounded-lg bg-black" />
             : <a href={v} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-brand-2 hover:bg-gray-50">▶ เปิดวิดีโอโฆษณา (แท็บใหม่)</a>)}
           {!src && !v && <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-sm text-muted">ยังไม่มีรูปหรือวิดีโอของโฆษณานี้{canEdit ? " — วางลิงก์ด้านล่างได้เลย" : ""}</p>}
+          {(ad.headline || ad.caption) && <div className="space-y-1">
+            {ad.headline && <p className="text-sm font-semibold">{ad.headline}</p>}
+            {ad.caption && <p className="whitespace-pre-line text-sm leading-relaxed text-muted">{ad.caption}</p>}
+          </div>}
           {canEdit && <div className="space-y-2">
             <TextInput label="ลิงก์รูปโฆษณา (https://)" value={img} onChange={(e) => setImg(e.target.value)} />
             <TextInput label="ลิงก์วิดีโอ (.mp4, YouTube หรือลิงก์ Facebook)" value={vid} onChange={(e) => setVid(e.target.value)} error={err} />
