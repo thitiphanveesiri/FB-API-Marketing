@@ -98,6 +98,21 @@ const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = MAX_COMMENT_POSTS_PER
 /** Instagram conversations are much slower to list than Messenger: ask for fewer chats and fewer message pages, with a longer per-request timeout. */
 const IG_CHATS_PER_CALL = 2, IG_MSG_PAGES = 2, IG_MSG_LIMIT = 50, IG_MIN_TIMEOUT_MS = 25000, IG_MAX_TIMEOUT_MS = 25000, IG_TIME_BUDGET_MS = 35000;
 
+/** Meta's inbox edges fail for reasons that are not the token: a 500 on the page's conversation list, or "Object does not exist / missing
+ *  permissions" (code 100) when the app may not read that inbox. Say which one it is — both otherwise look like a plain sync failure. */
+export function inboxHint(e: FbError, isIg: boolean): string | null {
+  if (e.rateLimited) return null;
+  if (e.code === 100) return isIg
+    ? "อ่านกล่องข้อความ Instagram ของเพจนี้ไม่ได้ — ตรวจ 3 อย่าง: (1) IG ยังผูกกับเพจนี้อยู่ (Business Suite) (2) แอป Meta มีสิทธิ์ instagram_manage_messages และแอปอยู่โหมด Live หรือบัญชีนี้เป็นผู้ดูแลแอป (3) ในแอป Instagram → Settings → Messages and story replies → Connected tools → เปิด Allow access to messages"
+    : "อ่านกล่องข้อความ Messenger ของเพจนี้ไม่ได้ — ตรวจว่าเพจยังผูกกับแอป Meta และโทเคนมีสิทธิ์ pages_messaging";
+  if (e.code === 1 || e.code === 2) return "Meta ขัดข้องตอนอ่านรายการแชทของเพจนี้ (ฝั่ง Meta ไม่ใช่โทเคนหรือ Google Sheet) — ลองดึงซ้ำภายหลัง หรือลดช่วงย้อนหลังเหลือ 3 วัน ถ้าซ้ำที่เพจเดิมทุกครั้ง ให้เปิดกล่องข้อความของเพจใน Business Suite และตรวจว่าแอปมีสิทธิ์ pages_messaging";
+  return null;
+}
+const inboxError = (e: unknown, isIg: boolean): unknown => {
+  const hint = e instanceof FbError ? inboxHint(e, isIg) : null;
+  return hint ? new FbError(`${(e as FbError).message} — ${hint}`, false, (e as FbError).code) : e;
+};
+
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const isIg = i.channel === "instagram";
   const timeoutMs = Number(process.env.META_TIMEOUT_MS) || 12000;
@@ -136,14 +151,19 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       catch (e) { if (!isTransient(e)) throw e; if (isIg) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
     } else if (isIg) {
       // participants makes Meta very slow on big Instagram inboxes; the customer is read from the messages instead
-      j = await convQuery("id,updated_time", true);
+      try { j = await convQuery("id,updated_time", true); }
+      catch (e) { throw inboxError(e, true); }
     } else {
       try { j = await convQuery("id,updated_time,participants", true); }
       catch (e) {
-        if (!isTransient(e)) throw e;
+        if (!isTransient(e)) throw inboxError(e, false);
         chatList = "light";
         try { j = await convQuery("id,updated_time", true); }
-        catch (e2) { if (!isTransient(e2)) throw e2; if (isIg) throw e2; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+        catch (e2) {
+          if (!isTransient(e2)) throw inboxError(e2, false);
+          try { j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+          catch (e3) { throw inboxError(e3, false); }
+        }
       }
     }
     let skippedChats = 0, partialChats = 0, budgetCuts = 0;
