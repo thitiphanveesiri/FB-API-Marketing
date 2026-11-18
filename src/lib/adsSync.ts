@@ -150,13 +150,28 @@ export async function checkAdAccount(accountId: string, token: string, f: FetchF
   return { name: j.name ?? "", currency: j.currency ?? "", timezone: j.timezone_name ?? "" };
 }
 
-/** Ad accounts a (user) token can see: lets one pasted token connect the pages AND the ad accounts. Disabled / closed accounts are left out. */
-export async function listAdAccounts(token: string, f: FetchFn, base: string): Promise<{ id: string; name: string }[]> {
-  const j = await graph("me/adaccounts", { fields: "account_id,name,account_status", limit: "50" }, token, f, base);
-  return ((j.data ?? []) as { account_id?: string; id?: string; name?: string; account_status?: number }[])
-    .filter((a) => ![2, 101].includes(Number(a.account_status)))
-    .map((a) => ({ id: String(a.account_id ?? a.id ?? "").replace(/\D/g, ""), name: a.name ?? "" }))
-    .filter((a) => a.id.length >= 5);
+export interface AdAccountInfo { id: string; name: string; status?: number; currency?: string }
+/** Ad accounts a (user) token can see, every page: lets one pasted token connect the pages AND the ad accounts, and lets the admin
+ *  pick from a real list instead of typing an id. Disabled / closed accounts are left out. */
+export async function listAdAccounts(token: string, f: FetchFn, base: string): Promise<AdAccountInfo[]> {
+  const seen = new Map<string, AdAccountInfo>();
+  const collect = (data: unknown[] | undefined) => {
+    for (const a of (data ?? []) as { account_id?: string; id?: string; name?: string; account_status?: number; currency?: string }[]) {
+      if ([2, 101].includes(Number(a.account_status))) continue;
+      const id = String(a.account_id ?? a.id ?? "").replace(/\D/g, "");
+      if (id.length >= 5 && !seen.has(id)) seen.set(id, { id, name: a.name ?? "", status: a.account_status != null ? Number(a.account_status) : undefined, currency: a.currency });
+    }
+  };
+  let j = await graph("me/adaccounts", { fields: "account_id,name,account_status,currency", limit: "50" }, token, f, base);
+  collect(j.data);
+  for (let page = 0; page < 3 && seen.size < 200; page++) {
+    const next = j.paging?.next; if (!next) break;
+    const r = await f(next);
+    const k = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
+    if (!r.ok || k.error) throw new FbError(`Meta ตอบ ${r.status}: ${k.error?.message ?? "อ่านรายการบัญชีโฆษณาไม่สำเร็จ"}`, false, k.error?.code);
+    collect(k.data); j = k;
+  }
+  return [...seen.values()];
 }
 
 const ACCOUNT_STATUS: Record<number, string> = { 1: "ใช้งานปกติ", 2: "ถูกปิดใช้งาน", 3: "มียอดค้างชำระ", 7: "รอตรวจสอบความเสี่ยง", 8: "รอชำระเงิน", 9: "อยู่ในช่วงผ่อนผัน", 100: "รอชำระเงิน", 101: "ปิดบัญชีแล้ว", 201: "ใช้งานอยู่", 202: "ปิดแล้ว" };

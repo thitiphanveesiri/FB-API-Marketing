@@ -46,6 +46,35 @@ async function connectAdAccounts(userToken: string, sheetPageId: string, all: Ch
   }
 }
 
+/** Lists every ad account the pasted token (or the ad tokens already saved) can see, so the admin picks a real account instead of typing an id. */
+async function listAdsAction(b: Body, all: Channel[]) {
+  const typed = (b.accessToken ?? "").trim();
+  if (typed && !/^[\w-]{20,400}$/.test(typed)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>;
+  const tokens = typed ? [typed] : [...new Set(all.filter((c) => c.channel === "ads" && c.active && c.accessToken).map((c) => c.accessToken))];
+  if (!tokens.length) return fail(400, "ยังไม่มีโทเคนให้ค้นหา — วาง Access Token ที่มีสิทธิ์ ads_read ในช่องด้านล่างก่อน");
+  const found = new Map<string, { id: string; name: string; status?: number; currency?: string }>();
+  let lastError: Error | null = null;
+  for (const token of tokens) {
+    try { for (const a of await listAdAccounts(token, f, base)) if (!found.has(a.id)) found.set(a.id, a); }
+    catch (e) { lastError = e as Error; }
+  }
+  if (!found.size) {
+    if (lastError instanceof FbError) {
+      const noAccess = lastError.code === 200 || lastError.code === 10 || lastError.code === 100;
+      return fail(400, isExpiredMetaToken(lastError) ? expiredMetaTokenMessage("ads") : noAccess
+        ? "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ตรวจว่ามีสิทธิ์ ads_read และเจ้าของโทเคนถูกเพิ่มในบัญชีที่ Business Settings → Ad accounts → Add people"
+        : lastError.message);
+    }
+    return NextResponse.json({ ok: true, accounts: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา" }, noStore);
+  }
+  const connected = new Set(all.filter((c) => c.channel === "ads" && c.active).map((c) => c.accountId));
+  const accounts = [...found.values()]
+    .sort((a, z) => (a.name || a.id).localeCompare(z.name || z.id, "th"))
+    .map((a) => ({ ...a, connected: connected.has(a.id) }));
+  return NextResponse.json({ ok: true, source: typed ? "token" : "saved", accounts }, noStore);
+}
+
 /** The one place a pasted USER token is handled: swap it for a long-lived one (Page tokens taken from a short-lived user token die within hours; from a
  *  long-lived one they do not expire), then re-read the pages it manages. A Page token is returned untouched. Never throws: when extending is not possible
  *  the original answer comes back with a note saying why. */
@@ -70,7 +99,7 @@ export async function GET(req: Request) {
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect" | "connectAll"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
+interface Body { action?: "save" | "disconnect" | "connectAll" | "listAds"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
@@ -89,6 +118,7 @@ export async function POST(req: Request) {
     }
 
     if (b.action === "connectAll") return connectAll(b, all, g.mapped.dataset.pages);
+    if (b.action === "listAds") return listAdsAction(b, all);
 
     let sheetPageId = (b.sheetPageId ?? "").trim();
     if (sheetPageId && !g.mapped.dataset.pages.some((p) => p.id === sheetPageId)) return fail(400, "ไม่พบเพจนี้ในระบบ");

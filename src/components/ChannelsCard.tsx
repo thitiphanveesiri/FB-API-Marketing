@@ -5,6 +5,7 @@ import { Badge, Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 
 interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
+interface AdAcct { id: string; name: string; status?: number; currency?: string; connected: boolean }
 interface ConnectRes { fbPageId: string; name: string; ok: boolean; message?: string; systemPageId?: string; createdPage?: boolean; subscribed?: boolean; subscribeMessage?: string; instagram?: { id: string; username: string } | null; instagramLookupMessage?: string }
 interface ChannelList { channels: Ch[]; webhookUrl: string; verifyToken: string }
 const inp = "w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-mono";
@@ -34,6 +35,7 @@ export default function ChannelsCard() {
   const [editing, setEditing] = useState<string | null>(null); // channelId being updated, "" = new
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
   const [adAcct, setAdAcct] = useState(""); const [adToken, setAdToken] = useState(""); const [adForcePage, setAdForcePage] = useState(false); const [adEdit, setAdEdit] = useState(false); const [editingAdChannel, setEditingAdChannel] = useState<string | null>(null); const [adMsg, setAdMsg] = useState("");
+  const [adList, setAdList] = useState<AdAcct[] | null>(null); const [adListMsg, setAdListMsg] = useState(""); const [adListBusy, setAdListBusy] = useState(false);
   const [fbDest, setFbDest] = useState(""); const [allToken, setAllToken] = useState(""); const [allSecret, setAllSecret] = useState("");
   const [allBusy, setAllBusy] = useState(false); const [allMsg, setAllMsg] = useState("");
   const [allRes, setAllRes] = useState<{ results: ConnectRes[]; ads: AdsRes | null; extend: ExtendRes | null } | null>(null);
@@ -53,6 +55,17 @@ export default function ChannelsCard() {
     setList(result?.channels ?? []);
     if (result) { setHook(result.webhookUrl); setVerify(result.verifyToken); }
   }, [load]);
+  const loadAdAccounts = useCallback(async (accessToken: string) => {
+    setAdListBusy(true); setAdListMsg("");
+    try {
+      const response = await fetch("/api/channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "listAds", accessToken }) });
+      const result = await response.json().catch(() => ({ ok: false, message: "ตอบกลับไม่ถูกต้อง" }));
+      if (!result.ok) { setAdList(null); setAdListMsg(result.message || "ดึงรายการบัญชีโฆษณาไม่สำเร็จ"); return; }
+      const accounts = Array.isArray(result.accounts) ? (result.accounts as AdAcct[]) : [];
+      setAdList(accounts);
+      if (!accounts.length) setAdListMsg(result.message || "โทเคนนี้มองไม่เห็นบัญชีโฆษณา");
+    } catch { setAdList(null); setAdListMsg("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ"); } finally { setAdListBusy(false); }
+  }, []);
   useEffect(() => {
     if (!admin) return;
     let active = true;
@@ -63,14 +76,14 @@ export default function ChannelsCard() {
     });
     return () => { active = false; };
   }, [admin, load]);
+  const ads = (list ?? []).filter((c) => c.channel === "ads" && c.active && c.hasToken);
+  const adForm = adEdit || ads.length === 0;
   if (!admin || list === null) return null;
 
   const selectedPageId = pageId || data.pages.find((p) => p.active)?.id || "";
   const fb = list.filter((c) => c.channel === "facebook" && c.active && c.hasToken);
   const instagram = list.filter((c) => c.channel === "instagram" && c.active && c.hasToken);
-  const ads = list.filter((c) => c.channel === "ads" && c.active && c.hasToken);
   const form = editing !== null || fb.length === 0;
-  const adForm = adEdit || ads.length === 0;
 
   const save = async () => {
     setBusy(true); setMsg("");
@@ -214,10 +227,21 @@ export default function ChannelsCard() {
           {adForm ? (
             <div className="max-w-xl space-y-3 rounded-xl border border-line p-3">
               <h4 className="text-sm font-semibold">{editingAdChannel ? "แก้ไขบัญชีโฆษณา" : "เชื่อมบัญชีโฆษณา"}</h4>
-              <label className="block text-xs font-medium text-muted">Ad Account ID (ตัวเลขใน Ads Manager เช่น 1234567890)
-                <input value={adAcct} onChange={(e) => setAdAcct(e.target.value)} disabled={busy || !!editingAdChannel} placeholder="act_1234567890" className={`${inp} mt-1`} /></label>
               <label className="block text-xs font-medium text-muted">Access Token ที่มีสิทธิ์ ads_read{editingAdChannel ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
                 <input type="password" autoComplete="off" value={adToken} onChange={(e) => setAdToken(e.target.value)} placeholder="EAAB…" className={`${inp} mt-1`} /></label>
+              <label className="block text-xs font-medium text-muted">Ad Account ID (ตัวเลขใน Ads Manager เช่น 1234567890)
+                <input value={adAcct} onChange={(e) => setAdAcct(e.target.value)} disabled={busy || !!editingAdChannel} placeholder="act_1234567890" className={`${inp} mt-1`} /></label>
+              {!editingAdChannel && <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Btn size="sm" onClick={() => void loadAdAccounts(adToken)} disabled={adListBusy || busy || (!adToken && !ads.length)} aria-busy={adListBusy}>
+                    {adListBusy ? "กำลังดึงรายการ…" : adToken ? "ดึงรายการด้วยโทเคนนี้" : "ดึงรายการบัญชีที่เชื่อมไว้"}
+                  </Btn>
+                  <span className="text-xs text-muted">ดึงจาก Meta แล้วเลือกบัญชีได้เลย · ใช้ User/System User token (Page token ไม่เห็นบัญชีโฆษณา)</span>
+                </div>
+                {adListMsg && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{adListMsg}</p>}
+                {adList && adList.length > 0 && <Select label={`บัญชีโฆษณาที่โทเคนมองเห็น (${adList.length})`} value={adAcct} onChange={setAdAcct}
+                  options={[{ value: "", label: "— เลือกบัญชี —" }, ...adList.map((a) => ({ value: a.id, label: `${a.name || "ไม่มีชื่อ"} · act_${a.id}${a.currency ? ` · ${a.currency}` : ""}${a.connected ? " · เชื่อมแล้ว" : ""}` }))]} />}
+              </div>}
               <Select label="เพจในระบบปลายทาง (ค่าเริ่มต้นของบัญชีนี้)" value={selectedPageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
               <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-line p-3 text-sm">
                 <input type="checkbox" checked={adForcePage} onChange={(e) => setAdForcePage(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
@@ -229,7 +253,7 @@ export default function ChannelsCard() {
               <div className="flex gap-2"><Btn variant="primary" onClick={saveAds} disabled={busy || !adAcct || (!adToken && !editingAdChannel)}>{busy ? "กำลังตรวจสอบ…" : editingAdChannel ? "บันทึกการแก้ไข" : "บันทึกและเชื่อมต่อ"}</Btn>{ads.length > 0 && <Btn onClick={() => { setAdEdit(false); setEditingAdChannel(null); setAdAcct(""); setAdToken(""); setAdMsg(""); }}>ยกเลิก</Btn>}</div>
               <p className="text-xs text-amber-700">⚠ Token เก็บในแท็บ <b>channels</b> ของ Google Sheet เหมือนช่องทางแชท · คุณต้องเป็นผู้ดูแลบัญชีโฆษณานี้ · ปุ่มดึงข้อมูลอยู่ด้านล่าง การอัปโหลดไฟล์ด้านล่างสุดเก็บไว้เป็นทางสำรอง</p>
             </div>
-          ) : <Btn size="sm" onClick={() => { setAdAcct(""); setAdToken(""); setAdForcePage(false); setEditingAdChannel(null); setAdMsg(""); setAdEdit(true); }}>+ เชื่อมบัญชีโฆษณาเพิ่ม</Btn>}
+          ) : <Btn size="sm" onClick={() => { setAdAcct(""); setAdToken(""); setAdForcePage(false); setEditingAdChannel(null); setAdMsg(""); setAdList(null); setAdListMsg(""); setAdEdit(true); void loadAdAccounts(""); }}>+ เชื่อมบัญชีโฆษณาเพิ่ม</Btn>}
         </div>
       </div>
     </Card>
