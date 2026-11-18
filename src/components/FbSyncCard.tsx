@@ -105,6 +105,8 @@ export default function FbSyncCard() {
     } finally { setChecking(false); }
   };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string, channel?: "instagram") => {
+    // Instagram listing can burn both node timeouts per attempt, so it gets one retry instead of three.
+    const maxFailures = channel ? 2 : 4;
     let state: { phase: string; after?: string; chatList?: "light" | "no-platform" | "ig-node"; igChats?: { id: string; updated_time: string }[]; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
     {
       while (state.phase !== "done" && !stop.current) {
@@ -118,9 +120,9 @@ export default function FbSyncCard() {
           continue;
         }
         if (!j.ok) {
-          if (++failures < 4 && r.status >= 500) {
+          if (++failures < maxFailures && r.status >= 500) {
             const delay = 3000 * failures;
-            setLog(`${tag}เซิร์ฟเวอร์ตอบ HTTP ${r.status} — ลองใหม่ ${failures}/3 ใน ${delay / 1000} วินาที`);
+            setLog(`${tag}เซิร์ฟเวอร์ตอบ HTTP ${r.status} — ลองใหม่ ${failures}/${maxFailures - 1} ใน ${delay / 1000} วินาที`);
             await wait(delay);
             continue;
           }

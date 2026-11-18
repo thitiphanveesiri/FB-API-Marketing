@@ -117,13 +117,16 @@ const inboxError = (e: unknown, isIg: boolean): unknown => {
   const hint = e instanceof FbError ? inboxHint(e, isIg) : null;
   return hint ? new FbError(`${(e as FbError).message} — ${hint}`, false, (e as FbError).code) : e;
 };
-/** Both Instagram nodes failed: keep the actionable answer (code 100 says what to fix) and mention the other attempt briefly. */
-const mergeInboxError = (a: unknown, b: unknown): unknown => {
-  const primary = a instanceof FbError && a.code === 100 ? a : b instanceof FbError && b.code === 100 ? b : a instanceof FbError ? a : b;
-  if (!(primary instanceof FbError)) return b;
-  const hint = inboxHint(primary, true), other = primary === a ? b : a;
-  const suffix = !hint && other instanceof FbError ? ` · อีก node: ${other.message.slice(0, 120)}` : "";
-  return new FbError(`${primary.message}${hint ? ` — ${hint}` : ""}${suffix}`, false, primary.code);
+/** Both Instagram nodes failed: keep the actionable answer (code 100 says what to fix) and name both attempts, so a timeout on one node is not mistaken for the whole story. */
+const mergeInboxError = (first: unknown, second: unknown, firstLabel: string, secondLabel: string): unknown => {
+  const primaryFirst = first instanceof FbError && first.code === 100;
+  const primary = primaryFirst ? first : second instanceof FbError && second.code === 100 ? second : first instanceof FbError ? first : second;
+  if (!(primary instanceof FbError)) return second;
+  const hint = inboxHint(primary, true);
+  const say = (e: unknown, label: string) => `${label}: ${e instanceof FbError ? e.message.replace(/^Meta ตอบ \d+: /, "") : String(e)}`.slice(0, 150);
+  const primaryLabel = primary === first ? firstLabel : secondLabel, otherLabel = primary === first ? secondLabel : firstLabel;
+  const other = primary === first ? second : first;
+  return new FbError(`${say(primary, primaryLabel)}${hint ? ` — ${hint}` : ""} · ${say(other, otherLabel)}`, false, primary.code);
 };
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
@@ -180,7 +183,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       try { j = await ask(first, msOf(first, "first")); chatList = first === "ig" ? "ig-node" : undefined; }
       catch (e) {
         try { j = await ask(second, msOf(second, "second")); chatList = second === "ig" ? "ig-node" : undefined; }
-        catch (e2) { throw mergeInboxError(e, e2); }
+        catch (e2) { throw mergeInboxError(e, e2, first === "page" ? "Page node" : "IG node", second === "page" ? "Page node" : "IG node"); }
       }
       const all = (j.data ?? []) as FbConv[];
       fresh = all.filter((c) => ms(c.updated_time) >= since);
