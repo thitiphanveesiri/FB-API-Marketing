@@ -179,7 +179,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         tok, i.fetchFn ?? metaFetchWith(ms), base, 900, 0,
       );
       const first: "page" | "ig" = chatList === "ig-node" ? "ig" : "page", second: "page" | "ig" = first === "page" ? "ig" : "page";
-      const msOf = (node: "page" | "ig", which: "first" | "second") => node === "ig" ? (which === "first" ? IG_LIST_TIMEOUT_MS : IG_LIST_FALLBACK_MS) : (which === "first" ? IG_LIST_PAGE_MS : IG_LIST_FALLBACK_MS);
+      const msOf = (node: "page" | "ig", which: "first" | "second") => node === "ig" ? IG_LIST_TIMEOUT_MS : which === "first" ? IG_LIST_PAGE_MS : IG_LIST_FALLBACK_MS;
       try { j = await ask(first, msOf(first, "first")); chatList = first === "ig" ? "ig-node" : undefined; }
       catch (e) {
         try { j = await ask(second, msOf(second, "second")); chatList = second === "ig" ? "ig-node" : undefined; }

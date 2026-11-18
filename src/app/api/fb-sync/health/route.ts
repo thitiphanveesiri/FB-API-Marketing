@@ -42,7 +42,7 @@ export async function GET(req: Request) {
   };
 
   /** Instagram inbox on both nodes, with timing: the Page node is the documented one for Page tokens, the IG node is the fallback. */
-  const fIg = metaFetchWith(15000);
+  const fIg = metaFetchWith(20000);
   const igProbe = async (pageId: string, igId: string, token: string): Promise<{ ok: boolean; detail: string }> => {
     const ask = async (label: string, path: string): Promise<{ ok: boolean; text: string }> => {
       const t = Date.now();
