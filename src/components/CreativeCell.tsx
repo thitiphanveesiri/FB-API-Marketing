@@ -8,6 +8,7 @@ import type { Ad } from "@/lib/types";
 
 const youtubeId = (u: string) => u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/)?.[1];
 const isFile = (u: string) => /\.(mp4|webm|mov)(\?|#|$)/i.test(u);
+const isFacebook = (u: string) => /^https:\/\/(?:www\.|web\.)?facebook\.com\//i.test(u);
 
 /** Ad thumbnail that opens a viewer for the real image/video; people who can upload data can paste the links. */
 export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?: number; preview?: ReactNode }) {
@@ -37,6 +38,11 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
           {src && <img src={src} alt={ad.name} referrerPolicy="no-referrer" className="max-h-[360px] w-full rounded-lg bg-gray-50 object-contain" />}
           {v && (yt ? <iframe className="aspect-video w-full rounded-lg" src={`https://www.youtube-nocookie.com/embed/${yt}`} title={ad.name} allowFullScreen />
             : isFile(v) ? <video src={v} controls className="max-h-[360px] w-full rounded-lg bg-black" />
+            : isFacebook(v) ? <div className="space-y-1.5">
+              <iframe className="aspect-video w-full rounded-lg bg-black" src={`https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(v)}&show_text=false`}
+                title={`วิดีโอโฆษณา ${ad.name}`} allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen />
+              <a href={v} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-brand-2 hover:underline">วิดีโอไม่เล่น? เปิดใน Facebook (แท็บใหม่)</a>
+            </div>
             : <a href={v} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-brand-2 hover:bg-gray-50">▶ เปิดวิดีโอโฆษณา (แท็บใหม่)</a>)}
           {!src && !v && <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-sm text-muted">ยังไม่มีรูปหรือวิดีโอของโฆษณานี้{canEdit ? " — วางลิงก์ด้านล่างได้เลย" : ""}</p>}
           {(ad.headline || ad.caption) && <div className="space-y-1">
@@ -46,7 +52,7 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
           {canEdit && <div className="space-y-2">
             <TextInput label="ลิงก์รูปโฆษณา (https://)" value={img} onChange={(e) => setImg(e.target.value)} />
             <TextInput label="ลิงก์วิดีโอ (.mp4, YouTube หรือลิงก์ Facebook)" value={vid} onChange={(e) => setVid(e.target.value)} error={err} />
-            <p className="text-xs text-muted">Meta ไม่ให้ไฟล์ภาพในรายงานที่ดาวน์โหลด จึงต้องวางลิงก์เอง · ใช้ Google Drive ได้: อัปโหลดไฟล์ → แชร์เป็น “ทุกคนที่มีลิงก์” → คัดลอกลิงก์มาวาง</p>
+            <p className="text-xs text-muted">ระบบดึงรูปและวิดีโอจากโฆษณาให้ตอน “ซิงก์โฆษณา” (ถ้าโฆษณาไม่มีรูปในตัว creative จะไปเอารูปจากโพสต์จริง) · วางลิงก์เองทับได้ เช่น Google Drive: แชร์เป็น “ทุกคนที่มีลิงก์” แล้วคัดลอกลิงก์มาวาง</p>
           </div>}
         </div>
       </Modal>

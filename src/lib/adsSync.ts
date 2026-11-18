@@ -80,6 +80,8 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
     const ads = (j.data ?? []) as RawAd[];
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
+    // Ads whose creative has no image of its own (page-post, catalogue, dynamic): the picture lives on the underlying post/video.
+    const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string }[] = [];
     let noPage = 0;
     for (const a of ads) {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
@@ -97,11 +99,15 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       else if (!fbPage && !mapped) noPage++;
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
       // The ad's own page (when known) wins on the dashboard, so one campaign can serve several pages.
-      adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
+      const row: SyncWrite["rows"][number] = { ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
         updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "",
         // Blank copy is left out so a lighter tier (or Meta returning no text) does not erase text already in the sheet.
-        ...(caption ? { caption: caption.slice(0, 4000) } : {}), ...(headline ? { headline: headline.slice(0, 300) } : {}) });
+        ...(caption ? { caption: caption.slice(0, 4000) } : {}), ...(headline ? { headline: headline.slice(0, 300) } : {}) };
+      adRows.push(row);
+      if (!row.creative_url && (c.effective_object_story_id || c.video_id)) needMedia.push({ row, story: c.effective_object_story_id, video: c.video_id });
     }
+    // One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget.
+    const mediaWarning = needMedia.length && !overBudget() ? await fillCreativeMedia(needMedia, i.token, f, base, overBudget) : null;
     counts.ads = adRows.length; counts.campaigns = camps.size;
     const byPage: Record<string, number> = {};
     for (const campaign of camps.values()) byPage[campaign.page_id] = (byPage[campaign.page_id] ?? 0) + 1;
@@ -110,6 +116,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
     const notes: string[] = [];
     if (tier > 0) notes.push(`Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})`);
+    if (mediaWarning) notes.push(mediaWarning);
     if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
     if (unmapped.size && !i.state.after) notes.push(`เพจที่โฆษณาใช้ลงประกาศยังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
@@ -202,4 +209,36 @@ async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: st
     who = `${a.name || acct}${a.account_status != null ? ` (สถานะบัญชี: ${ACCOUNT_STATUS[a.account_status] ?? a.account_status})` : ""}`;
   } catch (e) { if (e instanceof FbError) who = `${acct} (เปิดข้อมูลบัญชีไม่ได้: ${e.message.slice(0, 90)})`; }
   return `Meta ไม่ส่งโฆษณาใดกลับมาจากบัญชี ${who} — ตรวจว่า (1) เลือกบัญชีโฆษณาถูกบัญชี (2) เจ้าของโทเคนถูกเพิ่มในบัญชีนี้ที่ Business Settings → Ad accounts → Add people (มีสิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ได้เป็นคนที่เข้าถึงบัญชีนี้ Meta จะตอบรายการว่างโดยไม่แจ้ง error) (3) บัญชีมีโฆษณาอยู่จริง`;
+}
+
+type MediaNode = { full_picture?: string; message?: string; picture?: string | { data?: { url?: string } }; error?: { message?: string } };
+
+/** Creatives with no image of their own (page-post, catalogue, dynamic) only point at the post. Read the post's real picture and the
+ *  video cover — one batched request per kind, so 40 ads cost two calls. A refusal (usually a token without pages_read_engagement)
+ *  only loses the picture, never the ad row. */
+async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string }[], token: string, f: FetchFn, base: string, overBudget: () => boolean): Promise<string | null> {
+  const errors: string[] = [];
+  const batch = async (ids: (string | undefined)[], fields: string): Promise<Record<string, MediaNode>> => {
+    const uniq = [...new Set(ids.filter((x): x is string => !!x))].slice(0, 50);
+    if (!uniq.length) return {};
+    try { return (await graph("", { ids: uniq.join(","), fields }, token, f, base, 900, 0)) as unknown as Record<string, MediaNode>; }
+    catch (e) { if (!(e instanceof FbError)) throw e; errors.push(e.message); return {}; }
+  };
+  const posts = await batch(picks.map((p) => p.story), "full_picture,message");
+  const covers = overBudget() ? {} : await batch(picks.map((p) => p.video), "picture");
+  for (const p of picks) {
+    const post = p.story ? posts[p.story] : undefined;
+    if (post && !post.error) {
+      if (post.full_picture && !p.row.creative_url) p.row.creative_url = post.full_picture;
+      if (!p.row.caption && post.message) p.row.caption = String(post.message).slice(0, 4000);
+    }
+    const cover = p.video ? covers[p.video] : undefined;
+    const url = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url ?? "";
+    if (url && !p.row.creative_url) p.row.creative_url = url;
+  }
+  const missing = picks.filter((p) => !p.row.creative_url).length;
+  if (!missing) return null;
+  return errors.length
+    ? `${missing} โฆษณาไม่มีรูป — ดึงรูปจากโพสต์ Facebook ไม่ได้เพราะ ${errors[0]} (โทเคนต้องมีสิทธิ์ pages_read_engagement และเป็นโทเคนของเพจที่ลงโฆษณา)`
+    : `${missing} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`;
 }
