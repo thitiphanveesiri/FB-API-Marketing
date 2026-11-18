@@ -41,6 +41,20 @@ export async function GET(req: Request) {
     catch (e) { return e instanceof FbError ? inboxHint(e, kind === "instagram") ?? why(e) : why(e); }
   };
 
+  /** Instagram inbox on both nodes, with timing: the Page node is the documented one for Page tokens, the IG node is the fallback. */
+  const fIg = metaFetchWith(15000);
+  const igProbe = async (pageId: string, igId: string, token: string): Promise<{ ok: boolean; detail: string }> => {
+    const ask = async (label: string, path: string): Promise<{ ok: boolean; text: string }> => {
+      const t = Date.now();
+      try { await graph(path, { fields: "id", limit: "1", platform: "instagram" }, token, fIg, graphBase(), 900, 0); return { ok: true, text: `${label} อ่านได้ (${((Date.now() - t) / 1000).toFixed(1)} วิ)` }; }
+      catch (e) { return { ok: false, text: `${label}: ${e instanceof FbError ? inboxHint(e, true) ?? why(e) : why(e)}` }; }
+    };
+    const page = await ask("Page node", `${encodeURIComponent(pageId)}/conversations`);
+    if (page.ok) return { ok: true, detail: page.text };
+    const ig = await ask("IG node", `${encodeURIComponent(igId)}/conversations`);
+    return { ok: ig.ok, detail: `${page.text} · ${ig.text}` };
+  };
+
   /** Expiry and scopes straight from Meta: a Page token dies with the user token that made it, which is what turns a pull into a 502. */
   const tokenInfo = async (c: Channel): Promise<string> => {
     if (!c.appSecret) return "";
@@ -64,15 +78,15 @@ export async function GET(req: Request) {
       // The two failures that look like a "502" while the token is fine: Meta 500s on the page's conversation list, and code 100 (cannot read that inbox).
       const [messenger, insta, token] = await Promise.all([
         probe(`${encodeURIComponent(c.accountId)}/conversations`, "messenger", c.accessToken),
-        ig?.id ? probe(`${encodeURIComponent(ig.id)}/conversations`, "instagram", c.accessToken) : Promise.resolve(null),
+        ig?.id ? igProbe(c.accountId, ig.id, c.accessToken) : Promise.resolve(null),
         tokenInfo(c),
       ]);
       return {
-        id: c.accountId, name: j.name || c.name || c.accountId, ok: !messenger && !insta, token,
+        id: c.accountId, name: j.name || c.name || c.accountId, ok: !messenger && (!insta || insta.ok), token,
         detail: [
           ig ? `โทเคนใช้ได้ · Instagram @${ig.username ?? ig.id}` : "โทเคนใช้ได้ · เพจนี้ยังไม่ผูกบัญชี Instagram",
           messenger ? `Messenger: ${messenger}` : "Messenger อ่านได้",
-          ig ? (insta ? `IG inbox: ${insta}` : "IG inbox อ่านได้") : "",
+          ig ? `IG inbox — ${insta!.detail}` : "",
         ].filter(Boolean).join(" · "),
       };
     } catch (e) { return { id: c.accountId, name: c.name || c.accountId, ok: false, detail: why(e) }; }

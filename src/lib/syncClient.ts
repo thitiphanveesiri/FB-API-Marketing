@@ -7,7 +7,7 @@ interface SyncResponse {
   ok?: boolean;
   message?: string;
   rateLimited?: boolean;
-  next?: { phase?: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean; fallback?: boolean; tier?: number; win?: number; lim?: number };
+  next?: { phase?: string; after?: string; chatList?: "light" | "no-platform" | "ig-node"; igChats?: { id: string; updated_time: string }[]; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean; fallback?: boolean; tier?: number; win?: number; lim?: number };
   counts?: {
     ads?: number;
     campaigns?: number;

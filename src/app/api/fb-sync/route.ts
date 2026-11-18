@@ -61,8 +61,15 @@ export async function POST(req: Request) {
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = (b.state?.phase === "comments" && b.channel !== "instagram") || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
-    const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" ? b.state.chatList : undefined;
+    const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" || b.state?.chatList === "ig-node" ? b.state.chatList : undefined;
     const commentCursor = (value: unknown) => typeof value === "string" && /^[\w=+/.-]{1,400}$/.test(value) ? value : undefined;
+    const igChats = Array.isArray(b.state?.igChats)
+      ? b.state.igChats.slice(0, 6).flatMap((c) => {
+        const id = typeof c?.id === "string" && /^[\w.-]{1,200}$/.test(c.id) ? c.id : undefined;
+        const updated = typeof c?.updated_time === "string" && /^[\dT:+\-.Z]{10,40}$/.test(c.updated_time) ? c.updated_time : undefined;
+        return id && updated ? [{ id, updated_time: updated }] : [];
+      })
+      : undefined;
     const commentId = (value: unknown) => typeof value === "string" && /^[\w.-]{1,200}$/.test(value) ? value : undefined;
     const commentUrl = (value: unknown) => {
       if (typeof value !== "string" || value.length > 2048) return undefined;
@@ -87,7 +94,7 @@ export async function POST(req: Request) {
       cfg,
       sheetPageId,
       days,
-      state: { phase, after, chatList, commentBatch, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
+      state: { phase, after, chatList, igChats, commentBatch, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
       ds,
       tz: process.env.APP_TZ || "Asia/Bangkok",
       base: process.env.FB_GRAPH_BASE,
@@ -99,7 +106,9 @@ export async function POST(req: Request) {
     if (e instanceof FbError) {
       const slowIg = ig && (e.code === 1 || e.code === 2);
       const message = isExpiredMetaToken(e) ? expiredMetaTokenMessage("facebook") : `${e.message}${slowIg ? " — Instagram ตอบช้ากว่ากำหนด: ลดจำนวนวันย้อนหลัง (เช่น 3 วัน) แล้วดึงซ้ำ" : ""}`;
-      return fail(e.rateLimited ? 429 : 502, message, { rateLimited: e.rateLimited });
+      // Only timeouts and Meta hiccups are worth retrying; a permission/link error answers the same every time.
+      const permanent = [100, 190, 10, 200].includes(e.code ?? -1);
+      return fail(e.rateLimited ? 429 : permanent ? 400 : 502, message, { rateLimited: e.rateLimited });
     }
     const sheetStatus = e instanceof Error ? /^Google Sheets (\d+):/i.exec(e.message)?.[1] : undefined;
     if (sheetStatus) {

@@ -105,7 +105,7 @@ export default function FbSyncCard() {
     } finally { setChecking(false); }
   };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string, channel?: "instagram") => {
-    let state: { phase: string; after?: string; chatList?: "light" | "no-platform"; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
+    let state: { phase: string; after?: string; chatList?: "light" | "no-platform" | "ig-node"; igChats?: { id: string; updated_time: string }[]; commentBatch?: { id: string; url?: string; after?: string; basic?: boolean }[]; commentPostId?: string; commentPostUrl?: string; commentAfter?: string; commentsFeedDone?: boolean; commentBasic?: boolean } = { phase: "chats" }, failures = 0, rateWaits = 0, commentSteps = 0;
     {
       while (state.phase !== "done" && !stop.current) {
         if (state.phase === "comments") commentSteps++;
@@ -126,7 +126,7 @@ export default function FbSyncCard() {
           }
           throw new Error(j.message || "ดึงข้อมูลไม่สำเร็จ");
         }
-        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); tot.postsWithReportedComments += j.counts?.postsWithReportedComments ?? 0; tot.postsWithoutCommentSummary += j.counts?.postsWithoutCommentSummary ?? 0; tot.commentPagesRead += j.counts?.commentPagesRead ?? 0; tot.commentItemsReceived += j.counts?.commentItemsReceived ?? 0; tot.commentsOutsideRange += j.counts?.commentsOutsideRange ?? 0; tot.pageCommentsSkipped += j.counts?.pageCommentsSkipped ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, commentBatch: j.next?.commentBatch, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
+        failures = 0; if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); } tot.chats += j.counts?.chats ?? 0; tot.newLeads += j.counts?.newLeads ?? 0; tot.messages += j.counts?.messages ?? 0; tot.comments += j.counts?.comments ?? 0; tot.posts = (tot.posts ?? 0) + (j.counts?.posts ?? 0); tot.postsWithReportedComments += j.counts?.postsWithReportedComments ?? 0; tot.postsWithoutCommentSummary += j.counts?.postsWithoutCommentSummary ?? 0; tot.commentPagesRead += j.counts?.commentPagesRead ?? 0; tot.commentItemsReceived += j.counts?.commentItemsReceived ?? 0; tot.commentsOutsideRange += j.counts?.commentsOutsideRange ?? 0; tot.pageCommentsSkipped += j.counts?.pageCommentsSkipped ?? 0; state = { phase: j.next?.phase ?? "done", after: j.next?.after, chatList: j.next?.chatList, igChats: j.next?.igChats, commentBatch: j.next?.commentBatch, commentPostId: j.next?.commentPostId, commentPostUrl: j.next?.commentPostUrl, commentAfter: j.next?.commentAfter, commentsFeedDone: j.next?.commentsFeedDone, commentBasic: j.next?.commentBasic };
       }
     }
   };

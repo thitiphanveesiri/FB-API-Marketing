@@ -10,7 +10,9 @@ export interface CommentPostState { id: string; url?: string; after?: string; ba
 export interface SyncState {
   phase: Phase;
   after?: string;
-  chatList?: "light" | "no-platform";
+  chatList?: "light" | "no-platform" | "ig-node";
+  /** Instagram conversations already listed; the messages are read on the next step so a slow list call cannot blow the 60 s route limit. */
+  igChats?: { id: string; updated_time: string }[];
   commentBatch?: CommentPostState[];
   commentPostId?: string;
   commentPostUrl?: string;
@@ -97,6 +99,7 @@ export const MAX_COMMENT_POSTS_PER_BATCH = 50;
 const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = MAX_COMMENT_POSTS_PER_BATCH, COMMENT_PARALLEL = 5;
 /** Instagram conversations are much slower to list than Messenger: ask for fewer chats and fewer message pages, with a longer per-request timeout. */
 const IG_CHATS_PER_CALL = 2, IG_MSG_PAGES = 2, IG_MSG_LIMIT = 50, IG_MIN_TIMEOUT_MS = 25000, IG_MAX_TIMEOUT_MS = 25000, IG_TIME_BUDGET_MS = 35000;
+const IG_LIST_PAGE_MS = 15000, IG_LIST_TIMEOUT_MS = 35000, IG_LIST_FALLBACK_MS = 12000, IG_LIST_DEFER_MS = 25000;
 
 /** Meta's inbox edges fail for reasons that are not the token: a 500 on the page's conversation list, or "Object does not exist / missing
  *  permissions" (code 100) when the app may not read that inbox. Say which one it is — both otherwise look like a plain sync failure. */
@@ -105,12 +108,22 @@ export function inboxHint(e: FbError, isIg: boolean): string | null {
   if (e.code === 100) return isIg
     ? "อ่านรายการแชท Instagram ของบัญชีนี้ไม่ได้ — ตรวจ 3 อย่าง: (1) IG ยังผูกกับเพจนี้อยู่ (Business Suite) (2) แอป Meta มีสิทธิ์ instagram_manage_messages และแอปอยู่โหมด Live หรือบัญชีนี้เป็นผู้ดูแลแอป (3) ในแอป Instagram → Settings → Messages and story replies → Connected tools → เปิด Allow access to messages"
     : "อ่านกล่องข้อความ Messenger ของเพจนี้ไม่ได้ — ตรวจว่าเพจยังผูกกับแอป Meta และโทเคนมีสิทธิ์ pages_messaging";
-  if (e.code === 1 || e.code === 2) return "Meta ขัดข้องตอนอ่านรายการแชทของเพจนี้ (ฝั่ง Meta ไม่ใช่โทเคนหรือ Google Sheet) — ลองดึงซ้ำภายหลัง หรือลดช่วงย้อนหลังเหลือ 3 วัน ถ้าซ้ำที่เพจเดิมทุกครั้ง ให้เปิดกล่องข้อความของเพจใน Business Suite และตรวจว่าแอปมีสิทธิ์ pages_messaging";
+  if (e.code === 1 || e.code === 2) return isIg
+    ? "Meta ตอบช้าหรือขัดข้องตอนอ่านรายการแชท Instagram (ฝั่ง Meta ไม่ใช่โทเคนหรือ Google Sheet) — ลองดึงซ้ำภายหลัง หรือลดช่วงย้อนหลังเหลือ 3 วัน"
+    : "Meta ขัดข้องตอนอ่านรายการแชทของเพจนี้ (ฝั่ง Meta ไม่ใช่โทเคนหรือ Google Sheet) — ลองดึงซ้ำภายหลัง หรือลดช่วงย้อนหลังเหลือ 3 วัน ถ้าซ้ำที่เพจเดิมทุกครั้ง ให้เปิดกล่องข้อความของเพจใน Business Suite และตรวจว่าแอปมีสิทธิ์ pages_messaging";
   return null;
 }
 const inboxError = (e: unknown, isIg: boolean): unknown => {
   const hint = e instanceof FbError ? inboxHint(e, isIg) : null;
   return hint ? new FbError(`${(e as FbError).message} — ${hint}`, false, (e as FbError).code) : e;
+};
+/** Both Instagram nodes failed: keep the actionable answer (code 100 says what to fix) and mention the other attempt briefly. */
+const mergeInboxError = (a: unknown, b: unknown): unknown => {
+  const primary = a instanceof FbError && a.code === 100 ? a : b instanceof FbError && b.code === 100 ? b : a instanceof FbError ? a : b;
+  if (!(primary instanceof FbError)) return b;
+  const hint = inboxHint(primary, true), other = primary === a ? b : a;
+  const suffix = !hint && other instanceof FbError ? ` · อีก node: ${other.message.slice(0, 120)}` : "";
+  return new FbError(`${primary.message}${hint ? ` — ${hint}` : ""}${suffix}`, false, primary.code);
 };
 
 export async function syncStep(i: SyncInput): Promise<SyncOutput> {
@@ -142,40 +155,65 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
-    // Instagram's inbox lives on the IG account node (`/<IG_ID>/conversations`); the Page node only serves Messenger.
     const convQuery = (fields: string, platform: boolean) => graph(
-      isIg ? `${i.igId ?? ""}/conversations` : `${fb}/conversations`,
-      { ...(isIg ? { platform: "instagram" } : platform ? { platform: "messenger" } : {}), fields, limit: String(isIg ? IG_CHATS_PER_CALL : CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) },
+      `${fb}/conversations`,
+      { ...(platform ? { platform: "messenger" } : {}), fields, limit: String(CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) },
       tok, f, base, 900, 0,
     );
     const isTransient = (e: unknown) => e instanceof FbError && (e.code === 1 || e.code === 2);
-    if (isIg && !i.igId) throw new FbError("ยังไม่ทราบบัญชี Instagram ของเพจนี้ — เชื่อมเพจใหม่ที่หน้า Upload (ระบบจะอ่าน IG ID ให้)", false, 100);
-    let j: Graph, chatList = i.state.chatList;
-    if (chatList === "no-platform" && !isIg) j = await convQuery("id,updated_time", false);
-    else if (chatList === "light") {
-      try { j = await convQuery("id,updated_time", true); }
-      catch (e) { if (!isTransient(e)) throw e; if (isIg) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
-    } else if (isIg) {
-      // participants makes Meta very slow on big Instagram inboxes; the customer is read from the messages instead
-      try { j = await convQuery("id,updated_time", true); }
-      catch (e) { throw inboxError(e, true); }
-    } else {
-      try { j = await convQuery("id,updated_time,participants", true); }
+    let j: Graph = {}, chatList = i.state.chatList;
+    let fresh: FbConv[] = [], more = false;
+    const pending = isIg ? i.state.igChats ?? [] : [];
+    if (pending.length) fresh = pending;
+    else if (isIg) {
+      if (!i.igId) throw new FbError("ยังไม่ทราบบัญชี Instagram ของเพจนี้ — เชื่อมเพจใหม่ที่หน้า Upload (ระบบจะอ่าน IG ID ให้)", false, 100);
+      // With a Page access token Meta documents the inbox on the Page node; the IG account node is the fallback when that edge is
+      // refused or slow, and is remembered once it answers so later steps skip the wait. `participants` is left out on purpose:
+      // it makes Meta very slow on big Instagram inboxes, so the customer is read from the messages instead.
+      const ask = (node: "page" | "ig", ms: number) => graph(
+        node === "page" ? `${fb}/conversations` : `${i.igId}/conversations`,
+        { platform: "instagram", fields: "id,updated_time", limit: String(IG_CHATS_PER_CALL), ...(i.state.after ? { after: i.state.after } : {}) },
+        tok, i.fetchFn ?? metaFetchWith(ms), base, 900, 0,
+      );
+      const first: "page" | "ig" = chatList === "ig-node" ? "ig" : "page", second: "page" | "ig" = first === "page" ? "ig" : "page";
+      const msOf = (node: "page" | "ig", which: "first" | "second") => node === "ig" ? (which === "first" ? IG_LIST_TIMEOUT_MS : IG_LIST_FALLBACK_MS) : (which === "first" ? IG_LIST_PAGE_MS : IG_LIST_FALLBACK_MS);
+      try { j = await ask(first, msOf(first, "first")); chatList = first === "ig" ? "ig-node" : undefined; }
       catch (e) {
-        if (!isTransient(e)) throw inboxError(e, false);
-        chatList = "light";
+        try { j = await ask(second, msOf(second, "second")); chatList = second === "ig" ? "ig-node" : undefined; }
+        catch (e2) { throw mergeInboxError(e, e2); }
+      }
+      const all = (j.data ?? []) as FbConv[];
+      fresh = all.filter((c) => ms(c.updated_time) >= since);
+      const cutoff = fresh.length < all.length; // list is newest-first: an old one means the rest is older still
+      more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
+      const igNext: SyncState = { phase: "chats", ...(more ? { after: j.paging!.cursors!.after } : {}), ...(chatList === "ig-node" ? { chatList } : {}) };
+      if (!fresh.length) return { next: more ? igNext : { phase: "done" }, writes, counts };
+      // Listing can eat most of the 60 s step: read these messages on the next step so the Sheet writes still finish.
+      if (Date.now() - t0 > IG_LIST_DEFER_MS) return { next: { ...igNext, igChats: fresh.map((c) => ({ id: c.id, updated_time: c.updated_time })) }, writes, counts };
+    } else {
+      if (chatList === "no-platform") j = await convQuery("id,updated_time", false);
+      else if (chatList === "light") {
         try { j = await convQuery("id,updated_time", true); }
-        catch (e2) {
-          if (!isTransient(e2)) throw inboxError(e2, false);
-          try { j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
-          catch (e3) { throw inboxError(e3, false); }
+        catch (e) { if (!isTransient(e)) throw e; j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+      } else {
+        try { j = await convQuery("id,updated_time,participants", true); }
+        catch (e) {
+          if (!isTransient(e)) throw inboxError(e, false);
+          chatList = "light";
+          try { j = await convQuery("id,updated_time", true); }
+          catch (e2) {
+            if (!isTransient(e2)) throw inboxError(e2, false);
+            try { j = await convQuery("id,updated_time", false); chatList = "no-platform"; }
+            catch (e3) { throw inboxError(e3, false); }
+          }
         }
       }
+      const all = (j.data ?? []) as FbConv[];
+      fresh = all.filter((c) => ms(c.updated_time) >= since);
+      const cutoff = fresh.length < all.length; // list is newest-first: an old one means the rest is older still
+      more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
     }
     let skippedChats = 0, partialChats = 0, budgetCuts = 0;
-    const convs = (j.data ?? []) as FbConv[];
-    const fresh = convs.filter((c) => ms(c.updated_time) >= since);
-    const cutoff = fresh.length < convs.length; // list is newest-first: an old one means the rest is older still
 
     const mine = i.ds.leads.filter((l) => l.pageId === i.sheetPageId);
     const byId = new Set(mine.map((l) => l.id));
@@ -236,9 +274,15 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     const leadUpdates = new Map(movedRows);
     for (const [id, row] of psidRows) leadUpdates.set(id, { ...leadUpdates.get(id), ...row });
     if (leadUpdates.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...leadUpdates.values()], mode: "updateOnly" });
-    const more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
-    const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : ""].filter(Boolean).join(" · ");
-    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: isIg ? "done" : "comments" }, writes, counts, ...(warning ? { warning } : {}) };
+    const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", !isIg && chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : "", isIg && chatList === "ig-node" ? "ดึงรายการแชท Instagram ผ่าน IG node แทน Page node" : ""].filter(Boolean).join(" · ");
+    if (isIg) {
+      // Pending conversations were listed by the previous step: continue with its cursor, otherwise list the next page (or finish).
+      const next: SyncState = pending.length
+        ? (i.state.after ? { phase: "chats", after: i.state.after, ...(chatList ? { chatList } : {}) } : { phase: "done" })
+        : more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "done" };
+      return { next, writes, counts, ...(warning ? { warning } : {}) };
+    }
+    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" }, writes, counts, ...(warning ? { warning } : {}) };
   }
 
   if (i.state.phase === "comments") {
