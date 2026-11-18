@@ -8,6 +8,7 @@ import { chatQuality } from "@/lib/metrics";
 import LeadDrawer from "@/components/LeadDrawer";
 import { Ad, Lead, LeadStatus } from "@/lib/types";
 import { fmtDate } from "@/lib/dates";
+import { pageOfAd } from "@/lib/queries";
 
 type ColKey = "Not Responded" | "Very Poor" | "Average" | "Qualified" | "Appointment Booked" | "Connection Created" | "New" | "In-Process" | "Converted" | "Intake";
 interface Row { ad: Ad; campaign: string; page: string; leads: Lead[]; rate: number | null; valid: number; counts: Record<string, number>; unattributed?: boolean }
@@ -27,7 +28,7 @@ export default function AdsChat() {
       const leads = D.leads.filter((l) => l.adId === ad.id && l.valid);
       const ls = leadStats(leads);
       const c = camps.get(ad.campaignId)!;
-      return { ad, campaign: c.name, page: pages.get(c.pageId) ?? "", leads, rate: ls.qualifiedRate, valid: ls.valid, counts: { ...ls.byStatus } };
+      return { ad, campaign: c.name, page: pages.get(pageOfAd(ad, c)) ?? "", leads, rate: ls.qualifiedRate, valid: ls.valid, counts: { ...ls.byStatus } };
     }).filter((r) => r.valid > 0 && (statusF === "all" || r.ad.status === statusF));
   }, [D, statusF]);
 

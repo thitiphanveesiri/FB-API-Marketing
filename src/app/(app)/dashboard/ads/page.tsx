@@ -10,6 +10,7 @@ import { Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, KpiCard,
 import { ChartCard, TimeChart } from "@/components/charts";
 import { Ad } from "@/lib/types";
 import { fmtShort, ANCHOR } from "@/lib/dates";
+import { pageOfAd } from "@/lib/queries";
 
 type MetricKey = "spend" | "reach" | "impressions" | "cpm" | "clicks" | "ctr" | "cpc" | "messages" | "cpmsg" | "purchases" | "conv" | "cpp";
 
@@ -57,7 +58,7 @@ export default function AdsPerformance() {
       const ls = leadStats(D.leads.filter((l) => l.adId === ad.id));
       const c = camps.get(ad.campaignId)!;
       return {
-        ad, campaign: c.name, page: pages.get(c.pageId)?.name ?? "", reach: a.reach, impressions: a.impressions, cpm: d.cpm, ctr: d.ctr,
+        ad, campaign: c.name, page: pages.get(pageOfAd(ad, c))?.name ?? "", reach: a.reach, impressions: a.impressions, cpm: d.cpm, ctr: d.ctr,
         costPerMsg: d.costPerMessage, cqc: ls.qualified ? a.spend / ls.qualified : null, purchases: a.purchases, spend: a.spend, cpc: d.cpc,
         qrate: ls.qualifiedRate, leadCount: ls.valid, quality: chatQuality(ls.qualifiedRate, ls.valid), messages: a.messages,
       };

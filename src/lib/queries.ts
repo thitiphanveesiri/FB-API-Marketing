@@ -1,7 +1,7 @@
 // Pure data-access/business logic: filters in, slices out. No React here.
 import { addDays, ANCHOR, diffDays } from "./dates";
 import type { Dataset } from "./dataset";
-import { Ad, DailyPerf, Lead, Role, User } from "./types";
+import { Ad, Campaign, DailyPerf, Lead, Role, User } from "./types";
 
 export type Preset = "7d" | "30d" | "90d" | "custom";
 export interface Filters {
@@ -49,12 +49,18 @@ export function effectiveFilters(f: Filters, user: User): Filters {
   return { ...f, agencyId: s.agencyId ?? f.agencyId, repId: s.repId ?? f.repId };
 }
 
+/** The page an ad shows under: its own page when known, otherwise its campaign's (a campaign can serve several pages). */
+export const pageOfAd = (a: Ad, campaign?: Campaign) => a.pageId || campaign?.pageId || "";
+/** Whether a campaign has anything on a page — the campaign's own page or at least one ad that posts as it. */
+export const campaignOnPage = (c: Campaign, ads: Ad[], pageId: string) =>
+  pageId === "all" || c.pageId === pageId || ads.some((a) => a.campaignId === c.id && a.pageId === pageId);
+
 export function adsFor(d: Dataset, f: Filters): Ad[] {
   const camps = new Map(d.campaigns.map((c) => [c.id, c]));
   return d.ads.filter((a) => {
     const c = camps.get(a.campaignId);
     if (!c) return false;
-    if (f.pageId !== "all" && c.pageId !== f.pageId) return false;
+    if (f.pageId !== "all" && pageOfAd(a, c) !== f.pageId) return false;
     if (f.campaignId !== "all" && c.id !== f.campaignId) return false;
     if (f.agencyId !== "all" && c.agencyId !== f.agencyId) return false;
     if (f.adStatus !== "all" && a.status !== f.adStatus) return false;

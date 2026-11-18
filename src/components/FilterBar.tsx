@@ -4,7 +4,7 @@ import { useStore } from "@/lib/store";
 import { Btn, Select, TextInput } from "./ui";
 import { Preset } from "@/lib/queries";
 import { ANCHOR } from "@/lib/dates";
-import { scopeFor } from "@/lib/queries";
+import { campaignOnPage, scopeFor } from "@/lib/queries";
 
 const PRESETS: { id: Preset; label: string }[] = [
   { id: "7d", label: "Last 7 Days" },
@@ -16,7 +16,7 @@ const PRESETS: { id: Preset; label: string }[] = [
 export default function FilterBar({ hide = [] }: { hide?: ("rep" | "adStatus")[] }) {
   const { data, filters, setFilters, setPreset, resetFilters, user } = useStore();
   const scope = scopeFor(user);
-  const camps = data.campaigns.filter((c) => (filters.pageId === "all" || c.pageId === filters.pageId) && (!scope.agencyId || c.agencyId === scope.agencyId));
+  const camps = data.campaigns.filter((c) => campaignOnPage(c, data.ads, filters.pageId) && (!scope.agencyId || c.agencyId === scope.agencyId));
   const reps = data.users.filter((u) => u.role === "Sales Representative");
   const dateErr = filters.start > filters.end ? "Start must be before end" : "";
 

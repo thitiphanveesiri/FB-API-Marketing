@@ -42,7 +42,8 @@ export async function POST(req: Request) {
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.
-    const warnings = [out.warning, stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
+    const forced = ch.forceSheetPage ? `บัญชีนี้ตั้ง “บังคับใช้เพจที่เลือกกับโฆษณาทั้งหมด” — ทุกแคมเปญจะอยู่ใต้เพจ ${g.mapped.dataset.pages.find((p) => p.id === ch.sheetPageId)?.name ?? ch.sheetPageId}; ถ้าต้องการแยกตามเพจต้นทาง ให้แก้การเชื่อมต่อที่หน้า Upload แล้วเอาติ๊กออก` : "";
+    const warnings = [out.warning, forced, stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: warnings.length ? warnings.join(" · ") : undefined, byPage: out.byPage }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e.message, { rateLimited: e.rateLimited });

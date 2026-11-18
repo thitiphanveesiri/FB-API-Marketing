@@ -291,7 +291,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         t: "import.commit", replace: !!replaceKeys,
         record: { import_id: rec.id, page_id: rec.pageId, data_type: rec.dataType, file_name: rec.fileName, mode: rec.mode, total: rec.total, imported: rec.imported, failed: rec.failed, duplicates: rec.duplicates },
         campaigns: newCampaigns.map((c) => ({ campaign_id: c.id, name: c.name, page_id: c.pageId, agency_id: c.agencyId, objective: c.objective })),
-        ads: newAds.map((a) => ({ ad_id: a.id, name: a.name, campaign_id: a.campaignId, status: a.status, creative_type: a.creative.type, updated_at: a.updatedAt })),
+        ads: newAds.map((a) => ({ ad_id: a.id, name: a.name, campaign_id: a.campaignId, ...(a.pageId ? { page_id: a.pageId } : {}), status: a.status, creative_type: a.creative.type, updated_at: a.updatedAt })),
         perf: perf.map((p) => ({ date: p.date, ad_id: p.adId, spend: p.spend, reach: p.reach, impressions: p.impressions, clicks: p.clicks, messages: p.messages, purchases: p.purchases })),
         leads: leads.map(leadToRow),
         insights: insights.map((i) => ({ page_id: i.pageId, date: i.date, reach: i.reach, views: i.views, engagements: i.engagements, followers: i.followers, new_followers: i.newFollowers, link_clicks: i.linkClicks })),

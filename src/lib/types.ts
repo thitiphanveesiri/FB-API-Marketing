@@ -109,6 +109,8 @@ export interface Ad {
   id: string;
   name: string;
   campaignId: string;
+  /** Page the ad itself posts as; blank = the campaign's page. A campaign can serve several pages. */
+  pageId?: string;
   status: AdStatus;
   creative: { type: "Image" | "Video" | "Carousel"; hue: number; url?: string; video?: string };
   updatedAt: string;

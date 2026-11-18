@@ -40,12 +40,15 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // Detail levels, richest first. When Meta rejects one (code 100 invalid parameter, or 1/2 "unexpected error" for too much data) the next lighter one is tried,
     // and later batches stay on the level that worked — so a single bad field costs only that field, not the whole ad list.
     const CAMP = "campaign{id,name,objective}";
+    // Every level keeps the creative's Page (object_story_spec / effective_object_story_id): page mapping is what files an ad
+    // under the right page, so dropping it while Meta refuses heavier fields would send the whole campaign to the default page.
+    const PAGE = "effective_object_story_id,object_story_spec{page_id}";
     const TIERS = [
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,effective_object_story_id,object_story_spec{page_id}}`, filter: true, limit: ADS_PER_CALL, note: "" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,effective_object_story_id,object_story_spec{page_id}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,effective_object_story_id}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
-      { fields: "id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url}", filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและการจับคู่เพจจากตัวโฆษณา" },
-      { fields: "id,name,effective_status,updated_time,campaign{id,name}", filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณาและการจับคู่เพจจากตัวโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${PAGE}}`, filter: true, limit: ADS_PER_CALL, note: "" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${PAGE}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญ" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
     ];
     // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
     const fetchAds = (t: number) => graph(`${acct}/ads`, {
@@ -64,6 +67,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
     const ads = (j.data ?? []) as RawAd[];
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
+    let noPage = 0;
     for (const a of ads) {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
       const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
@@ -73,8 +77,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const viaMap = fbPage ? i.pageMap?.[fbPage] : undefined;
       const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap]) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
+      else if (!fbPage && !mapped) noPage++;
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
-      adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
+      // The ad's own page (when known) wins on the dashboard, so one campaign can serve several pages.
+      adRows.push({ ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
         updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "" });
     }
     counts.ads = adRows.length; counts.campaigns = camps.size;
@@ -88,6 +94,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
     if (unmapped.size && !i.state.after) notes.push(`เพจที่โฆษณาใช้ลงประกาศยังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
+    else if (noPage && !i.state.after) notes.push(`${noPage} โฆษณาไม่ได้ระบุเพจต้นทางใน creative — แสดงใต้เพจเริ่มต้นของบัญชี; ดึงซ้ำภายหลังถ้า Meta ส่งข้อมูล creative ครบ`);
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
