@@ -13,7 +13,7 @@ export function datasetToTabs(d: Dataset): RawTabs {
   d.agencies.forEach((a) => t.agencies.push([a.id, a.name, a.contact, a.email, String(a.active).toUpperCase()]));
   d.users.forEach((u) => t.users.push([u.id, u.name, u.email, u.role, s(u.agencyId), String(u.active).toUpperCase()]));
   d.campaigns.forEach((c) => t.campaigns.push([c.id, c.name, c.pageId, c.agencyId, c.objective]));
-  d.ads.forEach((a) => t.ads.push([a.id, a.name, a.campaignId, a.status, a.creative.type, a.updatedAt, a.creative.url ?? "", a.creative.video ?? "", a.pageId ?? ""]));
+  d.ads.forEach((a) => t.ads.push([a.id, a.name, a.campaignId, a.status, a.creative.type, a.updatedAt, a.creative.url ?? "", a.creative.video ?? "", a.caption ?? "", a.headline ?? "", a.pageId ?? ""]));
   d.perf.forEach((p) => t.ad_performance.push([p.date, p.adId, s(p.spend), s(p.reach), s(p.impressions), s(p.clicks), s(p.messages), s(p.purchases)]));
   d.leads.forEach((l) => t.leads.push([l.id, l.name, l.pageId, s(l.adId), s(l.repId), l.status, l.quality, String(l.valid).toUpperCase(), l.createdAt,
     l.lastContactAt.replace("T", " ").slice(0, 16), l.lastMessage, s(l.followUpDate), l.phone, l.email, s(l.firstResponseMin), s(l.followUps), s(l.avgFollowUpHrs), String(l.unread).toUpperCase(),
