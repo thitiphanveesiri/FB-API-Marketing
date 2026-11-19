@@ -39,6 +39,10 @@ export async function POST(req: Request) {
     if (e instanceof Denied) return NextResponse.json({ ok: false, message: e.message }, { status: e.status, ...noStore });
     console.error("[api/mutate]", e);
     invalidateCache();
-    return NextResponse.json({ ok: false, message: "Saving to the Google Sheet failed. Check that the service account is an Editor of the sheet." }, { status: 502, ...noStore });
+    const raw = e instanceof Error ? e.message : "";
+    const message = /exceeds grid limits/i.test(raw)
+      ? "Saving failed: the sheet tab is out of columns or rows and could not be expanded. Add more columns to the tab and try again."
+      : "Saving to the Google Sheet failed. Check that the service account is an Editor of the sheet.";
+    return NextResponse.json({ ok: false, message }, { status: 502, ...noStore });
   }
 }

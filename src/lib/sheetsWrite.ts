@@ -43,9 +43,34 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
     const data: { range: string; values: unknown[][] }[] = [];
     for (const h of plan.headerAdds) data.push({ range: `${A1(title)}!${colLetter(h.col)}1`, values: [[h.name]] });
     for (const u of plan.updates) data.push({ range: `${A1(title)}!${colLetter(u.col)}${u.row}`, values: [[u.value]] });
-    for (let i = 0; i < data.length; i += 500) await call(`${base}/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: data.slice(i, i + 500) }) });
+    // A tab created with the default 26 columns cannot take a new 27th header: grow the grid first (AA1 would otherwise fail).
+    const needCols = Math.max(0, ...plan.headerAdds.map((h) => h.col + 1), ...plan.updates.map((u) => u.col + 1), ...plan.appends.map((r) => r.length));
+    const needRows = Math.max(0, ...plan.updates.map((u) => u.row)); // appends insert rows themselves
+    const grow = async () => {
+      const meta = (await call(`${base}?fields=sheets.properties(sheetId,title,gridProperties)`)) as { sheets?: { properties?: { sheetId?: number; title?: string; gridProperties?: { rowCount?: number; columnCount?: number } } }[] };
+      const p = meta.sheets?.find((s) => s.properties?.title === title)?.properties;
+      if (!p || p.sheetId == null) return false;
+      const rows = p.gridProperties?.rowCount ?? 0, cols = p.gridProperties?.columnCount ?? 0;
+      const requests: unknown[] = [];
+      if (needCols > cols) requests.push({ appendDimension: { sheetId: p.sheetId, dimension: "COLUMNS", length: needCols - cols } });
+      if (needRows > rows) requests.push({ appendDimension: { sheetId: p.sheetId, dimension: "ROWS", length: needRows - rows } });
+      if (requests.length === 0) return false;
+      await call(`${base}:batchUpdate`, { method: "POST", body: JSON.stringify({ requests }) });
+      return true;
+    };
+    const withGrow = async <T>(fn: () => Promise<T>): Promise<T> => {
+      try { return await fn(); }
+      catch (e) {
+        if (!(e instanceof Error) || !/exceeds grid limits/i.test(e.message) || !(await grow())) throw e;
+        return await fn();
+      }
+    };
+    for (let i = 0; i < data.length; i += 500) {
+      const chunk = data.slice(i, i + 500);
+      await withGrow(() => call(`${base}/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: chunk }) }));
+    }
     for (let i = 0; i < plan.appends.length; i += 1000)
-      await call(`${base}/values/${encodeURIComponent(`${A1(title)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: plan.appends.slice(i, i + 1000) }) });
+      await withGrow(() => call(`${base}/values/${encodeURIComponent(`${A1(title)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: plan.appends.slice(i, i + 1000) }) }));
     if (reused) patchCachedTab(tab, applyPlan(grid, plan));
     return { updated: plan.updated, appended: plan.appended, skipped: plan.skipped };
   });
