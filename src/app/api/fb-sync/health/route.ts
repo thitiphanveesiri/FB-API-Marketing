@@ -99,8 +99,24 @@ export async function GET(req: Request) {
     const name = c.name || c.channelId;
     if (!token) return { id: c.accountId, name, ok: false, detail: "ไม่พบโทเคนเพจ Facebook ที่ผูกกับ Instagram นี้ — เชื่อมเพจ Facebook ก่อน" };
     try {
-      const j = (await graph(encodeURIComponent(c.accountId), { fields: "username" }, token, f, graphBase(), 900, 1)) as { username?: string };
-      return { id: c.accountId, name, ok: true, detail: `อ่านบัญชีได้ · @${j.username ?? c.accountId}` };
+      const id = encodeURIComponent(c.accountId);
+      const j = (await graph(id, { fields: "username" }, token, f, graphBase(), 900, 1)) as { username?: string };
+      // Reading the account proves nothing about comments: that is instagram_manage_comments on its own, so probe the comments edge too.
+      let comments = "ยังไม่มีโพสต์ให้ตรวจคอมเมนต์";
+      try {
+        const media = (await graph(`${id}/media`, { fields: "id", limit: "1" }, token, fIg, graphBase(), 900, 0)) as unknown as { data?: { id?: string }[] };
+        const first = media.data?.find((m) => m.id)?.id;
+        if (first) {
+          await graph(`${encodeURIComponent(first)}/comments`, { fields: "id", limit: "1" }, token, fIg, graphBase(), 900, 0);
+          comments = "คอมเมนต์อ่านได้";
+        }
+      } catch (e) {
+        const msg = e instanceof FbError && (e.code === 10 || e.code === 200)
+          ? "อ่านคอมเมนต์ไม่ได้ — โทเคนขาดสิทธิ์ instagram_manage_comments (สร้างโทเคนใหม่โดยติ๊กสิทธิ์นี้ แล้วเชื่อมเพจใหม่)"
+          : `อ่านคอมเมนต์ไม่ได้: ${why(e)}`;
+        return { id: c.accountId, name, ok: false, detail: `อ่านบัญชีได้ · @${j.username ?? c.accountId} · ${msg}` };
+      }
+      return { id: c.accountId, name, ok: true, detail: `อ่านบัญชีได้ · @${j.username ?? c.accountId} · ${comments}` };
     } catch (e) {
       return { id: c.accountId, name, ok: false, detail: e instanceof FbError && e.code === 100
         ? "โหลดบัญชี Instagram นี้ด้วยแอป/โทเคนนี้ไม่ได้ — ID ของ Graph แยกตามแอป (อาจคัดลอกมาจากแอปอื่น) หรือ IG ยังไม่ผูกกับเพจ; เชื่อมเพจใหม่ที่ Upload เพื่อให้ระบบอ่าน ID ใหม่"

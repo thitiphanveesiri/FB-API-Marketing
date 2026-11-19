@@ -302,6 +302,11 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       if (!ig) return { next: { phase: "done" }, writes, counts, warning: "ข้ามคอมเมนต์ Instagram: ยังไม่ทราบบัญชี Instagram ของเพจนี้ — เชื่อมเพจใหม่ที่หน้า Upload" };
       const noPerm = (e: unknown) => e instanceof FbError && (e.code === 10 || e.code === 200);
       const skip = (why: string): SyncOutput => ({ next: { phase: "done" }, writes, counts, warning: why });
+      // Zero comments is indistinguishable from "not working" in the summary, so on the last media page say what Meta actually
+      // reported. Gated on the last page so a long list does not repeat the note on every batch.
+      const doneNote = (feedDone: boolean, made: number) => feedDone && counts.posts && !made
+        ? `คอมเมนต์ Instagram: ตรวจ ${counts.posts} โพสต์ — Meta รายงานมีคอมเมนต์ ${counts.postsWithReportedComments} โพสต์ (ไม่มีข้อมูลคอมเมนต์ ${counts.postsWithoutCommentSummary}), อ่านได้ ${counts.commentItemsReceived} รายการ (นอกช่วงวันที่ ${counts.commentsOutsideRange}, ของร้านเอง ${counts.pageCommentsSkipped})`
+        : "";
       let feedAfter = i.state.after, feedDone = i.state.commentsFeedDone === true;
       let batch = i.state.commentBatch ?? (i.state.commentPostId ? [{ id: i.state.commentPostId, url: i.state.commentPostUrl, after: i.state.commentAfter, basic: i.state.commentBasic }] : []);
       if (!batch.length) {
@@ -323,7 +328,10 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         feedDone = !feedAfter;
         // Newest-first: a page entirely older than the lookback means the next pages are older still.
         if (media.length && media.every((m) => m.timestamp && ms(m.timestamp) < cutoff)) { feedDone = true; feedAfter = undefined; }
-        if (!batch.length) return { next: feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter }, writes, counts };
+        if (!batch.length) {
+          const note = doneNote(feedDone, 0);
+          return { next: feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter }, writes, counts, ...(note ? { warning: note } : {}) };
+        }
       }
       // Instagram comments carry a username, not a page id: the account's own username marks the business's replies.
       const igUser = await graph(ig, { fields: "username" }, tok, f, base, 900, 0).then((j) => (j as unknown as { username?: string }).username ?? "").catch(() => "");
@@ -369,7 +377,9 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       const next: SyncState = remaining.length
         ? { phase: "comments", ...(feedAfter ? { after: feedAfter } : {}), commentsFeedDone: feedDone, commentBatch: remaining }
         : feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter };
-      return { next, writes, counts };
+      // Zero comments on checked media is indistinguishable from "not working" in the summary: say what Meta actually reported.
+      const note = doneNote(feedDone, rows.length);
+      return { next, writes, counts, ...(note ? { warning: note } : {}) };
     }
     // posts are filtered by their own date, so look back a bit further to catch fresh comments on slightly older posts
     // Comments need the pages_read_engagement permission (and pages_read_user_content for the commenters). A token without them must not sink the chats that were already pulled.
