@@ -69,7 +69,8 @@ export default function UploadPage() {
       type, mapping, rows, mode, importId: "IMP-PREVIEW", existingPerfKeys, existingAdIds: new Set(data.ads.map((a) => a.id)), existingLeadIds: new Set(data.leads.map((l) => l.id)), existingInsightKeys: new Set(data.insights.map((i) => `${i.pageId}|${i.date}`)),
       existingLeads: pageLeads, leadIdByName: leadIdsByName,
       existingMessageIds: new Set(Object.values(data.messages).flat().map((m) => m.id)), existingCommentIds: new Set(data.comments.map((c) => c.id)),
-      pageId, repsByName: new Map(data.users.filter((u) => u.role === "Sales Representative").map((u) => [u.name.toLowerCase(), u.id])), nextLeadNo: data.leads.length + 1,
+      pageId, repsByName: new Map(data.users.filter((u) => u.role === "Sales Representative").map((u) => [u.name.toLowerCase(), u.id])),
+      reps: data.users.filter((u) => u.role === "Sales Representative" && u.active).map((u) => ({ id: u.id, name: u.name })), nextLeadNo: data.leads.length + 1,
     });
   }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys, pageLeads, leadIdsByName]);
 

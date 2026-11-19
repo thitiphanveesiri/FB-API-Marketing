@@ -1,6 +1,7 @@
 // Pure import logic: column auto-mapping, row validation, dedupe. No React, no store.
 import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
 import { ANCHOR } from "./dates";
+import { matchUser } from "./repMatch";
 
 export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
 
@@ -256,6 +257,8 @@ export interface ValidateCtx {
   existingCommentIds?: Set<string>;
   pageId: string;
   repsByName: Map<string, string>;
+  /** Sales Representatives from Settings, so a name that differs slightly (คุณ / missing surname / typo) still matches. */
+  reps?: { id: string; name: string }[];
   nextLeadNo: number;
 }
 
@@ -271,6 +274,13 @@ export function validate(ctx: ValidateCtx): ValidationResult {
   const seen = new Set<string>();
   let aggregateWarned = false;
   const newReps = new Map<string, { id: string; name: string }>(); // salespeople named in the file but not in the users tab → created on commit
+  // Exact name first, then a close name from Settings ("คุณบดินทร์" / "บดินทร์" / one typo) so no duplicate rep is created.
+  const findRep = (name: string) => {
+    const exact = ctx.repsByName.get(name.toLowerCase());
+    if (exact) return { id: exact, name, exact: true };
+    const hit = ctx.reps ? matchUser(name, ctx.reps) : null;
+    return hit ? { id: hit.id, name: hit.name, exact: false } : null;
+  };
   const campByAd = new Map<string, string>();
   const newAds = new Map<string, { adId: string; adName: string; campaignName: string }>();
   let leadNo = ctx.nextLeadNo;
@@ -327,11 +337,15 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (vals.status && !st) { res.issues.push({ row: n, message: `Unknown status "${vals.status}" — set to Not Responded`, level: "warning" }); res.warnings++; }
       const status: LeadStatus = st ?? "Not Responded";
       const quality: LeadQuality = (QUALITIES as readonly string[]).includes(status) ? (status as LeadQuality) : "Qualified";
-      let repId = vals.repName ? ctx.repsByName.get(vals.repName.toLowerCase()) ?? null : null;
-      if (vals.repName && !repId) {
+      const repHit = vals.repName ? findRep(vals.repName) : null;
+      let repId = repHit?.id ?? null;
+      if (vals.repName && !repHit) {
         const k = vals.repName.toLowerCase(); let nr = newReps.get(k);
         if (!nr) { nr = { id: repIdFor(vals.repName), name: vals.repName }; newReps.set(k, nr); res.newReps.push(nr); res.issues.push({ row: n, message: `New salesperson "${vals.repName}" will be added (name only — add an email in Settings if they need to sign in)`, level: "warning" }); res.warnings++; }
         repId = nr.id;
+      } else if (repHit && !repHit.exact) {
+        res.warnings++;
+        res.issues.push({ row: n, message: `Salesperson "${vals.repName}" matched to "${repHit.name}" in Settings — fix the spelling in the file if that is wrong`, level: "warning" });
       }
       // The Facebook sync already created this customer: match by Lead/Conversation ID first, then by one unique name on this page
       // (the same rule the sync uses), then by the phone/email the form file adds — so the uploaded row fills in that lead
@@ -428,9 +442,9 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (!ctx.existingLeadIds.has(id)) { res.failed++; res.issues.push({ row: n, message: `Lead ID ${id} does not exist`, level: "error" }); return; }
       if (seen.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id} in file`, level: "duplicate" }); return; }
       seen.add(id);
-      const rep = ctx.repsByName.get(vals.repName.toLowerCase());
+      const rep = findRep(vals.repName);
       if (!rep) { res.failed++; res.issues.push({ row: n, message: `Salesperson "${vals.repName}" not found`, level: "error" }); return; }
-      res.salesPatches.push({ leadId: id, repName: rep, firstResponseMin: parseNumber(vals.firstResponseMin), followUps: parseNumber(vals.followUps) });
+      res.salesPatches.push({ leadId: id, repName: rep.id, firstResponseMin: parseNumber(vals.firstResponseMin), followUps: parseNumber(vals.followUps) });
       res.ok++;
     }
   });
