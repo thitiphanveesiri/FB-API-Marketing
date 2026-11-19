@@ -3,8 +3,8 @@ import { useState } from "react";
 import { CalendarClock, Phone, Mail, StickyNote, History } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
-import { Facebook, Avatar, Badge, Btn, Drawer, Select, StatusBadge, TextArea, TextInput, hueOf } from "./ui";
-import { LeadQuality, LeadStatus, QUALITIES, STATUSES, statusTh } from "@/lib/types";
+import { ChannelIcon, Avatar, Badge, Btn, Drawer, Select, StatusBadge, TextArea, TextInput, hueOf } from "./ui";
+import { channelOf, LeadQuality, LeadStatus, QUALITIES, STATUSES, statusTh } from "@/lib/types";
 import { fmtDate, fmtDateTime } from "@/lib/dates";
 import { roleCan } from "@/lib/queries";
 
@@ -52,7 +52,7 @@ export default function LeadDrawer({ leadId, onClose }: { leadId: string | null;
           </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div><dt className="text-xs text-muted">Source Ad</dt><dd>{ad ? `${ad.id} · ${ad.name}` : "Unattributed"}</dd></div>
-            <div><dt className="text-xs text-muted">Facebook Page</dt><dd className="flex items-center gap-1"><Facebook size={13} className="text-[#1877f2]" />{page?.name}</dd></div>
+            <div><dt className="text-xs text-muted">Page</dt><dd className="flex items-center gap-1"><ChannelIcon id={channelOf(lead)} size={13} />{page?.name}</dd></div>
             <div><dt className="text-xs text-muted">Phone</dt><dd className="flex items-center gap-1"><Phone size={13} />{lead.phone || "—"}</dd></div>
             <div><dt className="text-xs text-muted">Email</dt><dd className="flex items-center gap-1 break-all"><Mail size={13} />{lead.email || "—"}</dd></div>
             {lead.phone2 && <div><dt className="text-xs text-muted">Secondary phone</dt><dd>{lead.phone2}</dd></div>}

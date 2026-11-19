@@ -1,5 +1,5 @@
 // Pure import logic: column auto-mapping, row validation, dedupe. No React, no store.
-import { ImportDataType, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
+import { ImportDataType, ChatChannel, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
 import { ANCHOR } from "./dates";
 import { matchUser } from "./repMatch";
 
@@ -74,6 +74,7 @@ const MESSAGE_FIELDS: FieldDef[] = [
   F("text", "Message text", false, "text", ["text", "message", "content", "ข้อความ"]),
 ];
 const COMMENT_FIELDS: FieldDef[] = [
+  F("channel", "Channel (fb / ig)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
   F("commentId", "Comment ID", false, "text", ["comment id", "comment_id", "id"]),
   F("postId", "Post ID / link", false, "text", ["post id", "post_id", "post", "post link", "โพสต์"]),
   F("commenter", "Customer name", false, "text", ["commenter", "customer", "name", "from", "ชื่อลูกค้า", "ชื่อ"]),
@@ -256,6 +257,10 @@ export interface ValidateCtx {
   existingMessageIds?: Set<string>;
   existingCommentIds?: Set<string>;
   pageId: string;
+  /** Per-channel destination page (e.g. instagram → the "… (Instagram)" page). A missing channel stays on `pageId`. */
+  channelPageIds?: Partial<Record<ChatChannel, string>>;
+  /** Every lead grouped by page id: rows routed to a different page still match/link that page's own leads. */
+  leadsByPage?: Map<string, Lead[]>;
   repsByName: Map<string, string>;
   /** Sales Representatives from Settings, so a name that differs slightly (คุณ / missing surname / typo) still matches. */
   reps?: { id: string; name: string }[];
@@ -284,6 +289,25 @@ export function validate(ctx: ValidateCtx): ValidationResult {
   const campByAd = new Map<string, string>();
   const newAds = new Map<string, { adId: string; adName: string; campaignName: string }>();
   let leadNo = ctx.nextLeadNo;
+  // A row whose Channel column says Instagram may belong on the page's separate Instagram page;
+  // matching then only looks at that page's chats, so an IG chat never overwrites a Facebook chat with the same name.
+  const pageLeadsOf = (pid: string): Lead[] | undefined => (pid === ctx.pageId ? ctx.existingLeads : ctx.leadsByPage?.get(pid));
+  const nameMapCache = new Map<string, Map<string, string | null>>();
+  const namesOf = (pid: string): Map<string, string | null> | undefined => {
+    if (pid === ctx.pageId) return ctx.leadIdByName;
+    if (!ctx.leadsByPage) return undefined;
+    let m = nameMapCache.get(pid);
+    if (!m) { m = new Map(); for (const l of ctx.leadsByPage.get(pid) ?? []) { const k = leadNameKey(l.name); m.set(k, m.has(k) ? null : l.id); } nameMapCache.set(pid, m); }
+    return m;
+  };
+  /** A chat name that exists exactly once across all pages (used by message imports, which carry no channel). */
+  const anyPageLead = (name: string): string => {
+    if (!ctx.leadsByPage) return "";
+    const k = leadNameKey(name); if (!k) return "";
+    const ids = new Set<string>();
+    for (const list of ctx.leadsByPage.values()) for (const l of list) if (leadNameKey(l.name) === k) ids.add(l.id);
+    return ids.size === 1 ? [...ids][0] : "";
+  };
 
   ctx.rows.forEach((row, i) => {
     const n = i + 2; // spreadsheet row number (header = 1)
@@ -351,17 +375,20 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       // (the same rule the sync uses), then by the phone/email the form file adds — so the uploaded row fills in that lead
       // instead of showing up twice on the Board. Extra spaces in the file must not rewrite an existing name that only differs in whitespace.
       const name = String(vals.name ?? "").trim().replace(/\s+/g, " ");
-      const byNameId = name ? ctx.leadIdByName?.get(leadNameKey(name)) ?? null : null;
+      const channel = parseChannel(vals.channel);
+      const targetPageId = ctx.channelPageIds?.[channel] ?? ctx.pageId;
+      const pageLeads = pageLeadsOf(targetPageId);
+      const byNameId = name ? namesOf(targetPageId)?.get(leadNameKey(name)) ?? null : null;
       const phoneKey = (v: string) => String(v ?? "").replace(/\D/g, "").replace(/^66/, "0");
       const mail = (v: string) => String(v ?? "").trim().toLowerCase();
       const byContactId = !id && !byNameId && (vals.phone || vals.email)
-        ? ctx.existingLeads?.find((l) => (!!vals.email && mail(l.email) === mail(vals.email))
+        ? pageLeads?.find((l) => (!!vals.email && mail(l.email) === mail(vals.email))
           || (phoneKey(vals.phone).length >= 7 && phoneKey(l.phone) === phoneKey(vals.phone)))?.id ?? null
         : null;
       const existing = id
-        ? ctx.existingLeads?.find((l) => l.id === id)
-        : byNameId ? ctx.existingLeads?.find((l) => l.id === byNameId)
-          : byContactId ? ctx.existingLeads?.find((l) => l.id === byContactId) : undefined;
+        ? pageLeads?.find((l) => l.id === id)
+        : byNameId ? pageLeads?.find((l) => l.id === byNameId)
+          : byContactId ? pageLeads?.find((l) => l.id === byContactId) : undefined;
       if (existing) {
         if (seen.has(existing.id)) { res.duplicates++; res.issues.push({ row: n, message: `Lead ${existing.id} was already updated from another row in this file`, level: "duplicate" }); return; }
         seen.add(existing.id);
@@ -391,22 +418,32 @@ export function validate(ctx: ValidateCtx): ValidationResult {
         return;
       }
       // A Lead ID that exists on another page belongs to that page: never move or overwrite it from here.
-      if (id && ctx.existingLeadIds.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate Lead ID ${id}`, level: "duplicate" }); return; }
+      if (id && ctx.existingLeadIds.has(id)) {
+        res.duplicates++;
+        const otherPage = [...(ctx.leadsByPage ?? new Map<string, Lead[]>()).entries()].find(([pid, ls]) => pid !== targetPageId && ls.some((l) => l.id === id))?.[0] ?? "";
+        res.issues.push({ row: n, level: "duplicate", message: otherPage
+          ? `Lead ID ${id} already belongs to another page (${otherPage}) — an upload never moves a lead between pages`
+          : `Duplicate Lead ID ${id}` });
+        return;
+      }
       if (id) seen.add(id);
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
-        id: leadId, name, phone: vals.phone, email: vals.email, pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
+        id: leadId, name, phone: vals.phone, email: vals.email, pageId: targetPageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
         ...(vals.phone2 ? { phone2: vals.phone2 } : {}), ...(vals.whatsapp ? { whatsapp: vals.whatsapp } : {}), ...(vals.leadSource ? { leadSource: vals.leadSource } : {}),
         ...(vals.form ? { form: vals.form } : {}), ...(vals.labels ? { labels: vals.labels } : {}),
         lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
-        history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel: parseChannel(vals.channel), source: "import",
+        history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel, source: "import",
       });
       res.ok++;
     } else if (ctx.type === "Chat Messages") {
       const at = pdt(vals.sentAt); const dir = parseDirection(vals.direction);
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.sentAt}" — the time of day is required (e.g. 2026-11-01 14:05)`, level: "error" }); return; }
       if (!dir) { res.failed++; res.issues.push({ row: n, message: `Cannot tell who sent "${vals.direction}" — use customer/staff (ลูกค้า/เพจ)`, level: "error" }); return; }
-      const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId) ? vals.leadId : ctx.leadIdByName?.get(leadNameKey(vals.name)) ?? "";
+      // Messages carry no channel: find the chat by ID first, then by name on the chosen page, then anywhere (a unique name).
+      const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId)
+        ? vals.leadId
+        : (ctx.leadIdByName?.get(leadNameKey(vals.name)) ?? "") || anyPageLead(vals.name);
       if (!leadId) { res.failed++; res.issues.push({ row: n, message: `Chat not found for "${vals.leadId || vals.name || "—"}" — upload the Inbox conversations first, or fix the ID/name`, level: "error" }); return; }
       const id = `MSG-${leadId}-${at.replace(/\D/g, "")}-${dir}`;
       if (seen.has(id) || ctx.existingMessageIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Already have this ${dir === "in" ? "customer" : "staff"} message at ${at.replace("T", " ").slice(0, 16)}`, level: "duplicate" }); return; }
@@ -418,9 +455,10 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.commentedAt}" — the time of day is required`, level: "error" }); return; }
       if (vals.repliedAt && !rep) { res.failed++; res.issues.push({ row: n, message: `Invalid reply time "${vals.repliedAt}"`, level: "error" }); return; }
       if (rep && rep < at) { res.failed++; res.issues.push({ row: n, message: "Reply time is earlier than the comment time", level: "error" }); return; }
-      const id = vals.commentId || `CM-${ctx.pageId}-${at.replace(/\D/g, "")}-${vals.commenter.toLowerCase().replace(/[^a-z0-9ก-๙]+/g, "").slice(0, 12)}`;
+      const commentPageId = ctx.channelPageIds?.[parseChannel(vals.channel)] ?? ctx.pageId;
+      const id = vals.commentId || `CM-${commentPageId}-${at.replace(/\D/g, "")}-${vals.commenter.toLowerCase().replace(/[^a-z0-9ก-๙]+/g, "").slice(0, 12)}`;
       if (seen.has(id) || ctx.existingCommentIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Duplicate comment ${id}`, level: "duplicate" }); return; }
-      seen.add(id); res.comments.push({ id, pageId: ctx.pageId, postId: vals.postId, commenter: vals.commenter, text: vals.text, at, repliedAt: rep, repliedBy: vals.repliedBy });
+      seen.add(id); res.comments.push({ id, pageId: commentPageId, postId: vals.postId, commenter: vals.commenter, text: vals.text, at, repliedAt: rep, repliedBy: vals.repliedBy });
       const d = at.slice(0, 10); if (!res.periodStart || d < res.periodStart) res.periodStart = d; if (!res.periodEnd || d > res.periodEnd) res.periodEnd = d;
       res.ok++;
     } else if (ctx.type === "Page Insights") {

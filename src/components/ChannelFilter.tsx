@@ -1,10 +1,6 @@
 "use client";
 import { CHANNELS, ChatChannel } from "@/lib/types";
-import { cn } from "@/components/ui";
-
-export function ChannelDot({ id, size = 8 }: { id: ChatChannel; size?: number }) {
-  return <span aria-hidden className="inline-block shrink-0 rounded-full" style={{ width: size, height: size, background: CHANNELS.find((c) => c.id === id)?.color }} />;
-}
+import { cn, ChannelIcon } from "@/components/ui";
 
 /** Chips that split chats by channel (Facebook / Instagram / LINE / WhatsApp). `counts` = chats per channel in the current view. */
 export default function ChannelFilter({ value, onChange, counts, className }: { value: ChatChannel | "all"; onChange: (v: ChatChannel | "all") => void; counts: Record<ChatChannel, number>; className?: string }) {
@@ -16,7 +12,7 @@ export default function ChannelFilter({ value, onChange, counts, className }: { 
       {CHANNELS.map((c) => (
         <button key={c.id} aria-pressed={value === c.id} onClick={() => onChange(c.id)} title={counts[c.id] === 0 && c.id !== "facebook" ? "ช่องทางนี้ยังไม่ได้เชื่อมต่อ" : undefined}
           className={cn(base, value === c.id ? "border-brand bg-brand-faint text-brand" : counts[c.id] === 0 ? "border-line text-gray-400 hover:bg-gray-50" : "border-line text-muted hover:bg-gray-50")}>
-          <ChannelDot id={c.id} />{c.label} <span className="opacity-70">{counts[c.id]}</span>
+          <ChannelIcon id={c.id} size={13} />{c.label} <span className="opacity-70">{counts[c.id]}</span>
         </button>
       ))}
     </div>

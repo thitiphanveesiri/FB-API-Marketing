@@ -11,7 +11,7 @@ import ChannelsCard from "@/components/ChannelsCard";
 import AdsSyncCard from "@/components/AdsSyncCard";
 import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, leadNameKey, validate, ValidationResult } from "@/lib/importer";
 import { Badge, Btn, Card, Column, DataTable, EmptyState, Select, cn } from "@/components/ui";
-import { Ad, Campaign, ImportDataType, ImportRecord } from "@/lib/types";
+import { Ad, Campaign, ImportDataType, ImportRecord, Lead } from "@/lib/types";
 import { fmtDate, fmtDateTime, nowStamp } from "@/lib/dates";
 
 const PICKER_TYPES: ImportDataType[] = ["Ads Performance", "Ad-Level Performance", "Campaign Performance", "Page Insights", "Lead Data", "Inbox Conversations", "Chat Messages", "Post Comments", "Sales Performance"];
@@ -50,6 +50,7 @@ export default function UploadPage() {
   const [viewErr, setViewErr] = useState<ImportRecord | null>(null);
   const [drag, setDrag] = useState(false);
   const [auto, setAuto] = useState(true); // detect file type + map columns automatically
+  const [igChoice, setIgChoice] = useState<"auto" | "none" | string>("auto"); // where rows whose Channel is Instagram go
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fields = FIELDS[type];
@@ -57,6 +58,21 @@ export default function UploadPage() {
 
   const existingPerfKeys = useMemo(() => new Set(data.perf.map((p) => `${p.adId}|${p.date}`)), [data.perf]);
   const pageLeads = useMemo(() => data.leads.filter((l) => l.pageId === pageId), [data.leads, pageId]);
+  const selPage = data.pages.find((p) => p.id === pageId);
+  /** The "… (Instagram)" page of the chosen page: where Instagram rows of the file are stored. */
+  const autoIgPage = useMemo(() => {
+    if (!selPage) return undefined;
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const label = norm(`${selPage.name.replace(/\s*\(instagram\)\s*$/i, "")} (Instagram)`);
+    return data.pages.find((p) => p.active && p.id !== selPage.id && norm(p.name) === label);
+  }, [data.pages, selPage]);
+  const igTargetId = igChoice === "auto" ? autoIgPage?.id ?? "" : igChoice === "none" ? "" : igChoice;
+  const channelPageIds = useMemo(() => (igTargetId ? { instagram: igTargetId } : undefined), [igTargetId]);
+  const leadsByPage = useMemo(() => {
+    const m = new Map<string, Lead[]>();
+    for (const l of data.leads) { const list = m.get(l.pageId); if (list) list.push(l); else m.set(l.pageId, [l]); }
+    return m;
+  }, [data.leads]);
   /** Name → lead id, but null when two leads on the page share the name: an upload only links when the match is unambiguous. */
   const leadIdsByName = useMemo(() => {
     const m = new Map<string, string | null>();
@@ -67,14 +83,24 @@ export default function UploadPage() {
     if (step < 5 || rows.length === 0) return null;
     return validate({
       type, mapping, rows, mode, importId: "IMP-PREVIEW", existingPerfKeys, existingAdIds: new Set(data.ads.map((a) => a.id)), existingLeadIds: new Set(data.leads.map((l) => l.id)), existingInsightKeys: new Set(data.insights.map((i) => `${i.pageId}|${i.date}`)),
-      existingLeads: pageLeads, leadIdByName: leadIdsByName,
+      existingLeads: pageLeads, leadIdByName: leadIdsByName, channelPageIds, leadsByPage,
       existingMessageIds: new Set(Object.values(data.messages).flat().map((m) => m.id)), existingCommentIds: new Set(data.comments.map((c) => c.id)),
       pageId, repsByName: new Map(data.users.filter((u) => u.role === "Sales Representative").map((u) => [u.name.toLowerCase(), u.id])),
       reps: data.users.filter((u) => u.role === "Sales Representative" && u.active).map((u) => ({ id: u.id, name: u.name })), nextLeadNo: data.leads.length + 1,
     });
-  }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys, pageLeads, leadIdsByName]);
+  }, [step, rows, mapping, mode, type, pageId, data, existingPerfKeys, pageLeads, leadIdsByName, channelPageIds, leadsByPage]);
 
-  const reset = () => { setStep(0); setFileName(""); setHeaders([]); setRows([]); setMapping({}); setErr(""); setSummary(null); setMode("incremental"); };
+  /** Where the lead rows in the confirm step will land (new chats + updates to existing ones). */
+  const pageSplit = useMemo(() => {
+    if (!validation) return [];
+    const counts = new Map<string, number>();
+    for (const l of validation.leads) counts.set(l.pageId, (counts.get(l.pageId) ?? 0) + 1);
+    for (const p of validation.leadPatches) { const l = data.leads.find((x) => x.id === p.leadId); if (l) counts.set(l.pageId, (counts.get(l.pageId) ?? 0) + 1); }
+    return [...counts.entries()].map(([id, n]) => ({ id, name: data.pages.find((x) => x.id === id)?.name ?? id, n }));
+  }, [validation, data]);
+  const igMerged = useMemo(() => (validation?.leads ?? []).filter((l) => l.channel === "instagram" && l.pageId === pageId).length, [validation, pageId]);
+
+  const reset = () => { setStep(0); setFileName(""); setHeaders([]); setRows([]); setMapping({}); setErr(""); setSummary(null); setMode("incremental"); setIgChoice("auto"); };
 
   const loadFile = async (file: File) => {
     setErr(""); setBusy(true);
@@ -154,7 +180,7 @@ export default function UploadPage() {
     setBusy(false);
     if (!ok) return; // the store already showed why it was not saved; stay on this step so nothing is lost
     setSummary(rec); setStep(7);
-    toast(`บันทึก ${validation.ok} จาก ${validation.total} แถวลง Google Sheet แล้ว${validation.merged ? ` · อัปเดต ${validation.merged} ลีดที่จับคู่กับข้อมูล Facebook` : ""}`);
+    toast(`บันทึก ${validation.ok} จาก ${validation.total} แถวลง Google Sheet แล้ว${validation.merged ? ` · อัปเดต ${validation.merged} แชทที่จับคู่ไว้แล้ว` : ""}`);
   };
 
   const reimport = (rec: ImportRecord) => {
@@ -195,9 +221,17 @@ export default function UploadPage() {
       </ol>
 
       <Card>
-        {step === 0 && (<div className="max-w-md space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ Facebook</h2>
-          <Select label="เพจ Facebook" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
-          <p className="text-xs text-muted">ข้อมูลทั้งหมดในไฟล์จะถูกบันทึกให้เพจนี้ (แคมเปญ/โฆษณาใหม่จะถูกสร้างภายใต้เพจนี้)</p>{data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
+        {step === 0 && (<div className="max-w-lg space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ</h2>
+          <Select label="เพจหลักของไฟล์" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+          <Select label="เพจ Instagram (สำหรับแถวที่ช่องทางเป็น IG)" value={igChoice} onChange={setIgChoice}
+            options={[
+              { value: "auto", label: autoIgPage ? `อัตโนมัติ — ${autoIgPage.name}` : "อัตโนมัติ — ยังไม่พบเพจ Instagram" },
+              { value: "none", label: "ไม่แยก — เก็บรวมกับเพจหลัก" },
+              ...data.pages.filter((p) => p.active && p.id !== pageId).map((p) => ({ value: p.id, label: `แยกไปที่ ${p.name}` })),
+            ]} />
+          <p className="text-xs text-muted">แถวอื่นทั้งหมดจะถูกบันทึกให้เพจหลัก (แคมเปญ/โฆษณาใหม่สร้างภายใต้เพจหลัก) · ถ้าไฟล์มีคอลัมน์ <b>Channel</b> แถวที่ระบุ Instagram จะไปเพจ Instagram ที่เลือกไว้ ไม่ปนกับแชท Facebook · เพจ Instagram ในระบบมักชื่อ “ชื่อเพจ (Instagram)” สร้างได้ที่ Setting → Pages</p>
+          {igTargetId && igTargetId !== pageId && <p className="text-xs text-emerald-700">แถว Instagram จะถูกเก็บแยกในเพจ “{data.pages.find((p) => p.id === igTargetId)?.name}” — ชื่อ/เบอร์ที่ตรงกับแชท Instagram เดิมจะอัปเดตการ์ดเดิม</p>}
+          {data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
 
         {step === 1 && (<div className="max-w-3xl space-y-4"><h2 className="font-semibold">ขั้นที่ 2 · เลือกประเภทไฟล์ที่จะอัปโหลด</h2>
           <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.filter((t) => PICKER_TYPES.includes(t.type)).map((t) => (
@@ -251,6 +285,10 @@ export default function UploadPage() {
             {(isAdsType(type) || type === "Page Insights" || type === "Chat Messages" || type === "Post Comments") && validation.periodStart && <li>Period covered: {fmtDate(validation.periodStart)} – {fmtDate(validation.periodEnd)}.</li>}
             {isAdsType(type) && <li>{validation.newAdIds.length} new ad(s) will be created. {validation.replaceKeys.size > 0 ? `${validation.replaceKeys.size} existing ad/day records will be replaced.` : "No existing records will be changed."}</li>}
             {(type === "Lead Data" || type === "Inbox Conversations") && <li>ตรงกับลีด/แชทที่มีอยู่แล้ว <b>{validation.merged}</b> แถว (อัปเดตการ์ดเดิม ไม่สร้างซ้ำ) · ไม่ตรง <b>{validation.leads.length}</b> แถว (จะสร้างการ์ดใหม่)</li>}
+            {(type === "Lead Data" || type === "Inbox Conversations") && pageSplit.length > 1 &&
+              <li>แยกตามเพจ: {pageSplit.map((p) => <span key={p.id} className="mr-2 whitespace-nowrap"><b>{p.name}</b> {p.n} แถว</span>)}</li>}
+            {(type === "Lead Data" || type === "Inbox Conversations") && igMerged > 0 && !igTargetId &&
+              <li className="text-amber-700">มี {igMerged} แถว Instagram ที่จะถูกเก็บรวมในเพจหลัก — ถ้าต้องการแยก ให้กลับไปขั้นที่ 1 แล้วเลือกเพจ Instagram</li>}
             {(type === "Lead Data" || type === "Inbox Conversations") && validation.merged === 0 && validation.leads.length > 0 &&
               <li className="text-amber-700">ไม่ตรงกับลีดเดิมเลย — ถ้าควรจะตรง ให้ตรวจ 2 อย่าง: เพจที่เลือกต้องเป็นเพจเดียวกับแชท และชื่อในไฟล์ต้องเขียนเหมือนชื่อที่แสดงบนแชท (หรือมีเบอร์/อีเมลตรงกับลีดเดิม)</li>}
             <li>{validation.failed} failed and {validation.duplicates} duplicate rows will be skipped.</li></ul>

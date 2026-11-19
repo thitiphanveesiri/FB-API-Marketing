@@ -8,7 +8,7 @@ import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, 
 import { Agency, FbPage, ROLES, Role, User } from "@/lib/types";
 
 type Tab = "pages" | "agencies" | "users" | "roles";
-const TABS: { id: Tab; label: string }[] = [{ id: "pages", label: "Facebook Pages" }, { id: "agencies", label: "Agencies" }, { id: "users", label: "Users" }, { id: "roles", label: "Roles & Permissions" }];
+const TABS: { id: Tab; label: string }[] = [{ id: "pages", label: "Pages" }, { id: "agencies", label: "Agencies" }, { id: "users", label: "Users" }, { id: "roles", label: "Roles & Permissions" }];
 const emailOk = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
 export default function SettingsPage() {
@@ -64,7 +64,7 @@ function PagesTab({ canManage }: { canManage: boolean }) {
       <Btn size="sm" onClick={async () => { if (p.active) { const r = await confirm({ title: `Disable ${p.name}?`, message: "The page is hidden from selectors and new imports. Existing data is kept.", tone: "danger", confirmLabel: "Disable" }); if (!r.ok) return; } savePage({ ...p, active: !p.active }); toast(p.active ? "Page disabled" : "Page enabled"); }}>{p.active ? "Disable" : "Enable"}</Btn></div> },
   ];
   return (
-    <Card title="Facebook Pages" subtitle="Connect pages to agencies and sales teams." right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `PG-${data.pages.length + 1}`, name: "", active: true, agencyId: null, teamIds: [] }); }}><Plus size={15} /> Add Facebook Page</Btn>}>
+    <Card title="Pages" subtitle="เพจ Facebook / Instagram ของธุรกิจ — ผูกกับเอเจนซีและทีมขาย" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `PG-${data.pages.length + 1}`, name: "", active: true, agencyId: null, teamIds: [] }); }}><Plus size={15} /> Add page</Btn>}>
       <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Pages here are entered manually. Linking a real Page (OAuth + page access token) is part of the Meta API phase.</p>
       {placeholders.length > 0 && <div className="mb-3 space-y-2">
         {placeholders.map((p) => {
@@ -83,8 +83,8 @@ function PagesTab({ canManage }: { canManage: boolean }) {
           </div>;
         })}
       </div>}
-      <DataTable columns={cols} rows={data.pages} rowKey={(p) => p.id} caption="Facebook pages" />
-      <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add Facebook Page" : "Edit page"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
+      <DataTable columns={cols} rows={data.pages} rowKey={(p) => p.id} caption="Pages" />
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add page" : "Edit page"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3">
           <TextInput label="Page name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} />
           <Select label="Agency" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v || null })} options={[{ value: "", label: "No agency" }, ...data.agencies.filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]} />

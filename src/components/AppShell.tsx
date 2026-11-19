@@ -1,11 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing, MessageSquare } from "lucide-react";
+import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing, MessageSquare, Layers } from "lucide-react";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
-import { Facebook, Avatar, Badge, FeedbackHost, cn } from "./ui";
+import { ChannelIcon, Avatar, Badge, FeedbackHost, cn, type ChannelMark } from "./ui";
 import DisplayMenu from "./DisplayMenu";
 import { ANCHOR, fmtShort } from "@/lib/dates";
 
@@ -20,6 +20,15 @@ const NAV = [
   { key: "comments", label: "Comments", href: "/comments", icon: MessageSquare },
   { key: "followup", label: "ติดตาม", href: "/followup", icon: BellRing },
 ];
+
+/** Which chat platform a page belongs to, from its id/name — Instagram pages are the "… (Instagram)" rows. */
+export function pageChannelOf(p: { id: string; name: string }): ChannelMark {
+  const id = p.id.toLowerCase(), name = p.name.toLowerCase();
+  if (/^ig-/.test(id) || name.includes("instagram") || /\(ig\)/.test(name)) return "instagram";
+  if (/^line-/.test(id) || /line oa|ไลน์/.test(name)) return "line";
+  if (/^wa-/.test(id) || name.includes("whatsapp")) return "whatsapp";
+  return "facebook";
+}
 
 /** Registers the service worker once, so the browser offers "install app" and push alerts can arrive. */
 function useServiceWorker() {
@@ -64,6 +73,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [current, user.role, router, source]);
 
   const pagesForUser = data.pages.filter((p) => p.active && (eff.agencyId === "all" || p.agencyId === eff.agencyId));
+  const selectedPage = data.pages.find((p) => p.id === filters.pageId);
+  const pageMark: ChannelMark | null = selectedPage ? pageChannelOf(selectedPage) : null;
   const myLeads = data.leads.filter((l) => !l.dropped && (user.role !== "Sales Representative" || l.repId === user.id));
   const unread = myLeads.filter((l) => l.unread).length;
   const unassigned = data.leads.filter((l) => !l.repId && !l.dropped).length;
@@ -121,7 +132,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </Link>
 
           <label className="ml-1 hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-sm md:flex">
-            <Facebook size={15} className="text-[#1877f2]" aria-hidden />
+            {pageMark ? <ChannelIcon id={pageMark} size={15} /> : <Layers size={15} className="text-muted" aria-hidden />}
             <span className="sr-only">Page</span>
             <select value={filters.pageId} onChange={(e) => setFilters({ pageId: e.target.value })} className="max-w-[190px] bg-transparent py-0.5 text-sm font-medium focus:outline-none">
               <option value="all">All Pages</option>
@@ -182,7 +193,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
         {menu && (
           <nav className="border-t border-line bg-surface p-2 lg:hidden" aria-label="Mobile">
-            <label className="mb-1 flex items-center gap-2 rounded-lg border border-line px-2 py-1.5 text-sm md:hidden"><Facebook size={15} className="text-[#1877f2]" />
+            <label className="mb-1 flex items-center gap-2 rounded-lg border border-line px-2 py-1.5 text-sm md:hidden">{pageMark ? <ChannelIcon id={pageMark} size={15} /> : <Layers size={15} className="text-muted" aria-hidden />}
               <select value={filters.pageId} onChange={(e) => setFilters({ pageId: e.target.value })} className="w-full bg-transparent focus:outline-none">
                 <option value="all">All Pages</option>
                 {pagesForUser.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}

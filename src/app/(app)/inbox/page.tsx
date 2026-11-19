@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, Send, StickyNote, Phone, Mail, CalendarClock, ArrowLeft, Camera } from "lucide-react";
+import { Paperclip, Send, StickyNote, Phone, Mail, CalendarClock, ArrowLeft } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
-import { Avatar, Badge, Btn, EmptyState, Facebook, Select, SearchBox, StatusBadge, TextArea, TextInput, cn, hueOf } from "@/components/ui";
+import { Avatar, Badge, Btn, EmptyState, ChannelIcon, Select, SearchBox, StatusBadge, TextArea, TextInput, cn, hueOf } from "@/components/ui";
 import { fmtDate, fmtDateTime, NOW_ISO, relTime } from "@/lib/dates";
-import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
+import ChannelFilter, { countByChannel } from "@/components/ChannelFilter";
 import { CHANNELS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, QUALITIES, STATUSES } from "@/lib/types";
 import { ANCHOR } from "@/lib/dates";
 
@@ -110,7 +110,7 @@ export default function InboxPage() {
                     <span className="flex items-center justify-between gap-2"><span className={cn("truncate text-sm", l.unread ? "font-semibold" : "font-medium")}>{l.name}</span><span className="shrink-0 text-[11px] text-muted">{relTime(l.lastContactAt, NOW_ISO)}</span></span>
                     <span className={cn("block truncate text-xs", l.unread ? "text-ink" : "text-muted")}>{l.lastMessage}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-1"><StatusBadge status={l.status} />
-                      <span className="inline-flex min-w-0 items-center gap-1 truncate text-[11px] text-muted"><ChannelDot id={channelOf(l)} size={7} />{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
+                      <span className="inline-flex min-w-0 items-center gap-1 truncate text-[11px] text-muted"><ChannelIcon id={channelOf(l)} size={11} />{repName(l.repId)} · {pageName(l.pageId).replace("Demo ", "")}</span></span>
                   </span>
                   {l.unread && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-brand-2" aria-label="Unread" />}
                 </button>
@@ -126,7 +126,7 @@ export default function InboxPage() {
               <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
                 <button className="rounded p-1 hover:bg-gray-100 lg:hidden" onClick={() => setMobileView("list")} aria-label="Back to list"><ArrowLeft size={18} /></button>
                 <Avatar name={lead.name} hue={hueOf(lead.name)} size={34} />
-                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{lead.name}</p><p className="flex items-center gap-1 text-xs text-muted">{channelOf(lead) === "instagram" ? <Camera size={11} className="text-pink-600" /> : <Facebook size={11} className="text-[#1877f2]" />}{channelOf(lead) === "instagram" ? "Instagram" : pageName(lead.pageId)}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{lead.name}</p><p className="flex items-center gap-1 text-xs text-muted"><ChannelIcon id={channelOf(lead)} size={12} />{pageName(lead.pageId)}</p></div>
                 <Select value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-44" />
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-gray-50 p-4">
@@ -175,7 +175,7 @@ export default function InboxPage() {
               <div className="space-y-1.5">
                 <p className="flex items-center gap-2"><Phone size={14} className="text-muted" />{lead.phone}</p>
                 <p className="flex items-center gap-2 break-all"><Mail size={14} className="text-muted" />{lead.email}</p>
-                <p className="flex items-center gap-2">{channelOf(lead) === "instagram" ? <Camera size={14} className="text-pink-600" /> : <Facebook size={14} className="text-[#1877f2]" />}{channelOf(lead) === "instagram" ? "Instagram" : pageName(lead.pageId)}</p>
+                <p className="flex items-center gap-2"><ChannelIcon id={channelOf(lead)} size={14} />{pageName(lead.pageId)}</p>
               </div>
               <dl className="space-y-2 rounded-xl bg-gray-50 p-3">
                 <div><dt className="text-xs text-muted">Source Ad ID</dt><dd>{ad ? <>{ad.id}<span className="block text-xs text-muted">{ad.name}</span></> : "Unattributed"}</dd></div>

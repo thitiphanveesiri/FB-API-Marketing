@@ -5,9 +5,9 @@ import { CalendarClock, ExternalLink, GripVertical } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useLeadActions } from "@/lib/useLeadActions";
 import { roleCan } from "@/lib/queries";
-import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, Facebook } from "@/components/ui";
+import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, ChannelIcon } from "@/components/ui";
 import LeadDrawer from "@/components/LeadDrawer";
-import ChannelFilter, { ChannelDot, countByChannel } from "@/components/ChannelFilter";
+import ChannelFilter, { countByChannel } from "@/components/ChannelFilter";
 import { BOARD_COLUMNS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
 import { ANCHOR, fmtShort, NOW_ISO, relTime } from "@/lib/dates";
 
@@ -35,7 +35,7 @@ function Card({ lead, dragging, onOpen, fbHref }: { lead: Lead; dragging?: boole
       <button type="button" onClick={onOpen} className="block w-full text-left" aria-label={`เปิด ${lead.name}`}>
         <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
         <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
-        <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+        <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray"><ChannelIcon id={channelOf(lead)} size={11} /> {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
         {(lead.phone || lead.email || lead.whatsapp) && <p className="mt-1 truncate text-[11px] text-muted">{lead.phone}{lead.whatsapp ? ` · WhatsApp ${lead.whatsapp}` : ""}{lead.email ? ` · ${lead.email}` : ""}</p>}
       </button>
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted">

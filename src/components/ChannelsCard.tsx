@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Camera, Check, Copy, Plug } from "lucide-react";
-import { Badge, Btn, Card, Select } from "@/components/ui";
+import { Check, Copy, Plug } from "lucide-react";
+import { Badge, Btn, Card, Select, ChannelIcon } from "@/components/ui";
 import { useStore } from "@/lib/store";
 
 interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
@@ -140,17 +140,17 @@ export default function ChannelsCard() {
     <Card title="เชื่อมช่องทางแชท" subtitle="ใส่ Access Token + ตั้ง Webhook แล้วข้อความจะเข้าระบบอัตโนมัติ เพื่อคำนวณ SLA">
       <div className="space-y-4">
         <div className="grid gap-2 sm:grid-cols-5">
-          <div className="rounded-xl border border-brand-2 bg-brand-faint p-3 text-sm"><b>Facebook Messenger</b><div className="mt-1 text-xs text-muted">{fb.length ? `เชื่อมแล้ว ${fb.length} เพจ` : "ยังไม่ได้เชื่อม"}</div></div>
-          <div className={`rounded-xl border p-3 text-sm ${instagram.length ? "border-pink-300 bg-pink-50" : "border-line"}`}><b className="inline-flex items-center gap-1"><Camera size={14} /> Instagram Messaging</b><div className="mt-1 text-xs text-muted">{instagram.length ? `เชื่อมแล้ว ${instagram.length} บัญชี` : "เชื่อมผ่านเพจ Facebook"}</div></div>
+          <div className="rounded-xl border border-brand-2 bg-brand-faint p-3 text-sm"><b className="inline-flex items-center gap-1"><ChannelIcon id="facebook" size={14} /> Facebook Messenger</b><div className="mt-1 text-xs text-muted">{fb.length ? `เชื่อมแล้ว ${fb.length} เพจ` : "ยังไม่ได้เชื่อม"}</div></div>
+          <div className={`rounded-xl border p-3 text-sm ${instagram.length ? "border-pink-300 bg-pink-50" : "border-line"}`}><b className="inline-flex items-center gap-1"><ChannelIcon id="instagram" size={14} /> Instagram Messaging</b><div className="mt-1 text-xs text-muted">{instagram.length ? `เชื่อมแล้ว ${instagram.length} บัญชี` : "เชื่อมผ่านเพจ Facebook"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${ads.length ? "border-brand-2 bg-brand-faint" : "border-line"}`}><b>โฆษณา (Marketing API)</b><div className="mt-1 text-xs text-muted">{ads.length ? `เชื่อมแล้ว ${ads.length} บัญชี` : "ยังไม่ได้เชื่อม"}</div></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b>LINE</b> <Badge>เร็วๆ นี้</Badge></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b>WhatsApp</b> <Badge>เร็วๆ นี้</Badge></div>
+          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="line" size={14} /> LINE</b> <Badge>เร็วๆ นี้</Badge></div>
+          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="whatsapp" size={14} /> WhatsApp</b> <Badge>เร็วๆ นี้</Badge></div>
         </div>
 
         {fb.map((c) => (
           <div key={c.channelId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2 text-sm">
             <Plug size={14} className="text-brand" /><b>{c.name || c.accountId}</b><span className="text-xs text-muted">Token …{c.tokenTail} · เก็บในเพจ {data.pages.find((p) => p.id === c.sheetPageId)?.name ?? c.sheetPageId}</span>
-            {instagram.find((item) => item.channelId === `instagram:${c.accountId}`) && <span className="inline-flex items-center gap-1 text-xs text-pink-700"><Camera size={12} /> {instagram.find((item) => item.channelId === `instagram:${c.accountId}`)?.name}</span>}
+            {instagram.find((item) => item.channelId === `instagram:${c.accountId}`) && <span className="inline-flex items-center gap-1 text-xs text-pink-700"><ChannelIcon id="instagram" size={12} /> {instagram.find((item) => item.channelId === `instagram:${c.accountId}`)?.name}</span>}
             {!c.hasSecret && <Badge tone="red">ยังไม่มี App Secret</Badge>}
             <span className="ml-auto flex gap-2"><Btn size="sm" onClick={() => { setEditing(c.channelId); setFbDest(c.sheetPageId || ""); }}>แก้ไข</Btn><Btn size="sm" onClick={() => disconnect(c)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>))}

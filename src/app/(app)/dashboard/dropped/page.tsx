@@ -43,7 +43,7 @@ export default function Dropped() {
   const cols: Column<Lead>[] = [
     { key: "id", header: "Lead ID", sort: (l) => l.id, render: (l) => <span className="font-medium text-brand">{l.id}</span> },
     { key: "n", header: "Customer Name", sort: (l) => l.name, render: (l) => l.name, minW: 150 },
-    { key: "p", header: "Facebook Page", sort: (l) => pageOf(l.pageId), render: (l) => <span className="whitespace-nowrap">{pageOf(l.pageId)}</span> },
+    { key: "p", header: "Page", sort: (l) => pageOf(l.pageId), render: (l) => <span className="whitespace-nowrap">{pageOf(l.pageId)}</span> },
     { key: "a", header: "Ad ID", sort: (l) => l.adId, render: (l) => l.adId ?? <span className="text-gray-400">—</span> },
     { key: "r", header: "Assigned Salesperson", sort: (l) => nameOf(l.repId), render: (l) => nameOf(l.repId) },
     { key: "lc", header: "Last Contact", sort: (l) => l.lastContactAt, render: (l) => <span className="whitespace-nowrap">{fmtDate(l.lastContactAt)}</span> },
