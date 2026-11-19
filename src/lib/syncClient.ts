@@ -50,7 +50,8 @@ export async function pullAds(channelId: string, days: number, ctl: PullCtl, tot
   const t0 = Date.now(), at = { ads: tot.ads, rows: tot.rows }, secs = () => Math.round((Date.now() - t0) / 1000);
   while (state.phase !== "done" && !ctl.stop.current) {
     calls++;
-    const what = state.phase === "ads" ? `กำลังดึงรายการโฆษณาและภาพ… (${tot.ads} โฆษณา)` : `กำลังดึงสถิติรายวัน… (${tot.rows} แถว${state.win ? `, ช่วงที่ ${state.win + 1}` : ""})`;
+    // totals are shared by every ad account, so show this account's own count instead of the running sum
+    const what = state.phase === "ads" ? `กำลังดึงรายการโฆษณาและภาพ… (${tot.ads - at.ads} โฆษณา)` : `กำลังดึงสถิติรายวัน… (${tot.rows - at.rows} แถว${state.win ? `, ช่วงที่ ${state.win + 1}` : ""})`;
     ctl.log(`${tag}${what} · ครั้งที่ ${calls} · ผ่านไป ${secs()} วิ`);
     const r = await fetch("/api/ads-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channelId, days: Math.min(90, Math.max(1, days || 30)), state }) });
     const j = await readSyncResponse(r);

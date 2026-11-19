@@ -29,7 +29,8 @@ export async function POST(req: Request) {
   try {
     const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState; channel?: string };
     ig = b.channel === "instagram";
-    const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId); if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่า (เชื่อมเพจในหน้า Upload ก่อน)");
+    const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId);
+    if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่าแล้ว — เชื่อมเพจในหน้า Upload ก่อน หรือรีเฟรชหน้า Upload ถ้าเพิ่งเชื่อมหรือยกเลิกการเชื่อมต่อ");
     const ds = g.mapped.dataset;
     let sheetPageId = [b.sheetPageId, cfg.sheetPageId].find((id) => !!id && ds.pages.some((p) => p.id === id)) ?? "";
     if (!sheetPageId) {

@@ -29,6 +29,7 @@ export default function FbSyncCard() {
   const [pages, setPages] = useState<Cfg[] | null>(null);
   const [which, setWhich] = useState("all"); const [days, setDays] = useState("7");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<Totals | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
   const [ads, setAds] = useState<Acct[]>([]); const [withAds, setWithAds] = useState(true); const [adsDone, setAdsDone] = useState<AdsTotals | null>(null);
   const [cfgError, setCfgError] = useState(""); const [acctError, setAcctError] = useState("");
@@ -57,14 +58,27 @@ export default function FbSyncCard() {
     const nameMatches = p.name ? data.pages.filter((x) => norm(x.name) === norm(p.name!)) : [];
     const byName = nameMatches.length === 1 ? nameMatches[0] : undefined;
     const sheet = (p.sheetPageId && data.pages.some((x) => x.id === p.sheetPageId) ? p.sheetPageId : "") || byName?.id || "";
-    return { fb: p.fbPageId, instagram: !!p.instagram, sheet, label: p.name || (sheet ? sysName(sheet) : "") || p.fbPageId };
+    return { fb: p.fbPageId, instagram: !!p.instagram, sheet, label: p.name || (sheet ? sysName(sheet) : "") || `เพจ ${p.fbPageId}` };
   });
   const chosen = which === "all" ? resolved : resolved.filter((r) => r.fb === which);
   /** Chats + comments of the chosen pages (one after another, each in its own small batches so one page cannot time out another), then the ad accounts. */
   const run = async () => {
-    const targets = chosen;
-    if (!targets.length) return;
-    stop.current = false; setBusy(true); setDone(null); setAdsDone(null);
+    if (!chosen.length) return;
+    stop.current = false; setBusy(true); setDone(null); setAdsDone(null); setNotes([]);
+    // The list was read when this page opened; a page can be disconnected since then and the server would answer "not configured".
+    // So re-read it before starting: pull only the pages that are still connected, and say which ones were skipped.
+    const live = await fetch("/api/fb-sync", { cache: "no-store" }).then((r) => r.json() as Promise<{ ok?: boolean; pages?: Cfg[] }>).catch(() => null);
+    let targets = chosen, skipped: string[] = [];
+    if (live?.ok && Array.isArray(live.pages)) {
+      setPages(live.pages);
+      const byId = new Map(live.pages.map((p) => [p.fbPageId, p]));
+      skipped = chosen.filter((t) => !byId.has(t.fb)).map((t) => t.label);
+      targets = chosen.filter((t) => byId.has(t.fb)).map((t) => {
+        const p = byId.get(t.fb)!;
+        return { ...t, instagram: !!p.instagram, sheet: p.sheetPageId && data.pages.some((x) => x.id === p.sheetPageId) ? p.sheetPageId : t.sheet };
+      });
+    }
+    if (!targets.length) { setBusy(false); setLog("เพจที่เลือกถูกยกเลิกการเชื่อมต่อแล้ว — เชื่อมเพจใหม่ที่การ์ดด้านบน หรือรีเฟรชหน้านี้ก่อนดึงข้อมูล"); return; }
     const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0, posts: 0, postsWithReportedComments: 0, postsWithoutCommentSummary: 0, commentPagesRead: 0, commentItemsReceived: 0, commentsOutsideRange: 0, pageCommentsSkipped: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [], byPage: {} };
     const failed: string[] = [];
     try {
@@ -87,9 +101,8 @@ export default function FbSyncCard() {
         setAdsDone(adsTot);
       }
       setDone(tot);
-      const notes = [...(tot.warnings ?? []), ...(adsTot.warnings ?? [])];
-      const warning = notes.length ? ` หมายเหตุ: ${notes.join(" · ")}` : "";
-      setLog((failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้) · กด “ตรวจสอบการเชื่อมต่อ” เพื่อดูว่า Sheet หรือโทเคนเพจมีปัญหา` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
+      setNotes([...(skipped.length ? [`ข้ามเพจที่ถูกยกเลิกการเชื่อมต่อไปแล้ว: ${skipped.join(", ")}`] : []), ...[...(tot.warnings ?? []), ...(adsTot.warnings ?? [])].filter((n, i, all) => all.indexOf(n) === i)]);
+      setLog(failed.length ? `เสร็จบางเพจ — ผิดพลาด: ${failed.join(" | ")} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้) · กด “ตรวจสอบการเชื่อมต่อ” เพื่อดูว่า Sheet หรือโทเคนเพจมีปัญหา` : stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
       toast(failed.length ? "ดึงบางเพจไม่สำเร็จ" : stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลจากเพจเสร็จแล้ว");
     } finally { setBusy(false); await reloadData(true); }
   };
@@ -153,6 +166,10 @@ export default function FbSyncCard() {
             ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={withAds} onChange={(e) => setWithAds(e.target.checked)} disabled={busy} className="accent-[#087a58]" /> ดึงโฆษณาพร้อมกัน ({ads.length} บัญชี: {ads.map((a) => a.name || a.accountId).join(", ")}) · ย้อนหลังตามช่วงที่เลือก (สูงสุด 90 วัน)</label>
             : !acctError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">ยังไม่ได้เชื่อมบัญชีโฆษณา จึงไม่มีข้อมูลโฆษณา (Dashboard โฆษณาจะว่าง) — วาง <b>โทเคนผู้ใช้ที่มีสิทธิ์ ads_read</b> ในการ์ด “เชื่อมช่องทางแชท” ระบบจะเชื่อมบัญชีโฆษณาให้เองพร้อมเพจ หรือกรอก Ad Account ID เองในการ์ดโฆษณาด้านล่าง</p>}
           {log && <p className="text-sm" role="status">{log}</p>}
+          {notes.length > 0 && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+            <p className="font-medium">หมายเหตุ</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+          </div>}
           {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.chats} แชท ({done.messages} ข้อความ, ลีดใหม่ {done.newLeads}) และ {done.comments} คอมเมนต์จาก {done.posts ?? 0} โพสต์{done.comments === 0 ? ` · Meta รายงานโพสต์มีคอมเมนต์ ${done.postsWithReportedComments} โพสต์ (ไม่มี summary ${done.postsWithoutCommentSummary}); อ่านคอมเมนต์ ${done.commentItemsReceived} รายการจาก ${done.commentPagesRead} หน้า (เกินช่วงวันที่เลือก ${done.commentsOutsideRange}, เพจตอบเอง ${done.pageCommentsSkipped})` : ""}{adsDone ? ` · โฆษณา ${adsDone.ads} รายการ (${adsDone.campaigns} แคมเปญ) สถิติรายวัน ${adsDone.rows} แถว` : ""}{adsDone?.byPage && Object.keys(adsDone.byPage).length ? ` · แคมเปญแยกตามเพจ: ${Object.entries(adsDone.byPage).map(([id, count]) => `${sysName(id)} ${count}`).join(", ")}` : ""} · ไปดูผลที่หน้า <b>SLA</b> (ต้องมอบหมายเซลล์ให้แต่ละแชทที่หน้า Board ก่อน จึงจะมีคะแนน)</p>}
           <p className="text-xs text-muted">ครั้งแรกเริ่มที่ 7 วันก่อนเพื่อทดสอบ · ดึงซ้ำได้ ข้อความเดิมจะไม่ซ้ำ · แชทจะถูกจับคู่กับลีดเดิมด้วยชื่อลูกค้า (ถ้าชื่อซ้ำกันหลายคนจะสร้างลีดใหม่) · จำนวนโพสต์รวมเผื่อย้อนหลังอีก 14 วันเพื่อเก็บคอมเมนต์ในช่วงที่เลือกจากโพสต์เก่า</p>
         </div>

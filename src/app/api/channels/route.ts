@@ -114,7 +114,8 @@ export async function POST(req: Request) {
       const rows = [{ channel_id: c.channelId, active: false, access_token: "", app_secret: "", updated_at: new Date().toISOString() }];
       if (c.channel === "facebook") rows.push({ channel_id: `instagram:${c.accountId}`, active: false, access_token: "", app_secret: "", updated_at: new Date().toISOString() });
       await upsertRows("channels", ["channel_id"], rows, "upsert");
-      invalidateCache(); return NextResponse.json({ ok: true }, noStore);
+      // without this the next page list / sync still sees the removed page for up to 30 s and the sync answers "not configured"
+      invalidateChannels(); invalidateCache(); return NextResponse.json({ ok: true }, noStore);
     }
 
     if (b.action === "connectAll") return connectAll(b, all, g.mapped.dataset.pages);
