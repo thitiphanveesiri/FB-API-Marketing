@@ -250,7 +250,9 @@ export default function UploadPage() {
           <ul className="space-y-1 rounded-xl bg-gray-50 p-3 text-sm"><li><b>{validation.ok}</b> rows will be imported into <b>{data.pages.find((p) => p.id === pageId)?.name}</b> as <b>{type}</b>.</li>
             {(isAdsType(type) || type === "Page Insights" || type === "Chat Messages" || type === "Post Comments") && validation.periodStart && <li>Period covered: {fmtDate(validation.periodStart)} – {fmtDate(validation.periodEnd)}.</li>}
             {isAdsType(type) && <li>{validation.newAdIds.length} new ad(s) will be created. {validation.replaceKeys.size > 0 ? `${validation.replaceKeys.size} existing ad/day records will be replaced.` : "No existing records will be changed."}</li>}
-            {validation.merged > 0 && <li><b>{validation.merged}</b> row(s) match a lead already pulled from Facebook and will update that lead (no duplicate card on the Board).</li>}
+            {(type === "Lead Data" || type === "Inbox Conversations") && <li>ตรงกับลีด/แชทที่มีอยู่แล้ว <b>{validation.merged}</b> แถว (อัปเดตการ์ดเดิม ไม่สร้างซ้ำ) · ไม่ตรง <b>{validation.leads.length}</b> แถว (จะสร้างการ์ดใหม่)</li>}
+            {(type === "Lead Data" || type === "Inbox Conversations") && validation.merged === 0 && validation.leads.length > 0 &&
+              <li className="text-amber-700">ไม่ตรงกับลีดเดิมเลย — ถ้าควรจะตรง ให้ตรวจ 2 อย่าง: เพจที่เลือกต้องเป็นเพจเดียวกับแชท และชื่อในไฟล์ต้องเขียนเหมือนชื่อที่แสดงบนแชท (หรือมีเบอร์/อีเมลตรงกับลีดเดิม)</li>}
             <li>{validation.failed} failed and {validation.duplicates} duplicate rows will be skipped.</li></ul>
           <div className="flex gap-2"><Btn onClick={() => setStep(5)}>Back</Btn><Btn variant="primary" onClick={commit} disabled={validation.ok === 0 || busy}>{busy ? "กำลังบันทึกลง Google Sheet…" : "ยืนยันและบันทึก"}</Btn></div></div>)}
 
