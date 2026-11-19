@@ -12,6 +12,7 @@ export default function AdsSyncCard() {
   const { user, reloadData, toast } = useStore();
   const [accts, setAccts] = useState<Acct[] | null>(null); const [ch, setCh] = useState(""); const [days, setDays] = useState("30");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<AdsTotals | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const [acctError, setAcctError] = useState("");
   const stop = useRef(false);
 
@@ -35,15 +36,14 @@ export default function AdsSyncCard() {
   if (accts.length === 0) return null;
 
   const run = async () => {
-    stop.current = false; setBusy(true); setDone(null);
+    stop.current = false; setBusy(true); setDone(null); setNotes([]);
     const tot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [] };
     try {
       await pullAds(ch, Number(days) || 30, { stop, log: setLog }, tot);
-      setDone(tot);
-      const warning = tot.warnings?.length ? ` หมายเหตุ: ${tot.warnings.join(" · ")}` : "";
-      setLog((stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว") + warning);
+      setDone(tot); setNotes(tot.warnings ?? []);
+      setLog(stop.current ? "หยุดแล้ว (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)" : "ดึงข้อมูลเสร็จแล้ว");
       toast(stop.current ? "หยุดการดึงข้อมูล" : "ดึงข้อมูลโฆษณาเสร็จแล้ว");
-    } catch (e) { const warning = tot.warnings?.length ? ` หมายเหตุ: ${tot.warnings.join(" · ")}` : ""; setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)${warning}`); }
+    } catch (e) { setNotes(tot.warnings ?? []); setLog(`ผิดพลาด: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"} (ข้อมูลที่ดึงไปแล้วถูกบันทึกไว้)`); }
     finally { setBusy(false); await reloadData(true); }
   };
 
@@ -57,6 +57,10 @@ export default function AdsSyncCard() {
           {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
         </div>
         {log && <p className="text-sm" role="status">{log}</p>}
+        {notes.length > 0 && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+          <p className="font-medium">หมายเหตุ</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+        </div>}
         {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.ads} โฆษณา ({done.campaigns} แคมเปญ) และสถิติรายวัน {done.rows} แถว</p>}
         <p className="text-xs text-muted">ดึงซ้ำได้ ข้อมูลวันเดิมจะถูกอัปเดตทับ ไม่ซ้ำ · วันที่นับตามเขตเวลาของบัญชีโฆษณา · ภาพโฆษณาเป็นลิงก์จาก Meta ที่หมดอายุได้ ดึงใหม่เพื่อรีเฟรชภาพ</p>
       </div>

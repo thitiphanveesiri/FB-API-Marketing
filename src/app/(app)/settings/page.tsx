@@ -31,10 +31,20 @@ export default function SettingsPage() {
 }
 
 function PagesTab({ canManage }: { canManage: boolean }) {
-  const { data, savePage, toast, confirm } = useStore();
+  const { data, savePage, mergePages, toast, confirm } = useStore();
   const [edit, setEdit] = useState<FbPage | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [err, setErr] = useState<Record<string, string>>({});
+  const [mergeTo, setMergeTo] = useState<Record<string, string>>({});
+  const [merging, setMerging] = useState("");
+  const placeholders = data.pages.filter((p) => p.name.includes("ไม่พบในแท็บ Pages"));
+  const move = async (p: FbPage, to: string) => {
+    const toName = data.pages.find((x) => x.id === to)?.name ?? to;
+    const r = await confirm({ title: `ย้ายข้อมูลไป ${toName}?`, message: `แชท แคมเปญ และโฆษณาที่อ้างถึง ${p.id} จะถูกเปลี่ยนไปอยู่ใต้ ${toName} ในชีต — ข้อมูลเดิมไม่ถูกลบ`, confirmLabel: "ย้ายข้อมูล", tone: "danger" });
+    if (!r.ok) return;
+    setMerging(p.id);
+    try { if (await mergePages(p.id, to)) setMergeTo((m) => ({ ...m, [p.id]: "" })); } finally { setMerging(""); }
+  };
   const reps = data.users.filter((u) => u.role === "Sales Representative" && u.active);
   const agName = (id: string | null) => data.agencies.find((a) => a.id === id)?.name ?? "—";
   const save = () => {
@@ -56,6 +66,23 @@ function PagesTab({ canManage }: { canManage: boolean }) {
   return (
     <Card title="Facebook Pages" subtitle="Connect pages to agencies and sales teams." right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: `PG-${data.pages.length + 1}`, name: "", active: true, agencyId: null, teamIds: [] }); }}><Plus size={15} /> Add Facebook Page</Btn>}>
       <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Pages here are entered manually. Linking a real Page (OAuth + page access token) is part of the Meta API phase.</p>
+      {placeholders.length > 0 && <div className="mb-3 space-y-2">
+        {placeholders.map((p) => {
+          const chats = data.leads.filter((l) => l.pageId === p.id).length;
+          const camps = data.campaigns.filter((c) => c.pageId === p.id).length;
+          const target = mergeTo[p.id] ?? "";
+          const targets = data.pages.filter((x) => x.id !== p.id && !x.name.includes("ไม่พบในแท็บ Pages"));
+          return <div key={p.id} className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+            <p className="text-sm font-medium text-amber-900">{p.name}</p>
+            <p className="mt-0.5 text-xs text-amber-900">ข้อมูลจริงที่ยังอ้างถึงเพจนี้: แชท {chats} · แคมเปญ {camps} — เพจนี้ไม่มีแถวในชีตแล้ว แชทจึงขึ้นในกล่องข้อความไม่ได้</p>
+            {canManage && targets.length > 0 && <div className="mt-2 flex flex-wrap items-end gap-2">
+              <Select label="ย้ายข้อมูลไปเพจ" value={target} onChange={(v) => setMergeTo((m) => ({ ...m, [p.id]: v }))} options={[{ value: "", label: "— เลือกเพจ —" }, ...targets.map((x) => ({ value: x.id, label: x.name }))]} />
+              <Btn variant="primary" disabled={!target || merging === p.id} onClick={() => void move(p, target)}>{merging === p.id ? "กำลังย้าย…" : "ย้ายข้อมูล"}</Btn>
+            </div>}
+            <p className="mt-2 text-xs text-amber-800">หรือถ้าเพจนี้มีอยู่จริง แค่กด <b>Edit</b> ใส่ชื่อเพจจริงแล้ว <b>Save</b> — ระบบจะเพิ่มแถวเพจกลับลงชีตให้</p>
+          </div>;
+        })}
+      </div>}
       <DataTable columns={cols} rows={data.pages} rowKey={(p) => p.id} caption="Facebook pages" />
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add Facebook Page" : "Edit page"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3">

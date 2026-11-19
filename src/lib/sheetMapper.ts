@@ -86,13 +86,23 @@ export function mapSheets(tabs: RawTabs): MapResult {
     pages.push({ id, name, active: bool(r.get("active"), true), agencyId: ag || null, teamIds: r.get("sales_team").split(/[,;]/).map((x) => x.trim()).filter(Boolean) });
   }
   const pageIds = new Set(pages.map((p) => p.id));
+  // Rows that point at a page the pages tab no longer has (a page row deleted or its id retyped). They used to be dropped,
+  // which silently emptied the Inbox while the sheet still held the chats. They are kept under a placeholder page instead,
+  // and one warning says what to do: rename that page in Settings → Pages and save, which adds the missing row to the sheet.
+  type OrphanKind = "leads" | "campaigns" | "ads" | "comments" | "insights";
+  const orphans = new Map<string, Record<OrphanKind, number>>();
+  const orphan = (pid: string, kind: OrphanKind) => {
+    const o = orphans.get(pid) ?? { leads: 0, campaigns: 0, ads: 0, comments: 0, insights: 0 };
+    o[kind]++; orphans.set(pid, o);
+  };
 
   // campaigns
   const campaigns: Campaign[] = [];
   for (const r of tab("campaigns").rows) {
     const id = r.get("campaign_id"), name = r.get("name"), pageId = r.get("page_id");
     if (!id || !name) { warn("campaigns", r.n, "campaign_id and name are required — row skipped"); continue; }
-    if (!pageIds.has(pageId)) { warn("campaigns", r.n, `page_id "${pageId}" not found in pages — row skipped`); continue; }
+    if (!pageId) { warn("campaigns", r.n, "page_id is required — row skipped"); continue; }
+    if (!pageIds.has(pageId)) orphan(pageId, "campaigns");
     if (campaigns.some((c) => c.id === id)) { warn("campaigns", r.n, `Duplicate campaign_id ${id} — skipped`); continue; }
     const ag = r.get("agency_id") || pages.find((p) => p.id === pageId)?.agencyId || "";
     campaigns.push({ id, name, pageId, agencyId: ag, objective: r.get("objective") });
@@ -111,8 +121,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (r.get("status") && !st) warn("ads", r.n, `Unknown status "${r.get("status")}" — set to Active`);
     const ct = pick(["Image", "Video", "Carousel"] as const, r.get("creative_type")) ?? "Image";
     const adPage = r.get("page_id");
-    if (adPage && !pageIds.has(adPage)) warn("ads", r.n, `page_id "${adPage}" not found in pages — the campaign's page is used`);
-    ads.push({ id, name: name || id, campaignId: cid, ...(adPage && pageIds.has(adPage) ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, ...(r.get("caption") ? { caption: r.get("caption") } : {}), ...(r.get("headline") ? { headline: r.get("headline") } : {}), updatedAt: dateOnly(r.get("updated_at")) ?? "" });
+    if (adPage && !pageIds.has(adPage)) orphan(adPage, "ads");
+    ads.push({ id, name: name || id, campaignId: cid, ...(adPage ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, ...(r.get("caption") ? { caption: r.get("caption") } : {}), ...(r.get("headline") ? { headline: r.get("headline") } : {}), updatedAt: dateOnly(r.get("updated_at")) ?? "" });
   }
   const adIds = new Set(ads.map((a) => a.id));
 
@@ -135,7 +145,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
     const id = r.get("lead_id"), name = r.get("name"), pageId = r.get("page_id");
     if (!id || !name) { warn("leads", r.n, "lead_id and name are required — row skipped"); continue; }
     if (leadIds.has(id)) { warn("leads", r.n, `Duplicate lead_id ${id} — skipped`); continue; }
-    if (!pageIds.has(pageId)) { warn("leads", r.n, `page_id "${pageId}" not found — row skipped`); continue; }
+    if (!pageId) { warn("leads", r.n, "page_id is required — row skipped"); continue; }
+    if (!pageIds.has(pageId)) orphan(pageId, "leads");
     const created = dateOnly(r.get("created_at")); if (!created) { warn("leads", r.n, `Invalid created_at "${r.get("created_at")}" — row skipped`); continue; }
     const status = parseStatus(r.get("status"));
     if (!status) warn("leads", r.n, `Unknown status "${r.get("status")}" — set to Not Responded`);
@@ -206,7 +217,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
   const insights: PageInsight[] = []; const seenIns = new Set<string>();
   for (const r of tab("page_insights").rows) {
     const pid = r.get("page_id"), date = dateOnly(r.get("date"));
-    if (!pageIds.has(pid) || !date) { warn("page_insights", r.n, "Unknown page_id or invalid date — row skipped"); continue; }
+    if (!pid || !date) { warn("page_insights", r.n, "Unknown page_id or invalid date — row skipped"); continue; }
+    if (!pageIds.has(pid)) orphan(pid, "insights");
     const k = `${pid}|${date}`; if (seenIns.has(k)) { warn("page_insights", r.n, `Duplicate ${pid} on ${date} — skipped`); continue; } seenIns.add(k);
     const n = (c: string) => parseNumber(r.get(c)) ?? 0;
     insights.push({ pageId: pid, date, reach: n("reach"), views: n("views"), engagements: n("engagements"), followers: n("followers"), newFollowers: n("new_followers"), linkClicks: n("link_clicks") });
@@ -215,12 +227,21 @@ export function mapSheets(tabs: RawTabs): MapResult {
   const comments: PostComment[] = []; const seenCm = new Set<string>();
   for (const r of tab("post_comments").rows) {
     const pid = r.get("page_id"), at = dateTime(r.get("commented_at")), id = r.get("comment_id");
-    if (!id || !pageIds.has(pid) || !at) { warn("post_comments", r.n, "comment_id, a known page_id and a valid commented_at are required — row skipped"); continue; }
+    if (!id || !pid || !at) { warn("post_comments", r.n, "comment_id, page_id and a valid commented_at are required — row skipped"); continue; }
+    if (!pageIds.has(pid)) orphan(pid, "comments");
     if (seenCm.has(id)) { warn("post_comments", r.n, `Duplicate comment_id ${id} — skipped`); continue; } seenCm.add(id);
     const rep = r.get("replied_at") ? dateTime(r.get("replied_at")) : null;
     comments.push({ id, pageId: pid, postId: r.get("post_id"), commenter: r.get("commenter"), text: r.get("text"), at, repliedAt: rep, repliedBy: r.get("replied_by") });
   }
   comments.sort((a, b) => a.at.localeCompare(b.at));
+  // Give every orphaned page id a placeholder page so its rows are usable (and visible) instead of silently dropped.
+  for (const [id, o] of orphans) {
+    if (pageIds.has(id)) continue;
+    pages.push({ id, name: `${id} (ไม่พบในแท็บ Pages)`, active: true, agencyId: null, teamIds: [] });
+    pageIds.add(id);
+    const what = [o.leads ? `${o.leads} leads` : "", o.campaigns ? `${o.campaigns} campaigns` : "", o.ads ? `${o.ads} ads` : "", o.comments ? `${o.comments} comments` : "", o.insights ? `${o.insights} insights` : ""].filter(Boolean).join(", ");
+    warn("pages", 1, `page_id "${id}" is used by ${what} but is not in the pages tab — they are shown under "${id} (ไม่พบในแท็บ Pages)". Open Settings → Pages, rename that page to its real name and save: the row is then added to the sheet and the data is stored normally.`);
+  }
   const imports: ImportRecord[] = [];
   for (const r of tab("import_log").rows) {
     imports.push({ id: r.get("import_id"), at: r.get("at"), pageId: r.get("page_id"), dataType: (r.get("data_type") || "Ads Performance") as ImportDataType, fileName: r.get("file_name"), mode: r.get("mode") === "replace" ? "replace" : "incremental",

@@ -57,6 +57,8 @@ interface Store {
   addEvaluation: (e: Omit<Evaluation, "id" | "at" | "reviewerId" | "previousQuality">) => void;
   // settings
   savePage: (p: FbPage) => void;
+  /** Moves chats/campaigns/ads/comments that point at a page id no longer in the pages tab onto an existing page. */
+  mergePages: (from: string, to: string) => Promise<boolean>;
   saveAgency: (a: Agency) => void;
   saveUser: (u: User) => void;
   assignCampaigns: (agencyId: string, campaignIds: string[]) => void;
@@ -266,6 +268,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     savePage: (p) => {
       setData((d) => ({ ...d, pages: d.pages.some((x) => x.id === p.id) ? d.pages.map((x) => (x.id === p.id ? p : x)) : [...d.pages, p] }));
       void persist({ t: "settings.upsert", tab: "pages", row: { page_id: p.id, name: p.name, agency_id: p.agencyId ?? "", active: p.active, sales_team: p.teamIds.join(",") } });
+    },
+    mergePages: async (from, to) => {
+      const ok = await persist({ t: "pages.merge", from, to });
+      if (ok) { toast(`ย้ายข้อมูลไปเพจ ${data.pages.find((p) => p.id === to)?.name ?? to} แล้ว`); await reloadData(true); }
+      return ok;
     },
     saveAgency: (a) => {
       setData((d) => ({ ...d, agencies: d.agencies.some((x) => x.id === a.id) ? d.agencies.map((x) => (x.id === a.id ? a : x)) : [...d.agencies, a] }));

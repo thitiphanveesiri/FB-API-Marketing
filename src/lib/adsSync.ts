@@ -9,7 +9,7 @@ export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean;
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
 /** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
 export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
-export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warning?: string; byPage?: Record<string, number> }
+export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warnings?: string[]; byPage?: Record<string, number> }
 
 const ADS_PER_CALL = 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
 /** One request to our own route must finish inside the platform limit (60 s). Past this many ms no further fallback is attempted: fail with a clear message instead. */
@@ -59,9 +59,9 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // Copy comes from the creative's own body/title first, so the lighter levels keep those two even after the story block is gone.
     const TIERS = [
       { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความในโพสต์" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: false, limit: 25, note: "ไม่กรองตามสถานะโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงคลิปวิดีโอ" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความโพสต์" },
       { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
     ];
     // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
@@ -125,17 +125,17 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
     const notes: string[] = [];
-    if (tier > 0) notes.push(`Meta ปฏิเสธคำขอแบบละเอียด จึงลดรายละเอียดลง: ${TIERS[tier].note} (ระดับ ${tier + 1}/${TIERS.length})`);
+    if (tier > 0) notes.push(`Meta ไม่ให้ข้อมูลครบตามที่ขอ ระบบจึงดึงแบบเบาลง: ${TIERS[tier].note} — ข้อมูลที่ได้ยังใช้ได้ตามปกติ`);
     if (mediaWarning) notes.push(mediaWarning);
     if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
-    if (unmapped.size && !i.state.after) notes.push(`เพจที่โฆษณาใช้ลงประกาศยังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
-    else if (noPage && !i.state.after) notes.push(`${noPage} โฆษณาไม่ได้ระบุเพจต้นทางใน creative — แสดงใต้เพจเริ่มต้นของบัญชี; ดึงซ้ำภายหลังถ้า Meta ส่งข้อมูล creative ครบ`);
+    if (unmapped.size && !i.state.after) notes.push(`เพจที่ลงประกาศโฆษณายังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
+    else if (noPage && !i.state.after) notes.push(`${noPage} โฆษณาไม่ได้บอกว่าโพสต์จากเพจไหน — ระบบจึงนับไว้ใต้เพจหลักของบัญชี; ดึงซ้ำภายหลังถ้า Meta ส่งข้อมูลมาเพิ่ม`);
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,
       counts, byPage,
-      ...(notes.length ? { warning: notes.join(" · ") } : {}),
+      ...(notes.length ? { warnings: notes } : {}),
     };
   }
 
@@ -170,9 +170,9 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const more = !!j.paging?.next && !!j.paging.cursors?.after, carry = { ...(core ? { fallback: true } : {}), ...(lim > 0 ? { lim } : {}) };
     const next: AdsState = more ? { phase: "insights", after: j.paging!.cursors!.after, win, ...carry } : win + 1 < windows ? { phase: "insights", win: win + 1, ...carry } : { phase: "done" };
     const notes: string[] = [];
-    if (core) notes.push("Meta ปฏิเสธฟิลด์ reach/คลิกลิงก์ จึงดึงสถิติแบบพื้นฐาน (รีชอาจเป็น 0)");
-    if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลมากเกินไป จึงดึงทีละน้อยลง (${INSIGHT_LIMITS[lim]} แถว/ครั้ง)`);
-    return { next, writes, counts, ...(notes.length ? { warning: notes.join(" · ") } : {}) };
+    if (core) notes.push("Meta ไม่ให้ฟิลด์ reach/คลิกลิงก์ ระบบจึงดึงสถิติแบบพื้นฐาน (ค่า Reach อาจเป็น 0)");
+    if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลเยอะเกินไป ระบบจึงดึงทีละ ${INSIGHT_LIMITS[lim]} แถว (ยอดรวมยังครบ)`);
+    return { next, writes, counts, ...(notes.length ? { warnings: notes } : {}) };
   }
   return { next: { phase: "done" }, writes, counts };
 }
@@ -218,7 +218,7 @@ async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: st
     const a = (await graph(acct, { fields: "name,account_status" }, token, f, base, 900, 0)) as unknown as { name?: string; account_status?: number };
     who = `${a.name || acct}${a.account_status != null ? ` (สถานะบัญชี: ${ACCOUNT_STATUS[a.account_status] ?? a.account_status})` : ""}`;
   } catch (e) { if (e instanceof FbError) who = `${acct} (เปิดข้อมูลบัญชีไม่ได้: ${e.message.slice(0, 90)})`; }
-  return `Meta ไม่ส่งโฆษณาใดกลับมาจากบัญชี ${who} — ตรวจว่า (1) เลือกบัญชีโฆษณาถูกบัญชี (2) เจ้าของโทเคนถูกเพิ่มในบัญชีนี้ที่ Business Settings → Ad accounts → Add people (มีสิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ได้เป็นคนที่เข้าถึงบัญชีนี้ Meta จะตอบรายการว่างโดยไม่แจ้ง error) (3) บัญชีมีโฆษณาอยู่จริง`;
+  return `Meta ไม่ส่งโฆษณาของบัญชี ${who} กลับมาเลย — สาเหตุที่พบบ่อย: (1) เลือกบัญชีโฆษณาผิดบัญชี (2) คนที่ออกโทเคนยังไม่ได้ถูกเพิ่มเข้าบัญชีนี้ — เพิ่มที่ Business Settings → Ad accounts → Add people (ให้สิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ใช่คนในบัญชี Meta จะตอบว่ารายการว่างโดยไม่แจ้ง error) (3) บัญชีนี้ไม่มีโฆษณาจริง`;
 }
 
 type MediaNode = { full_picture?: string; message?: string; attachments?: { data?: { media_type?: string; target?: { id?: string } }[] }; picture?: string | { data?: { url?: string } }; error?: { message?: string } };

@@ -31,6 +31,7 @@ export type Op =
   | { t: "eval.add"; row: Record<string, unknown> }
   | { t: "ad.creative"; id: string; image: string; video: string }
   | { t: "settings.upsert"; tab: string; row: Record<string, unknown> }
+  | { t: "pages.merge"; from: string; to: string }
   | { t: "import.commit"; record: Record<string, unknown>; replace: boolean; perf: unknown[]; leads: unknown[]; ads: unknown[]; campaigns: unknown[]; insights: unknown[]; messages?: unknown[]; comments?: unknown[]; users?: { user_id: string; name: string }[]; patches: { lead_id: string; set: Record<string, unknown> }[] };
 
 export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
@@ -79,6 +80,28 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       if (!(op.tab in keys)) throw new Denied(400, "Tab not editable");
       const row = clean(op.tab, op.row); str(row[keys[op.tab]], keys[op.tab]);
       return [{ tab: op.tab, keyCols: [keys[op.tab]], mode: "upsert", rows: [row] }];
+    }
+    case "pages.merge": {
+      // Data that points at a page row the pages tab no longer has (typically after a page id was retyped) is moved onto
+      // a page that exists, so the chats and campaigns show up again instead of being skipped by the sheet mapper.
+      if (!roleCan.manageSettings(me.role)) throw new Denied(403, "Only an Administrator can move data between pages");
+      const from = str(op.from, "from"), to = str(op.to, "to");
+      if (from === to) throw new Denied(400, "Choose two different pages");
+      if (!ds.pages.some((p) => p.id === to)) throw new Denied(404, "The target page was not found");
+      const writes: Write[] = [];
+      const leads = ds.leads.filter((l) => l.pageId === from).map((l) => ({ lead_id: l.id, page_id: to }));
+      if (leads.length) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: leads, mode: "updateOnly" });
+      const camps = ds.campaigns.filter((c) => c.pageId === from).map((c) => ({ campaign_id: c.id, page_id: to }));
+      if (camps.length) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: camps, mode: "updateOnly" });
+      const ads = ds.ads.filter((a) => a.pageId === from).map((a) => ({ ad_id: a.id, page_id: to }));
+      if (ads.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: ads, mode: "updateOnly" });
+      const comments = ds.comments.filter((c) => c.pageId === from).map((c) => ({ comment_id: c.id, page_id: to }));
+      if (comments.length) writes.push({ tab: "post_comments", keyCols: ["comment_id"], rows: comments, mode: "updateOnly" });
+      // insert (not upsert) keeps the target page's own figures when both pages have a row for the same day
+      const insights = ds.insights.filter((x) => x.pageId === from).map((x) => ({ page_id: to, date: x.date, reach: x.reach, views: x.views, engagements: x.engagements, followers: x.followers, new_followers: x.newFollowers, link_clicks: x.linkClicks }));
+      if (insights.length) writes.push({ tab: "page_insights", keyCols: ["page_id", "date"], rows: insights, mode: "insert" });
+      if (!writes.length) throw new Denied(400, "No rows use that page");
+      return writes;
     }
     case "import.commit": {
       if (!roleCan.upload(me.role)) throw new Denied(403, "Your role cannot upload data");

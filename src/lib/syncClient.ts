@@ -25,6 +25,7 @@ interface SyncResponse {
     pageCommentsSkipped?: number;
   };
   warning?: string;
+  warnings?: string[];
   byPage?: Record<string, number>;
 }
 
@@ -48,6 +49,9 @@ export async function pullAds(channelId: string, days: number, ctl: PullCtl, tot
   type St = { phase: string; after?: string; fallback?: boolean; tier?: number; win?: number; lim?: number };
   let state: St = { phase: "ads" }, failures = 0, rateWaits = 0, calls = 0;
   const t0 = Date.now(), at = { ads: tot.ads, rows: tot.rows }, secs = () => Math.round((Date.now() - t0) / 1000);
+  const notesAtStart = tot.warnings?.length ?? 0;
+  // Each batch reports its own notes; the same one repeats once per batch. Keep one copy of each so the panel stays readable.
+  const addNotes = (list?: string[]) => { if (!list?.length) return; tot.warnings ??= []; for (const w of list) if (!tot.warnings.includes(w)) tot.warnings.push(w); };
   while (state.phase !== "done" && !ctl.stop.current) {
     calls++;
     // totals are shared by every ad account, so show this account's own count instead of the running sum
@@ -69,10 +73,12 @@ export async function pullAds(channelId: string, days: number, ctl: PullCtl, tot
     failures = 0;
     tot.ads += j.counts?.ads ?? 0; tot.campaigns += j.counts?.campaigns ?? 0; tot.rows += j.counts?.rows ?? 0;
     for (const [pageId, count] of Object.entries(j.byPage ?? {})) { tot.byPage ??= {}; tot.byPage[pageId] = (tot.byPage[pageId] ?? 0) + count; }
-    if (j.warning) { tot.warnings ??= []; if (!tot.warnings.includes(j.warning)) tot.warnings.push(j.warning); }
+    addNotes(j.warnings); addNotes(j.warning ? [j.warning] : undefined);
     state = j.next?.phase ? { phase: j.next.phase, after: j.next.after, fallback: j.next.fallback, tier: j.next.tier, win: j.next.win, lim: j.next.lim } : { phase: "done" };
   }
-  // Finished without an error but nothing came back: say so (instead of a silent "0")
-  if (!ctl.stop.current && tot.ads === at.ads && tot.rows === at.rows) { tot.warnings ??= []; tot.warnings.push(`${tag.replace(/ · $/, "") || "บัญชีนี้"}: ดึงเสร็จแล้วแต่ไม่ได้ข้อมูลเลย (0 โฆษณา 0 แถว) — ดูเหตุผลที่ระบบแจ้งไว้ในหมายเหตุ`); }
-  else if (!ctl.stop.current && tot.ads > at.ads && tot.rows === at.rows) { tot.warnings ??= []; tot.warnings.push(`${tag.replace(/ · $/, "") || "บัญชีนี้"}: ได้รายการโฆษณาแต่ไม่มีสถิติรายวันในช่วง ${days} วันที่เลือก (อาจไม่มียอดใช้จ่ายในช่วงนี้) — ลองขยายช่วงย้อนหลัง`); }
+  // Finished without an error but nothing came back: say so (instead of a silent "0"). If the server already explained why
+  // (an empty ad account, a refused field list), that explanation is the note — do not add a second one saying the same thing.
+  const explained = (tot.warnings?.length ?? 0) > notesAtStart;
+  if (!ctl.stop.current && tot.ads === at.ads && tot.rows === at.rows && !explained) { addNotes([`${tag.replace(/ · $/, "") || "บัญชีนี้"}: ดึงเสร็จแล้วแต่ไม่ได้ข้อมูลเลย (0 โฆษณา 0 แถว)`]); }
+  else if (!ctl.stop.current && tot.ads > at.ads && tot.rows === at.rows) { addNotes([`${tag.replace(/ · $/, "") || "บัญชีนี้"}: ได้รายการโฆษณาแต่ไม่มีสถิติรายวันในช่วง ${days} วันที่เลือก (อาจไม่มียอดใช้จ่ายในช่วงนี้) — ลองขยายช่วงย้อนหลัง`]); }
 }

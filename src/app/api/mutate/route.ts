@@ -6,6 +6,7 @@ import { readTabs, sheetsConfigured } from "@/lib/googleSheets";
 import { mapSheets } from "@/lib/sheetMapper";
 import { Denied, Op, planOp } from "@/lib/mutations";
 import { upsertRows } from "@/lib/sheetsWrite";
+import { loadChannels, saveChannel } from "@/lib/channels";
 
 const noStore = { headers: { "Cache-Control": "no-store" } };
 const stamp = () => { // "YYYY-MM-DD HH:MM" in the business time zone, not the server's
@@ -30,6 +31,8 @@ export async function POST(req: Request) {
     const writes = planOp(op, me, mapped.dataset, stamp());
     const results = [];
     for (const w of writes) results.push(await upsertRows(w.tab, w.keyCols, w.rows, w.mode));
+    // a merged page must not be written to again: point the chat channels at the page the data now lives on
+    if (op.t === "pages.merge") for (const c of await loadChannels(true)) if (c.sheetPageId === op.from) await saveChannel({ channelId: c.channelId, channel: c.channel, sheetPageId: op.to });
     invalidateCache();
     return NextResponse.json({ ok: true, results }, noStore);
   } catch (e) {
