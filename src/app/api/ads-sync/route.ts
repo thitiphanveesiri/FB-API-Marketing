@@ -1,6 +1,7 @@
 import { connection, NextResponse } from "next/server";
 import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { loadChannels } from "@/lib/channels";
+import { fetchPageName, systemPageIdFor } from "@/lib/autoPage";
 import { adsStep, type AdsState } from "@/lib/adsSync";
 import { FbError } from "@/lib/fbSync";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
@@ -40,12 +41,39 @@ export async function POST(req: Request) {
       }
     }
     const pageNames = Object.fromEntries(g.mapped.dataset.pages.map((p) => [p.id, p.name]));
-    const out = await adsStep({ pageNames, accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    // ads can post as a Page that was never connected: give that Page its own system page so the ad is shown under it.
+    // Names are read in parallel and saved in one write; the agency/team of the account's own page is inherited, since it is
+    // the same advertiser — otherwise those campaigns would vanish as soon as an agency or sales-rep filter is used.
+    const accountPage = g.mapped.dataset.pages.find((p) => p.id === ch.sheetPageId);
+    const createdPages: string[] = [];
+    const resolvePages = async (fbPageIds: string[]) => {
+      const out: Record<string, string> = {}, missing: string[] = [];
+      for (const id of fbPageIds) {
+        const own = systemPageIdFor(id);
+        if (g.mapped.dataset.pages.some((p) => p.id === own)) out[id] = own; else missing.push(id);
+      }
+      const named = await Promise.all(missing.map(async (id) => ({ id, name: await fetchPageName(id, ch.accessToken) })));
+      const rows = named.filter((x) => x.name).map((x) => ({
+        page_id: systemPageIdFor(x.id), name: x.name, active: true,
+        ...(accountPage?.agencyId ? { agency_id: accountPage.agencyId } : {}),
+        ...(accountPage?.teamIds.length ? { sales_team: accountPage.teamIds.join(",") } : {}),
+      }));
+      if (rows.length) {
+        await upsertRows("pages", ["page_id"], rows, "insert");
+        invalidateCache(); // the next batch must see the new pages instead of looking them up again
+        createdPages.push(...rows.map((r) => r.name));
+        for (const x of named) if (x.name) out[x.id] = systemPageIdFor(x.id);
+      }
+      return out;
+    };
+    const out = await adsStep({ pageNames, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.
     const forced = ch.forceSheetPage ? `บัญชีนี้ตั้ง “บังคับใช้เพจที่เลือกกับโฆษณาทั้งหมด” — ทุกแคมเปญจะอยู่ใต้เพจ ${g.mapped.dataset.pages.find((p) => p.id === ch.sheetPageId)?.name ?? ch.sheetPageId}; ถ้าต้องการแยกตามเพจต้นทาง ให้แก้การเชื่อมต่อที่หน้า Upload แล้วเอาติ๊กออก` : "";
-    const warnings = [out.warning, forced, stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
+    const warnings = [out.warning, forced,
+      createdPages.length ? `เพิ่มเพจใหม่ ${createdPages.length} เพจจากเพจต้นทางของโฆษณา (${createdPages.slice(0, 3).join(", ")}${createdPages.length > 3 ? " …" : ""}) — ตั้งเอเจนซี/ทีมเซลล์ได้ที่หน้า Settings → Pages` : "",
+      stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, warning: warnings.length ? warnings.join(" · ") : undefined, byPage: out.byPage }, noStore);
   } catch (e) {
     if (e instanceof FbError) return fail(e.rateLimited ? 429 : 502, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e.message, { rateLimited: e.rateLimited });

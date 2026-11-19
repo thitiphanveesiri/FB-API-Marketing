@@ -8,7 +8,7 @@ export type AdsPhase = "ads" | "insights" | "done";
 export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number; win?: number; lim?: number }
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
 /** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
-export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string> }
+export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
 export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warning?: string; byPage?: Record<string, number> }
 
 const ADS_PER_CALL = 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
@@ -84,6 +84,14 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // Ads whose creative has no image of its own (page-post, catalogue, dynamic): the picture lives on the underlying post/video.
     const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string }[] = [];
     let noPage = 0;
+    // A page the ads post as but that was never connected: the caller resolves it (name from Meta, one write for the whole
+    // batch) so its ads show under their own page. Pages that cannot be read stay on the account's page as before.
+    let extra: Record<string, string> = {};
+    if (i.resolvePages) {
+      const wanted = new Set<string>();
+      for (const a of ads) { const c = a.creative ?? {}, id = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || ""; if (id && !i.pageMap?.[id]) wanted.add(id); }
+      if (wanted.size) { try { extra = await i.resolvePages([...wanted].slice(0, 12)); } catch { /* keep the account's page */ } }
+    }
     for (const a of ads) {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
       const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
@@ -94,8 +102,9 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const headline = (c.title || story.link_data?.name || story.video_data?.title || "").trim();
       // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
       const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
-      const viaMap = fbPage ? i.pageMap?.[fbPage] : undefined;
-      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap]) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
+      const viaMap = fbPage ? (i.pageMap?.[fbPage] ?? extra[fbPage]) : undefined;
+      // a freshly created page is not in pageNames yet, so its own id from `extra` is proof that it exists
+      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       else if (!fbPage && !mapped) noPage++;
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
