@@ -59,10 +59,16 @@ export const STATUS_TH: Record<LeadStatus, string> = {
 export const statusTh = (s: string) => (STATUS_TH as Record<string, string>)[s] ?? s;
 /** Board columns, left to right: chats grouped by how the conversation went. */
 export const BOARD_COLUMNS: LeadQuality[] = ["Not Responded", "Very Poor", "Average", "Qualified", "Appointment Booked", "Connection Created"];
+/** Stage names used by form/CRM exports that mean one of our statuses. */
+const STATUS_ALIAS: Record<string, LeadStatus> = {
+  "new customer": "New", "new lead": "New", "ลูกค้าใหม่": "New", "new": "New",
+  "in process": "In-Process", "in progress": "In-Process", "กำลังดำเนินการ": "In-Process",
+  "closed won": "Converted", "won": "Converted", "customer": "Converted", "ปิดการขาย": "Converted",
+};
 /** Accepts English or Thai status text (from a sheet or a file). */
 export function parseStatus(v: string): LeadStatus | undefined {
   const t = v.trim().toLowerCase(); if (!t) return undefined;
-  return STATUSES.find((x) => x.toLowerCase() === t || STATUS_TH[x] === v.trim());
+  return STATUSES.find((x) => x.toLowerCase() === t || STATUS_TH[x] === v.trim()) ?? STATUS_ALIAS[t];
 }
 
 /** A customer comment under a page post. repliedAt = when the page first replied (null = not yet). */
@@ -199,6 +205,8 @@ export interface Lead {
   source: "demo" | "import";
   channel?: ChatChannel; // blank in the sheet = facebook
   fbUserId?: string; // Facebook user id (PSID): what the Send API needs
+  // Contact/profile extras that form-export files (leads.csv) carry; blank for Messenger chats
+  phone2?: string; whatsapp?: string; leadSource?: string; form?: string; labels?: string;
 }
 export interface Evaluation {
   id: string;

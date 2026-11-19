@@ -32,6 +32,8 @@ export const SHEET_TABS: SheetTab[] = [
     C("quality", "Not Responded | Very Poor | Average | Qualified | Appointment Booked | Connection Created (blank = derived from status)"),
     C("valid", "FALSE for spam / invalid leads — they are excluded from all rates"), C("created_at", "YYYY-MM-DD", true),
     C("last_contact_at", "YYYY-MM-DD or YYYY-MM-DD HH:MM"), C("last_message", "Last message text"), C("follow_up_date", "YYYY-MM-DD"), C("phone", "Phone"), C("email", "Email"),
+    C("phone2", "Secondary phone (form exports)"), C("whatsapp", "WhatsApp number"), C("lead_source", "Where the lead came from, e.g. Paid / Organic (form exports)"),
+    C("form", "Form / landing page name (form exports)"), C("labels", "Labels / tags from the source tool"),
     C("first_response_min", "Minutes until first reply (blank = never replied)"), C("follow_ups", "Number of follow-ups"), C("avg_follow_up_hrs", "Average hours between follow-ups"),
     C("unread", "TRUE / FALSE"), C("drop_reason", "Fill only for dropped leads: No Response | Not Interested | Price Too High | Chose Competitor | Rejected After Qualification | No Follow-up | Postponed"),
     C("dropped_at", "YYYY-MM-DD"), C("previous_status", "Status before it was dropped"), C("recovery_status", "Not Started | In Progress | Recovered | Lost"), C("last_activity", "Free text"),

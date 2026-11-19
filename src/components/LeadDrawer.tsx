@@ -53,10 +53,15 @@ export default function LeadDrawer({ leadId, onClose }: { leadId: string | null;
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div><dt className="text-xs text-muted">Source Ad</dt><dd>{ad ? `${ad.id} · ${ad.name}` : "Unattributed"}</dd></div>
             <div><dt className="text-xs text-muted">Facebook Page</dt><dd className="flex items-center gap-1"><Facebook size={13} className="text-[#1877f2]" />{page?.name}</dd></div>
-            <div><dt className="text-xs text-muted">Phone</dt><dd className="flex items-center gap-1"><Phone size={13} />{lead.phone}</dd></div>
-            <div><dt className="text-xs text-muted">Email</dt><dd className="flex items-center gap-1 break-all"><Mail size={13} />{lead.email}</dd></div>
+            <div><dt className="text-xs text-muted">Phone</dt><dd className="flex items-center gap-1"><Phone size={13} />{lead.phone || "—"}</dd></div>
+            <div><dt className="text-xs text-muted">Email</dt><dd className="flex items-center gap-1 break-all"><Mail size={13} />{lead.email || "—"}</dd></div>
+            {lead.phone2 && <div><dt className="text-xs text-muted">Secondary phone</dt><dd>{lead.phone2}</dd></div>}
+            {lead.whatsapp && <div><dt className="text-xs text-muted">WhatsApp</dt><dd>{lead.whatsapp}</dd></div>}
+            {lead.leadSource && <div><dt className="text-xs text-muted">Source</dt><dd>{lead.leadSource}</dd></div>}
+            {lead.form && <div><dt className="text-xs text-muted">Form</dt><dd>{lead.form}</dd></div>}
             <div><dt className="text-xs text-muted">Created</dt><dd>{fmtDate(lead.createdAt)}</dd></div>
             <div><dt className="text-xs text-muted">Last contact</dt><dd>{fmtDateTime(lead.lastContactAt)}</dd></div>
+            {lead.labels && <div className="col-span-2"><dt className="text-xs text-muted">Labels</dt><dd className="text-xs">{lead.labels}</dd></div>}
           </dl>
 
           <div className="grid grid-cols-2 gap-3 rounded-xl border border-line p-3">

@@ -167,6 +167,9 @@ export function mapSheets(tabs: RawTabs): MapResult {
       dropped: reason ? { reason, at: dateOnly(r.get("dropped_at")) ?? last.slice(0, 10), previousStatus: parseStatus(r.get("previous_status")) ?? st,
         recovery: (pick<RecoveryStatus>(["Not Started", "In Progress", "Recovered", "Lost"], r.get("recovery_status")) ?? "Not Started"), lastActivity: r.get("last_activity") } : null,
       source: "import", channel: parseChannel(r.get("channel")), fbUserId: r.get("fb_user_id") || undefined,
+      ...(r.get("phone2") ? { phone2: r.get("phone2") } : {}), ...(r.get("whatsapp") ? { whatsapp: r.get("whatsapp") } : {}),
+      ...(r.get("lead_source") ? { leadSource: r.get("lead_source") } : {}), ...(r.get("form") ? { form: r.get("form") } : {}),
+      ...(r.get("labels") ? { labels: r.get("labels") } : {}),
     });
     if (rep && !userIds.has(rep)) { users.push({ id: rep, name: rep, email: "", role: "Sales Representative", active: true, hue: hue(rep) }); userIds.add(rep); }
   }

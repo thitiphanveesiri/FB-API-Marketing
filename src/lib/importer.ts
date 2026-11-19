@@ -30,6 +30,11 @@ const LEAD_FIELDS: FieldDef[] = [
   F("date", "Created date", true, "date", ["date", "created", "created date", "created at", "created_time", "created time", "วันที่"]),
   F("status", "Lead status", false, "text", ["status", "lead status", "stage", "lead_status", "สถานะ"]),
   F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone_number", "phone number", "เบอร์", "เบอร์โทร"]),
+  F("email", "Email", false, "text", ["email", "email address", "e-mail", "อีเมล"]),
+  F("phone2", "Secondary phone", false, "text", ["secondary phone number", "secondary phone", "phone 2", "phone2", "other phone"]),
+  F("whatsapp", "WhatsApp number", false, "text", ["whatsapp number", "whatsapp", "wa number"]),
+  F("leadSource", "Source (Paid / Organic …)", false, "text", ["source", "lead source", "แหล่งที่มา"]),
+  F("form", "Form / landing page", false, "text", ["form", "form name", "แบบฟอร์ม"]),
   F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "owner", "owner name", "เจ้าของ", "ผู้ดูแล"]),
   F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
 ];
@@ -42,6 +47,11 @@ const INBOX_FIELDS: FieldDef[] = [
   F("lastContactAt", "Last message date", false, "date", ["last message date", "last message time", "last contact", "last activity", "updated", "updated time", "วันที่ล่าสุด", "วันที่ข้อความล่าสุด"]),
   F("adId", "Source Ad ID", false, "text", ["ad id", "ad_id", "source ad", "source ad id", "referral ad id"]),
   F("phone", "Phone", false, "text", ["phone", "mobile", "tel", "phone number", "เบอร์", "เบอร์โทร"]),
+  F("email", "Email", false, "text", ["email", "email address", "e-mail", "อีเมล"]),
+  F("phone2", "Secondary phone", false, "text", ["secondary phone number", "secondary phone", "phone 2", "phone2", "other phone"]),
+  F("whatsapp", "WhatsApp number", false, "text", ["whatsapp number", "whatsapp", "wa number"]),
+  F("leadSource", "Source (Paid / Organic …)", false, "text", ["source", "lead source", "แหล่งที่มา"]),
+  F("form", "Form / landing page", false, "text", ["form", "form name", "แบบฟอร์ม"]),
   F("status", "Chat type / status", false, "text", ["status", "stage", "chat type", "สถานะ", "ประเภท"]),
   F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "assignee", "owner", "owner name", "เจ้าของ", "ผู้ดูแล"]),
   F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
@@ -324,19 +334,33 @@ export function validate(ctx: ValidateCtx): ValidationResult {
         repId = nr.id;
       }
       // The Facebook sync already created this customer: match by Lead/Conversation ID first, then by one unique name on this page
-      // (the same rule the sync uses), so the uploaded row fills in that lead instead of showing up twice on the Board.
-      // Extra spaces in the file must not rewrite an existing name that only differs in whitespace.
+      // (the same rule the sync uses), then by the phone/email the form file adds — so the uploaded row fills in that lead
+      // instead of showing up twice on the Board. Extra spaces in the file must not rewrite an existing name that only differs in whitespace.
       const name = String(vals.name ?? "").trim().replace(/\s+/g, " ");
       const byNameId = name ? ctx.leadIdByName?.get(leadNameKey(name)) ?? null : null;
+      const phoneKey = (v: string) => String(v ?? "").replace(/\D/g, "").replace(/^66/, "0");
+      const mail = (v: string) => String(v ?? "").trim().toLowerCase();
+      const byContactId = !id && !byNameId && (vals.phone || vals.email)
+        ? ctx.existingLeads?.find((l) => (!!vals.email && mail(l.email) === mail(vals.email))
+          || (phoneKey(vals.phone).length >= 7 && phoneKey(l.phone) === phoneKey(vals.phone)))?.id ?? null
+        : null;
       const existing = id
         ? ctx.existingLeads?.find((l) => l.id === id)
-        : byNameId ? ctx.existingLeads?.find((l) => l.id === byNameId) : undefined;
+        : byNameId ? ctx.existingLeads?.find((l) => l.id === byNameId)
+          : byContactId ? ctx.existingLeads?.find((l) => l.id === byContactId) : undefined;
       if (existing) {
         if (seen.has(existing.id)) { res.duplicates++; res.issues.push({ row: n, message: `Lead ${existing.id} was already updated from another row in this file`, level: "duplicate" }); return; }
         seen.add(existing.id);
         const set: Record<string, string> = {};
-        if (name && name !== existing.name) set.name = name;
+        // a row linked only by phone/email fills the contact details but never renames the chat's own name
+        if (name && name !== existing.name && existing.id !== byContactId) set.name = name;
         if (vals.phone && vals.phone !== existing.phone) set.phone = vals.phone;
+        if (vals.email && vals.email !== existing.email) set.email = vals.email;
+        if (vals.phone2 && vals.phone2 !== (existing.phone2 ?? "")) set.phone2 = vals.phone2;
+        if (vals.whatsapp && vals.whatsapp !== (existing.whatsapp ?? "")) set.whatsapp = vals.whatsapp;
+        if (vals.leadSource && vals.leadSource !== (existing.leadSource ?? "")) set.lead_source = vals.leadSource;
+        if (vals.form && vals.form !== (existing.form ?? "")) set.form = vals.form;
+        if (vals.labels && vals.labels !== (existing.labels ?? "")) set.labels = vals.labels;
         const ad = vals.adId || adIdFromLabels(vals.labels);
         if (ad && ad !== (existing.adId ?? "")) set.ad_id = ad;
         if (vals.repName && (repId ?? "") !== (existing.repId ?? "")) set.assigned_to = repId ?? "";
@@ -357,7 +381,9 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       if (id) seen.add(id);
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
       res.leads.push({
-        id: leadId, name, phone: vals.phone, email: "", pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
+        id: leadId, name, phone: vals.phone, email: vals.email, pageId: ctx.pageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
+        ...(vals.phone2 ? { phone2: vals.phone2 } : {}), ...(vals.whatsapp ? { whatsapp: vals.whatsapp } : {}), ...(vals.leadSource ? { leadSource: vals.leadSource } : {}),
+        ...(vals.form ? { form: vals.form } : {}), ...(vals.labels ? { labels: vals.labels } : {}),
         lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel: parseChannel(vals.channel), source: "import",
       });

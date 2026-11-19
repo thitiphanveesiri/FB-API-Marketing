@@ -6,6 +6,7 @@ import { AlertTriangle, Check, CheckCircle2, Download, FileSpreadsheet, RefreshC
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import FbSyncCard from "@/components/FbSyncCard";
+import RepairPagesCard from "@/components/RepairPagesCard";
 import ChannelsCard from "@/components/ChannelsCard";
 import AdsSyncCard from "@/components/AdsSyncCard";
 import { autoMap, detectType, errorsToCsv, FIELDS, isAdsType, leadNameKey, validate, ValidationResult } from "@/lib/importer";
@@ -182,6 +183,7 @@ export default function UploadPage() {
 
       <ChannelsCard />
       <FbSyncCard />
+      <RepairPagesCard />
       <AdsSyncCard />
 
       <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>

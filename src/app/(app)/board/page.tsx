@@ -36,6 +36,7 @@ function Card({ lead, dragging, onOpen, fbHref }: { lead: Lead; dragging?: boole
         <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
         <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
         <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray">{channelOf(lead) === "facebook" ? <Facebook size={10} /> : <ChannelDot id={channelOf(lead)} size={8} />} {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
+        {(lead.phone || lead.email || lead.whatsapp) && <p className="mt-1 truncate text-[11px] text-muted">{lead.phone}{lead.whatsapp ? ` · WhatsApp ${lead.whatsapp}` : ""}{lead.email ? ` · ${lead.email}` : ""}</p>}
       </button>
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
         <span className="flex items-center gap-1">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] rounded-full border border-dashed border-gray-300" />}{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span>
