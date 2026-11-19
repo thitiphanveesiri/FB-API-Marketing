@@ -11,8 +11,9 @@ import { nowStamp } from "@/lib/dates";
 const hm = (iso: string) => iso.slice(0, 10) + " " + iso.slice(11, 16);
 const dur = (m: number) => (m >= 120 ? `${Math.floor(m / 60)} ชม. ${m % 60} นาที` : `${m} นาที`);
 const pts = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-/** Synced rows already hold the Facebook permalink; imported rows may hold a bare post id. */
+/** Synced rows already hold the Facebook/Instagram permalink; imported rows may hold a bare post id. */
 const postHref = (postId: string) => (/^https?:\/\//i.test(postId) ? postId : `https://www.facebook.com/${postId}`);
+const postSite = (postId: string) => (/instagram\.com/i.test(postId) ? "Instagram" : "Facebook");
 
 export default function CommentsPage() {
   const { data, filters } = useStore();
@@ -35,7 +36,7 @@ export default function CommentsPage() {
     { key: "c", header: "ผู้คอมเมนต์", sort: (e) => e.comment.commenter, render: (e) => e.comment.commenter || "—" },
     { key: "x", header: "ข้อความ", sort: (e) => e.comment.text, render: (e) => <span className="block max-w-[320px] truncate text-muted" title={e.comment.text}>{e.comment.text || "—"}</span> },
     { key: "po", header: "โพสต์", sort: (e) => e.comment.postId, render: (e) => e.comment.postId
-      ? <a href={postHref(e.comment.postId)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap font-medium text-brand hover:underline" title="เปิดโพสต์บน Facebook">เปิดโพสต์ <ExternalLink size={12} /></a>
+      ? <a href={postHref(e.comment.postId)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap font-medium text-brand hover:underline" title={`เปิดโพสต์บน ${postSite(e.comment.postId)}`}>เปิดโพสต์ <ExternalLink size={12} /></a>
       : "—" },
     { key: "w", header: "ใช้เวลา", align: "right", sort: (e) => e.minutes, render: (e) => (e.open ? <Badge tone="red">ยังไม่ตอบ · {dur(e.minutes)}</Badge> : dur(e.minutes)) },
     { key: "ra", header: "ตอบเมื่อ", sort: (e) => e.comment.repliedAt, render: (e) => (e.comment.repliedAt ? hm(e.comment.repliedAt) : "—") },
@@ -62,7 +63,7 @@ export default function CommentsPage() {
             <KpiCard label="เวลาตอบเฉลี่ย" value={avgMin == null ? "—" : dur(avgMin)} lowerIsBetter />
           </div>
 
-          <Card title="รายการคอมเมนต์" subtitle={`${shown.length} จาก ${rows.length} คอมเมนต์ · กด “เปิดโพสต์” เพื่อดูบน Facebook`}
+          <Card title="รายการคอมเมนต์" subtitle={`${shown.length} จาก ${rows.length} คอมเมนต์ · กด “เปิดโพสต์” เพื่อดูโพสต์ต้นทาง`}
             right={<div className="flex gap-1">
               <Btn size="sm" variant={view === "all" ? "primary" : "secondary"} onClick={() => setView("all")}>ทั้งหมด</Btn>
               <Btn size="sm" variant={view === "late" ? "primary" : "secondary"} onClick={() => setView("late")}>ตอบช้า</Btn>

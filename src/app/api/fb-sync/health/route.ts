@@ -14,7 +14,7 @@ const graphBase = () => process.env.FB_GRAPH_BASE || "https://graph.facebook.com
 function why(e: unknown): string {
   if (!(e instanceof FbError)) return e instanceof Error ? e.message.slice(0, 160) : "ไม่ทราบสาเหตุ";
   if (e.code === 190) return "โทเคนเพจหมดอายุหรือถูกยกเลิก — ไปที่ Upload → เชื่อมช่องทางแชท → แก้ไขเพจ แล้วบันทึก Access Token ใหม่";
-  if (e.code === 10 || e.code === 200) return "โทเคนนี้ไม่มีสิทธิ์กับเพจ — ต้องมี pages_read_engagement / pages_manage_metadata และ instagram_manage_messages สำหรับ IG";
+  if (e.code === 10 || e.code === 200) return "โทเคนนี้ไม่มีสิทธิ์กับเพจ — ต้องมี pages_read_engagement / pages_manage_metadata, instagram_manage_messages และ instagram_manage_comments สำหรับ IG";
   if (e.code === 100) return "ไม่พบเพจ หรือโทเคนไม่ใช่ของเพจนี้ — ตรวจว่า Page ID กับ Access Token มาจากเพจเดียวกัน";
   if (e.rateLimited) return "Meta จำกัดจำนวนคำขอชั่วคราว — รอสักครู่แล้วตรวจใหม่";
   if (e.code === 1 || e.code === 2) return "Meta ตอบช้าเกิน 8 วินาทีหรือขัดข้องชั่วคราว — ลองตรวจอีกครั้ง";
@@ -65,7 +65,7 @@ export async function GET(req: Request) {
       const d = ((await r.json().catch(() => ({}))) ?? {}) as { data?: { is_valid?: boolean; expires_at?: number; scopes?: string[] } };
       if (!d.data) return "";
       if (!d.data.is_valid) return "โทเคนถูกเพิกถอน";
-      const need = ["pages_read_engagement", "pages_messaging", ...(igs.some((g) => g.channelId === `instagram:${c.accountId}`) ? ["instagram_basic", "instagram_manage_messages"] : [])];
+      const need = ["pages_read_engagement", "pages_messaging", ...(igs.some((g) => g.channelId === `instagram:${c.accountId}`) ? ["instagram_basic", "instagram_manage_messages", "instagram_manage_comments"] : [])];
       const missing = need.filter((s) => !(d.data!.scopes ?? []).includes(s));
       return `${d.data.expires_at ? `หมดอายุ ${new Date(d.data.expires_at * 1000).toISOString().slice(0, 10)}` : "ไม่มีวันหมดอายุ (System User token)"}${missing.length ? ` · ขาดสิทธิ์ ${missing.join(", ")}` : ""}`;
     } catch { return ""; }

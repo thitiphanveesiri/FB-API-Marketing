@@ -59,7 +59,7 @@ export async function POST(req: Request) {
       if (igPage.created) invalidateCache();
     }
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
-    const phase = (b.state?.phase === "comments" && b.channel !== "instagram") || b.state?.phase === "done" ? b.state.phase : "chats";
+    const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" || b.state?.chatList === "ig-node" ? b.state.chatList : undefined;
     const commentCursor = (value: unknown) => typeof value === "string" && /^[\w=+/.-]{1,400}$/.test(value) ? value : undefined;
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
       if (typeof value !== "string" || value.length > 2048) return undefined;
       try {
         const url = new URL(value);
-        return url.protocol === "https:" && ["facebook.com", "www.facebook.com", "m.facebook.com"].includes(url.hostname) ? url.href : undefined;
+        return url.protocol === "https:" && ["facebook.com", "www.facebook.com", "m.facebook.com", "instagram.com", "www.instagram.com"].includes(url.hostname) ? url.href : undefined;
       } catch { return undefined; }
     };
     const commentBatch = Array.isArray(b.state?.commentBatch)

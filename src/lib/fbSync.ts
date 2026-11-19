@@ -91,6 +91,9 @@ interface FbMsg { id: string; message?: string; from?: FbPerson; created_time: s
 interface FbConv { id: string; updated_time: string; participants?: { data?: FbPerson[] } }
 interface FbComment { id: string; from?: FbPerson; message?: string; created_time: string; comments?: { data?: { from?: FbPerson; created_time: string }[] } }
 interface FbPost { id: string; permalink_url?: string; comments?: { summary?: { total_count?: number } } }
+/** Instagram uses its own field names: username/text/timestamp, and the business's replies sit in `replies` (not `comments`). */
+interface IgMedia { id: string; permalink?: string; comments_count?: number; timestamp?: string }
+interface IgComment { id: string; username?: string; text?: string; timestamp?: string; replies?: { data?: { username?: string; text?: string; timestamp?: string }[] } }
 
 export interface SyncInput { channel?: "instagram"; igId?: string; legacyPageId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
@@ -100,6 +103,8 @@ const CHATS_PER_CALL = 3, MSG_PAGES = 5, POSTS_PER_BATCH = MAX_COMMENT_POSTS_PER
 /** Instagram conversations are much slower to list than Messenger: ask for fewer chats and fewer message pages, with a longer per-request timeout. */
 const IG_CHATS_PER_CALL = 2, IG_MSG_PAGES = 2, IG_MSG_LIMIT = 50, IG_MIN_TIMEOUT_MS = 25000, IG_MAX_TIMEOUT_MS = 25000, IG_TIME_BUDGET_MS = 35000;
 const IG_LIST_PAGE_MS = 15000, IG_LIST_TIMEOUT_MS = 35000, IG_LIST_FALLBACK_MS = 12000, IG_LIST_DEFER_MS = 25000;
+/** Instagram media + comments: one comments call per post, so smaller batches than the Page feed. */
+const IG_MEDIA_PER_BATCH = 12, IG_COMMENT_PARALLEL = 4;
 
 /** Meta's inbox edges fail for reasons that are not the token: a 500 on the page's conversation list, or "Object does not exist / missing
  *  permissions" (code 100) when the app may not read that inbox. Say which one it is — both otherwise look like a plain sync failure. */
@@ -190,7 +195,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       const cutoff = fresh.length < all.length; // list is newest-first: an old one means the rest is older still
       more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
       const igNext: SyncState = { phase: "chats", ...(more ? { after: j.paging!.cursors!.after } : {}), ...(chatList === "ig-node" ? { chatList } : {}) };
-      if (!fresh.length) return { next: more ? igNext : { phase: "done" }, writes, counts };
+      if (!fresh.length) return { next: more ? igNext : { phase: "comments" }, writes, counts };
       // Listing can eat most of the 60 s step: read these messages on the next step so the Sheet writes still finish.
       if (Date.now() - t0 > IG_LIST_DEFER_MS) return { next: { ...igNext, igChats: fresh.map((c) => ({ id: c.id, updated_time: c.updated_time })) }, writes, counts };
     } else {
@@ -279,16 +284,93 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
     if (leadUpdates.size) writes.push({ tab: "leads", keyCols: ["lead_id"], rows: [...leadUpdates.values()], mode: "updateOnly" });
     const warning = [skippedChats ? `ข้าม ${skippedChats} แชทที่ Meta ส่งข้อความให้ไม่ได้ (500) — ดึงซ้ำภายหลังจะได้เพิ่ม` : "", partialChats ? `ดึงประวัติได้ไม่ครบ ${partialChats} แชท (500) — ข้อมูลบางส่วนถูกบันทึกแล้ว ลองดึงซ้ำภายหลัง` : "", budgetCuts ? `หยุดดึงประวัติ ${budgetCuts} แชทที่ยาวมากเพราะใช้เวลาเกิน ${Math.round(IG_TIME_BUDGET_MS / 1000)} วินาที — ลดจำนวนวันย้อนหลังแล้วดึงซ้ำ` : "", !isIg && chatList ? "Meta ปฏิเสธรายการแชทแบบละเอียด จึงดึงแบบย่อ (ชื่อลูกค้าอ่านจากข้อความ)" : "", isIg && chatList === "ig-node" ? "ดึงรายการแชท Instagram ผ่าน IG node แทน Page node" : ""].filter(Boolean).join(" · ");
     if (isIg) {
-      // Pending conversations were listed by the previous step: continue with its cursor, otherwise list the next page (or finish).
+      // Pending conversations were listed by the previous step: continue with its cursor, otherwise list the next page.
+      // Instagram comments are pulled after the inbox, in the same run (media, then each post's comments).
       const next: SyncState = pending.length
-        ? (i.state.after ? { phase: "chats", after: i.state.after, ...(chatList ? { chatList } : {}) } : { phase: "done" })
-        : more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "done" };
+        ? (i.state.after ? { phase: "chats", after: i.state.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" })
+        : more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" };
       return { next, writes, counts, ...(warning ? { warning } : {}) };
     }
     return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" }, writes, counts, ...(warning ? { warning } : {}) };
   }
 
   if (i.state.phase === "comments") {
+    if (isIg) {
+      // Instagram comments hang off media, not the Page feed: /{ig-user}/media, then /{media}/comments. Separate permission
+      // (instagram_basic + instagram_manage_comments), and each post costs one call, so the batch is smaller than the Page one.
+      const ig = i.igId ?? "";
+      if (!ig) return { next: { phase: "done" }, writes, counts, warning: "ข้ามคอมเมนต์ Instagram: ยังไม่ทราบบัญชี Instagram ของเพจนี้ — เชื่อมเพจใหม่ที่หน้า Upload" };
+      const noPerm = (e: unknown) => e instanceof FbError && (e.code === 10 || e.code === 200);
+      const skip = (why: string): SyncOutput => ({ next: { phase: "done" }, writes, counts, warning: why });
+      let feedAfter = i.state.after, feedDone = i.state.commentsFeedDone === true;
+      let batch = i.state.commentBatch ?? (i.state.commentPostId ? [{ id: i.state.commentPostId, url: i.state.commentPostUrl, after: i.state.commentAfter, basic: i.state.commentBasic }] : []);
+      if (!batch.length) {
+        if (feedDone) return { next: { phase: "done" }, writes, counts };
+        let feed: Graph;
+        try {
+          feed = await graph(`${ig}/media`, { fields: "id,permalink,comments_count,timestamp", limit: String(IG_MEDIA_PER_BATCH), ...(feedAfter ? { after: feedAfter } : {}) }, tok, f, base, 900, 0);
+        } catch (e) {
+          if (noPerm(e)) return skip("ข้ามคอมเมนต์ Instagram: โทเคนของเพจยังไม่มีสิทธิ์ instagram_basic / instagram_manage_comments — สร้างโทเคนใหม่โดยติ๊กสิทธิ์เหล่านี้ แล้วเชื่อมเพจใหม่");
+          throw e;
+        }
+        const media = ((feed.data ?? []) as IgMedia[]).filter((m) => !!m.id);
+        const cutoff = since - 14 * 86400000, inRange = media.filter((m) => !m.timestamp || ms(m.timestamp) >= cutoff);
+        counts.posts = inRange.length;
+        counts.postsWithReportedComments = inRange.filter((m) => (m.comments_count ?? 0) > 0).length;
+        counts.postsWithoutCommentSummary = inRange.filter((m) => m.comments_count == null).length;
+        batch = inRange.filter((m) => (m.comments_count ?? 1) > 0).map((m) => ({ id: m.id, url: m.permalink || m.id }));
+        feedAfter = feed.paging?.next ? feed.paging.cursors?.after : undefined;
+        feedDone = !feedAfter;
+        // Newest-first: a page entirely older than the lookback means the next pages are older still.
+        if (media.length && media.every((m) => m.timestamp && ms(m.timestamp) < cutoff)) { feedDone = true; feedAfter = undefined; }
+        if (!batch.length) return { next: feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter }, writes, counts };
+      }
+      // Instagram comments carry a username, not a page id: the account's own username marks the business's replies.
+      const igUser = await graph(ig, { fields: "username" }, tok, f, base, 900, 0).then((j) => (j as unknown as { username?: string }).username ?? "").catch(() => "");
+      if (Date.now() - t0 > IG_TIME_BUDGET_MS) {
+        return { next: { phase: "comments", ...(feedAfter ? { after: feedAfter } : {}), commentsFeedDone: feedDone, commentBatch: batch }, writes, counts };
+      }
+
+      const rows: SyncWrite["rows"] = [], pending: CommentPostState[] = [];
+      const pullMedia = async (post: CommentPostState) => {
+        const fetchComments = (light: boolean) => graph(`${post.id}/comments`, {
+          fields: light ? "id,username,text,timestamp" : "id,username,text,timestamp,replies{username,text,timestamp}",
+          limit: light ? "25" : "50",
+          ...(post.after ? { after: post.after } : {}),
+        }, tok, f, base, 900, 0);
+        let comments: Graph, basic = post.basic === true;
+        try { comments = await fetchComments(basic); counts.commentPagesRead++; }
+        catch (e) {
+          if (noPerm(e)) throw e;
+          if (!basic && e instanceof FbError && (e.code === 1 || e.code === 2 || e.code === 100)) { basic = true; comments = await fetchComments(true); counts.commentPagesRead++; }
+          else throw e;
+        }
+        const received = (comments.data ?? []) as IgComment[];
+        counts.commentItemsReceived += received.length;
+        for (const x of received) {
+          if (!x.timestamp || ms(x.timestamp) < since) { counts.commentsOutsideRange++; continue; }
+          if (igUser && x.username === igUser) { counts.pageCommentsSkipped++; continue; }
+          const reply = (x.replies?.data ?? []).filter((r) => igUser && r.username === igUser && r.timestamp).sort((a, b) => a.timestamp!.localeCompare(b.timestamp!))[0];
+          rows.push({ comment_id: x.id, page_id: i.sheetPageId, post_id: post.url || post.id, commenter: x.username ?? "", text: (x.text ?? "").slice(0, 1000), commented_at: localStamp(x.timestamp, i.tz),
+            replied_at: reply?.timestamp ? localStamp(reply.timestamp, i.tz) : "", replied_by: "" });
+        }
+        const nextAfter = comments.paging?.next ? comments.paging.cursors?.after : undefined;
+        if (nextAfter) pending.push({ ...post, after: nextAfter, ...(basic ? { basic: true } : {}) });
+      };
+      const activeBatch = batch.slice(0, IG_COMMENT_PARALLEL), waitingBatch = batch.slice(IG_COMMENT_PARALLEL);
+      try { await Promise.all(activeBatch.map(pullMedia)); }
+      catch (e) {
+        if (noPerm(e)) return skip("ข้ามคอมเมนต์ Instagram: โทเคนของเพจยังไม่มีสิทธิ์ instagram_manage_comments (สร้างโทเคนใหม่โดยติ๊กสิทธิ์นี้ แล้วเชื่อมเพจใหม่)");
+        throw e;
+      }
+      counts.comments = rows.length;
+      if (rows.length) writes.push({ tab: "post_comments", keyCols: ["comment_id"], rows, mode: "upsert" });
+      const remaining = [...pending, ...waitingBatch];
+      const next: SyncState = remaining.length
+        ? { phase: "comments", ...(feedAfter ? { after: feedAfter } : {}), commentsFeedDone: feedDone, commentBatch: remaining }
+        : feedDone ? { phase: "done" } : { phase: "comments", after: feedAfter };
+      return { next, writes, counts };
+    }
     // posts are filtered by their own date, so look back a bit further to catch fresh comments on slightly older posts
     // Comments need the pages_read_engagement permission (and pages_read_user_content for the commenters). A token without them must not sink the chats that were already pulled.
     const noPerm = (e: unknown) => e instanceof FbError && (e.code === 10 || e.code === 200);

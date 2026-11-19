@@ -159,7 +159,7 @@ export async function POST(req: Request) {
       if (info.kind === "page") j = info;
       else {
         const who = info.name ? ` (${info.name})` : "";
-        if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic และ instagram_manage_messages แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
+        if (!info.pages.length) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} และมองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic, instagram_manage_messages และ instagram_manage_comments แล้วกด Generate Access Token ใหม่ (หรือเลือก "Get Page Access Token" แล้วเลือกเพจ)`);
         const pick = info.pages.length === 1 ? info.pages[0] : info.pages.find((p) => p.id === b.fbPageId);
         if (!pick) return fail(400, `โทเคนนี้เป็นของผู้ใช้${who} ที่ดูแลหลายเพจ เลือกเพจ Facebook ที่จะเชื่อม`, { pages: info.pages.map((p) => ({ id: p.id, name: p.name })) });
         pageToken = pick.token; j = pick; viaUserToken = true;
@@ -221,7 +221,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
   info = wide.info;
   const pages = info.kind === "page" ? [{ id: info.id, name: info.name, token }] : info.pages;
   const uniquePages = [...new Map(pages.map((page) => [page.id, page])).values()];
-  if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic และ instagram_manage_messages แล้วสร้าง Access Token ใหม่");
+  if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic, instagram_manage_messages และ instagram_manage_comments แล้วสร้าง Access Token ใหม่");
 
   const mapping = uniquePages.map((page) => {
     const pick = pickSystemPage(systemPages, all, page.id, page.name);
