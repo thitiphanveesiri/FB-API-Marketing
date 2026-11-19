@@ -56,12 +56,13 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const PAGE = "effective_object_story_id,object_story_spec{page_id}";
     // Ad copy for the hover preview. The richest levels ask for it together with the Page; the lightest levels leave it out.
     const COPY = "body,title,object_story_spec{page_id,link_data{message,name,description},video_data{message,title,link_description},photo_data{caption}}";
+    // Copy comes from the creative's own body/title first, so the lighter levels keep those two even after the story block is gone.
     const TIERS = [
       { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
       { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: false, limit: 25, note: "ไม่ใช้ตัวกรองสถานะ" },
       { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงข้อมูลวิดีโอ" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญ" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความในโพสต์" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
     ];
     // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
     const fetchAds = (t: number) => graph(`${acct}/ads`, {
@@ -211,26 +212,35 @@ async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: st
   return `Meta ไม่ส่งโฆษณาใดกลับมาจากบัญชี ${who} — ตรวจว่า (1) เลือกบัญชีโฆษณาถูกบัญชี (2) เจ้าของโทเคนถูกเพิ่มในบัญชีนี้ที่ Business Settings → Ad accounts → Add people (มีสิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ได้เป็นคนที่เข้าถึงบัญชีนี้ Meta จะตอบรายการว่างโดยไม่แจ้ง error) (3) บัญชีมีโฆษณาอยู่จริง`;
 }
 
-type MediaNode = { full_picture?: string; message?: string; picture?: string | { data?: { url?: string } }; error?: { message?: string } };
+type MediaNode = { full_picture?: string; message?: string; attachments?: { data?: { media_type?: string; target?: { id?: string } }[] }; picture?: string | { data?: { url?: string } }; error?: { message?: string } };
 
 /** Creatives with no image of their own (page-post, catalogue, dynamic) only point at the post. Read the post's real picture and the
  *  video cover — one batched request per kind, so 40 ads cost two calls. A refusal (usually a token without pages_read_engagement)
  *  only loses the picture, never the ad row. */
 async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string }[], token: string, f: FetchFn, base: string, overBudget: () => boolean): Promise<string | null> {
   const errors: string[] = [];
-  const batch = async (ids: (string | undefined)[], fields: string): Promise<Record<string, MediaNode>> => {
+  /** Later field lists exist for a request Meta refused: the post lookup asks for attachments last, so a rejection still returns the picture. */
+  const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, MediaNode>> => {
     const uniq = [...new Set(ids.filter((x): x is string => !!x))].slice(0, 50);
     if (!uniq.length) return {};
-    try { return (await graph("", { ids: uniq.join(","), fields }, token, f, base, 900, 0)) as unknown as Record<string, MediaNode>; }
-    catch (e) { if (!(e instanceof FbError)) throw e; errors.push(e.message); return {}; }
+    let last: FbError | undefined;
+    for (const fields of fieldLists) {
+      try { return (await graph("", { ids: uniq.join(","), fields }, token, f, base, 900, 0)) as unknown as Record<string, MediaNode>; }
+      catch (e) { if (!(e instanceof FbError)) throw e; last = e; if (e.rateLimited) break; }
+    }
+    if (last) errors.push(last.message);
+    return {};
   };
-  const posts = await batch(picks.map((p) => p.story), "full_picture,message");
-  const covers = overBudget() ? {} : await batch(picks.map((p) => p.video), "picture");
+  const posts = await batch(picks.map((p) => p.story), ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"]);
+  const covers = overBudget() ? {} : await batch(picks.map((p) => p.video), ["picture"]);
   for (const p of picks) {
     const post = p.story ? posts[p.story] : undefined;
     if (post && !post.error) {
       if (post.full_picture && !p.row.creative_url) p.row.creative_url = post.full_picture;
       if (!p.row.caption && post.message) p.row.caption = String(post.message).slice(0, 4000);
+      // A lighter ad tier drops video_id: the post's own video attachment still gives the id, so the player keeps working.
+      const videoTarget = post.attachments?.data?.find((x) => x.media_type === "video" && x.target?.id)?.target?.id;
+      if (videoTarget && !p.row.video_url) { p.row.video_url = `https://www.facebook.com/watch/?v=${videoTarget}`; p.row.creative_type = "Video"; }
     }
     const cover = p.video ? covers[p.video] : undefined;
     const url = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url ?? "";
