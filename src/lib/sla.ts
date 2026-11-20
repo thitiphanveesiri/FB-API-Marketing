@@ -64,10 +64,11 @@ export interface CommentEvent { comment: PostComment; minutes: number; open: boo
 export interface RepSla {
   repId: string; name: string;
   chats: number; replied: number; onTime: number; late: number; open: number;
+  lateDeduct: number; lateNoDeduct: number; // "late" splits into the part that costs points and the statistics-only part (travel, night, day off)
   chatDeduct: number; commentDeduct: number; deducted: number; score: number;
   lateTravel: number; nightReplies: number; avgMin: number | null;
 }
-export interface SlaResult { events: ChatEvent[]; commentEvents: CommentEvent[]; reps: RepSla[]; unassigned: ChatEvent[]; totals: { chatDeduct: number; commentDeduct: number; late: number; lateTravel: number; nightReplies: number; lateComments: number } }
+export interface SlaResult { events: ChatEvent[]; commentEvents: CommentEvent[]; reps: RepSla[]; unassigned: ChatEvent[]; totals: { chatDeduct: number; commentDeduct: number; late: number; lateDeduct: number; lateNoDeduct: number; lateTravel: number; nightReplies: number; lateComments: number } }
 
 export interface SlaInput { leads: Lead[]; messages: Record<string, Message[]>; comments: PostComment[]; pages: FbPage[]; users: User[]; start: string; end: string; now: string; pageId?: string; repId?: string }
 
@@ -111,11 +112,13 @@ export function computeSla(i: SlaInput): SlaResult {
     const cd = commentEvents.filter((c) => c.deduct > 0 && teamOf(c.comment.pageId).some((t) => t.id === r.id)).reduce((s, c) => s + c.deduct, 0);
     const chatDeduct = mine.reduce((s, e) => s + e.deduct, 0);
     return { repId: r.id, name: r.name, chats: mine.length, replied: replied.length, onTime: mine.filter((e) => !e.late).length, late: mine.filter((e) => e.late).length, open: mine.filter((e) => e.open).length,
+      lateDeduct: mine.filter((e) => e.deduct > 0).length, lateNoDeduct: mine.filter((e) => e.late && e.deduct === 0).length,
       chatDeduct, commentDeduct: cd, deducted: chatDeduct + cd, score: Math.max(0, SLA_RULES.basePoints - chatDeduct - cd),
       lateTravel: mine.filter((e) => e.lateStat).length, nightReplies: mine.filter((e) => e.nightReply).length, avgMin: waits.length ? Math.round(waits.reduce((s, x) => s + x, 0) / waits.length) : null };
   }).sort((a, b) => b.deducted - a.deducted || a.name.localeCompare(b.name));
   const assigned = events.filter((e) => e.repId && reps.some((r) => r.id === e.repId));
   return { events, commentEvents, reps: rows, unassigned: events.filter((e) => !e.repId),
     totals: { chatDeduct: rows.reduce((s, r) => s + r.chatDeduct, 0), commentDeduct: commentEvents.reduce((s, c) => s + c.deduct, 0), late: assigned.filter((e) => e.late).length,
+      lateDeduct: assigned.filter((e) => e.deduct > 0).length, lateNoDeduct: assigned.filter((e) => e.late && e.deduct === 0).length,
       lateTravel: assigned.filter((e) => e.lateStat).length, nightReplies: assigned.filter((e) => e.nightReply).length, lateComments: commentEvents.filter((c) => c.late).length } };
 }

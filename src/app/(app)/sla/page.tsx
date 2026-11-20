@@ -36,7 +36,8 @@ export default function SlaPage() {
     { key: "n", header: "เซลล์", sort: (r) => r.name, render: (r) => <b>{r.name}</b> },
     { key: "c", header: "แชทที่ต้องตอบ", align: "right", sort: (r) => r.chats, render: (r) => r.chats },
     { key: "o", header: "ตอบทัน", align: "right", sort: (r) => r.onTime, render: (r) => r.onTime },
-    { key: "l", header: "ตอบช้า", align: "right", sort: (r) => r.late, render: (r) => (r.late ? <span className="font-semibold text-red-500">{r.late}</span> : 0) },
+    { key: "l", header: "ตอบช้า (รวม)", align: "right", sort: (r) => r.late, render: (r) => r.late, tip: "นับทุกช่วงเวลา — หักคะแนนเฉพาะ 10:00–19:00 ที่ไม่ใช่วันอังคาร" },
+    { key: "ld", header: "ตอบช้า (หัก)", align: "right", sort: (r) => r.lateDeduct, render: (r) => (r.lateDeduct ? <span className="font-semibold text-red-500">{r.lateDeduct}</span> : 0), tip: `ครั้งที่ถูกหักจริง ${SLA_RULES.chatPenalty} แต้ม — ส่วนต่างจาก "ตอบช้า (รวม)" คือช่วงเดินทาง/ดึก/วันหยุด (สถิติ ไม่หัก)` },
     { key: "op", header: "ยังไม่ตอบ", align: "right", sort: (r) => r.open, render: (r) => r.open },
     { key: "a", header: "เวลาตอบเฉลี่ย", align: "right", sort: (r) => r.avgMin, render: (r) => (r.avgMin == null ? "—" : dur(r.avgMin)) },
     { key: "cd", header: "หักจากแชท", align: "right", sort: (r) => r.chatDeduct, render: (r) => (r.chatDeduct ? `−${pts(r.chatDeduct)}` : "0"), tip: `ตอบเกิน ${SLA_RULES.chatMinutes} นาที ในช่วง 10:00–19:00 ครั้งละ ${SLA_RULES.chatPenalty} แต้ม` },
@@ -75,7 +76,7 @@ export default function SlaPage() {
           <li className="flex gap-2"><Moon size={16} className="mt-0.5 shrink-0 text-violet-500" /><span><b>22:00–08:00</b> ไม่หักคะแนน หากมีการตอบ เก็บเป็นสถิติการตอบแชทของเซลล์</span></li>
           <li className="flex gap-2"><Timer size={16} className="mt-0.5 shrink-0 text-brand-2" /><span><b>คอมเมนต์ใต้โพสต์</b> (เฉพาะ 10:00–19:00) ตอบเกิน {SLA_RULES.commentMinutes} นาที → หัก {SLA_RULES.commentPenalty} แต้ม จากเซลล์ทุกคนในทีมของเพจนั้น</span></li>
         </ul>
-        <p className="mt-2 text-xs text-muted">แชทที่ลูกค้าส่งมาแล้วยังไม่ได้ตอบ นับเป็นตอบช้าเมื่อเกินเวลา (คิดถึงเวลาปัจจุบัน) · ลูกค้าส่งหลายข้อความติดกันก่อนได้รับการตอบ นับเป็น 1 ครั้ง · คะแนนเต็ม {SLA_RULES.basePoints} เป็นค่าสำหรับแสดงผลเท่านั้น</p>
+        <p className="mt-2 text-xs text-muted">แชทที่ลูกค้าส่งมาแล้วยังไม่ได้ตอบ นับเป็นตอบช้าเมื่อเกินเวลา (คิดถึงเวลาปัจจุบัน) · ลูกค้าส่งหลายข้อความติดกันก่อนได้รับการตอบ นับเป็น 1 ครั้ง · <b>ตอบช้า (รวม)</b> นับทุกช่วงเวลา แต่ <b>ตอบช้า (หัก)</b> คือครั้งที่ถูกหักจริง — ถ้า (รวม) มากกว่า (หัก) ส่วนต่างคือช่วงเดินทาง/ดึก/วันหยุด ซึ่งเก็บเป็นสถิติ · คะแนนเต็ม {SLA_RULES.basePoints} เป็นค่าสำหรับแสดงผลเท่านั้น</p>
       </Card>
 
       {!hasData ? (
@@ -83,7 +84,7 @@ export default function SlaPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <KpiCard label="ตอบช้าทั้งหมด" value={String(res.totals.late)} lowerIsBetter />
+            <KpiCard label="ตอบช้าทั้งหมด" value={String(res.totals.late)} sub={`หัก ${res.totals.lateDeduct} · สถิติ ${res.totals.lateNoDeduct}`} lowerIsBetter tip="ตัวเลขแรกนับทุกช่วงเวลา — 'หัก' คือครั้งที่ถูกหักจริง ที่เหลือเป็นช่วงเดินทาง/ดึก/วันหยุด" />
             <KpiCard label="แต้มที่หักจากแชท" value={pts(res.totals.chatDeduct)} lowerIsBetter />
             <KpiCard label="ตอบช้าช่วงเดินทาง (สถิติ)" value={String(res.totals.lateTravel)} />
             <KpiCard label="ตอบช่วงดึก (สถิติ)" value={String(res.totals.nightReplies)} />
@@ -104,8 +105,8 @@ export default function SlaPage() {
 
       <Drawer open={!!detail} onClose={() => setOpen(null)} title={detail?.name ?? ""} width={720}>
         {detail && <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[["แชท", detail.chats], ["ตอบช้า", detail.late], ["หักคะแนน", `−${pts(detail.deducted)}`], ["คะแนน", pts(detail.score)]].map(([k, v]) => <div key={String(k)} className="rounded-lg bg-gray-50 p-2.5"><div className="text-xs text-muted">{k}</div><div className="text-lg font-semibold tabnum">{v}</div></div>)}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[["แชท", detail.chats], ["ตอบช้า (รวม)", detail.late], ["ตอบช้า (หัก)", detail.lateDeduct], ["ตอบช้า (ไม่หัก)", detail.lateNoDeduct], ["หักคะแนน", `−${pts(detail.deducted)}`], ["คะแนน", pts(detail.score)]].map(([k, v]) => <div key={String(k)} className="rounded-lg bg-gray-50 p-2.5"><div className="text-xs text-muted">{k}</div><div className="text-lg font-semibold tabnum">{v}</div></div>)}
           </div>
           <EventTable events={detailEvents} leadName={leadName} pageName={pageName} repName={repName} all />
         </div>}
