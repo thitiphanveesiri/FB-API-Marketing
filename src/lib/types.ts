@@ -118,7 +118,10 @@ export interface Ad {
   /** Page the ad itself posts as; blank = the campaign's page. A campaign can serve several pages. */
   pageId?: string;
   status: AdStatus;
-  creative: { type: "Image" | "Video" | "Carousel"; hue: number; url?: string; video?: string };
+  creative: { type: "Image" | "Video" | "Carousel"; hue: number; url?: string; video?: string;
+    /** `url` is a Meta CDN link: signed, and it stops answering a few days after the sync that stored it. `ref` says where the
+     *  picture really lives (see creativeRef in lib/adsSync.ts) so lib/creativeUrl.ts can ask for a fresh link. */
+    ref?: string };
   /** Primary text (the ad's main copy) and headline, as Meta returns them for the creative. */
   caption?: string;
   headline?: string;

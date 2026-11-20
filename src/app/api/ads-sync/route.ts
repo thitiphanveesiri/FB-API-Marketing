@@ -4,6 +4,7 @@ import { loadChannels } from "@/lib/channels";
 import { fetchPageName, systemPageIdFor } from "@/lib/autoPage";
 import { adsStep, type AdsState } from "@/lib/adsSync";
 import { FbError } from "@/lib/fbSync";
+import { isMetaCdnLink } from "@/lib/creativeUrl";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
@@ -42,6 +43,13 @@ export async function POST(req: Request) {
       }
     }
     const pageNames = Object.fromEntries(g.mapped.dataset.pages.map((p) => [p.id, p.name]));
+    // Which page each campaign is filed under in the sheet already. A lighter pull (no ad set, no creative Page) must not move a
+    // campaign that was placed correctly before, so adsStep is told what the sheet already knows.
+    const knownCampaignPages: Record<string, string> = {};
+    for (const c of g.mapped.dataset.campaigns) if (c.pageId) knownCampaignPages[c.id] = c.pageId;
+    // Links a person pasted themselves (Google Drive etc.): the sync leaves those alone instead of putting Meta's expiring link back.
+    const knownCreativeUrls: Record<string, string> = {};
+    for (const a of g.mapped.dataset.ads) if (a.creative.url && !isMetaCdnLink(a.creative.url)) knownCreativeUrls[a.id] = a.creative.url;
     // ads can post as a Page that was never connected: give that Page its own system page so the ad is shown under it.
     // Names are read in parallel and saved in one write; the agency/team of the account's own page is inherited, since it is
     // the same advertiser — otherwise those campaigns would vanish as soon as an agency or sales-rep filter is used.
@@ -74,7 +82,7 @@ export async function POST(req: Request) {
       unnamedPages.push(...named.filter((x) => !x.name).map((x) => `เพจ ${x.id}`));
       return out;
     };
-    const out = await adsStep({ pageNames, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    const out = await adsStep({ pageNames, knownCampaignPages, knownCreativeUrls, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.

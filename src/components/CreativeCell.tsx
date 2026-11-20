@@ -1,6 +1,8 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Btn, HoverPreview, Modal, TextInput, AdThumb, imageSrc } from "@/components/ui";
+import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
+import { linkLooksExpired } from "@/lib/creativeUrl";
 import AdPreview from "@/components/AdPreview";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
@@ -23,19 +25,23 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
     setBusy(true); const ok = await setCreative(ad.id, img, vid); setBusy(false);
     if (ok) { toast("บันทึกครีเอทีฟแล้ว"); setOpen(false); }
   };
-  const v = ad.creative.video; const yt = v ? youtubeId(v) : undefined; const src = imageSrc(ad.creative.url);
+  // The stored Meta link ages out; show the refreshed one when this page has it, and ask for a new one when it is already past.
+  const v = ad.creative.video; const yt = v ? youtubeId(v) : undefined;
+  const live = useCreativeUrl(ad.id, ad.creative.url);
+  const src = imageSrc(live);
+  useEffect(() => { if (linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live]);
   return (
     <>
       <HoverPreview content={preview ?? <AdPreview ad={ad} />}>
         <button type="button" onClick={(e) => { e.stopPropagation(); show(); }} aria-label={`ดูครีเอทีฟ ${ad.name}`} className="rounded-lg outline-none ring-brand-2 hover:opacity-90 focus-visible:ring-2">
-          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={ad.creative.url} hasVideo={!!v} />
+          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={live} adId={ad.id} hasVideo={!!v} />
         </button>
       </HoverPreview>
       <Modal open={open} onClose={() => setOpen(false)} title={ad.name} width={640}
         footer={canEdit ? <><Btn onClick={() => setOpen(false)}>ยกเลิก</Btn><Btn variant="primary" disabled={busy} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึก"}</Btn></> : <Btn onClick={() => setOpen(false)}>ปิด</Btn>}>
         <div className="space-y-3">
           {/* eslint-disable-next-line @next/next/no-img-element -- pasted link */}
-          {src && <img src={src} alt={ad.name} referrerPolicy="no-referrer" className="max-h-[360px] w-full rounded-lg bg-gray-50 object-contain" />}
+          {src && <img src={src} alt={ad.name} referrerPolicy="no-referrer" onError={() => askForFreshLink(ad.id)} className="max-h-[360px] w-full rounded-lg bg-gray-50 object-contain" />}
           {v && (yt ? <iframe className="aspect-video w-full rounded-lg" src={`https://www.youtube-nocookie.com/embed/${yt}`} title={ad.name} allowFullScreen />
             : isFile(v) ? <video src={v} controls className="max-h-[360px] w-full rounded-lg bg-black" />
             : isFacebook(v) ? <div className="space-y-1.5">

@@ -72,7 +72,9 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       if (!roleCan.upload(me.role)) throw new Denied(403, "Your role cannot change ad creatives");
       const ad = ds.ads.find((a) => a.id === str(op.id, "id")); if (!ad) throw new Denied(404, "Ad not found");
       const url = (v: unknown, what: string) => { const s = String(v ?? "").trim(); if (s && (!/^https:\/\//i.test(s) || s.length > 800)) throw new Denied(400, `${what} must be a full https:// link`); return s; };
-      return [{ tab: "ads", keyCols: ["ad_id"], mode: "updateOnly", rows: [{ ad_id: ad.id, creative_url: url(op.image, "Image link"), video_url: url(op.video, "Video link") }] }];
+      // Clearing creative_ref is what makes a pasted link stick: with no ref there is nothing left to auto-refresh, and the ad
+      // sync keeps this link (knownCreativeUrls in lib/adsSync.ts) instead of writing Meta's expiring one back over it.
+      return [{ tab: "ads", keyCols: ["ad_id"], mode: "updateOnly", rows: [{ ad_id: ad.id, creative_url: url(op.image, "Image link"), video_url: url(op.video, "Video link"), creative_ref: "" }] }];
     }
     case "settings.upsert": {
       if (!roleCan.manageSettings(me.role)) throw new Denied(403, "Only an Administrator can change settings");

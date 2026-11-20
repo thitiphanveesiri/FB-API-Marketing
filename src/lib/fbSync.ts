@@ -66,6 +66,13 @@ export const metaFetchWith = (ms: number): FetchFn => async (u, init) => {
 /** Default timeout: META_TIMEOUT_MS (default 12 s). */
 export const metaFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_TIMEOUT_MS) || 12000)(u, init);
 
+/** Marketing API reads are a different animal from a Page's inbox: one page of `/ads` with campaign, ad set and creative
+ *  nested inside it regularly takes Meta 10-30 s to build. The 12 s default used to cut those answers off mid-flight,
+ *  which the tier ladder below reads as "Meta refuses these fields" — so an account that is merely slow was silently
+ *  downgraded to the lightest query (no ad text, and on the old ladder no images at all).
+ *  META_ADS_TIMEOUT_MS (default 25 s) covers ad-account reads; page and chat calls keep META_TIMEOUT_MS. */
+export const metaAdsFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_ADS_TIMEOUT_MS) || 25000)(u, init);
+
 /** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
  *  failed once will fail again, and every repeat eats the time budget). */
 export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900, retries = 2): Promise<Graph> {
