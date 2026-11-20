@@ -145,10 +145,13 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     if (mediaWarning) notes.push(mediaWarning);
     if (!ads.length && !i.state.after) notes.push(await emptyAccountWhy(acct, i.token, f, base)); // Meta answered "no ads": tell the admin which of the usual reasons applies
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
-    if (unmapped.size && !i.state.after) notes.push(`เพจที่ลงประกาศโฆษณายังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
+    const links = [...unmapped].slice(0, 3).map((id) => `facebook.com/${id}`).join(", ");
+    if (unmapped.size && !i.state.after) notes.push(`เพจที่ลงโฆษณายังไม่ได้ผูกกับเพจในระบบ: ${links}${unmapped.size > 3 ? " …" : ""} — โฆษณาของเพจนั้นถูกนับไว้ใต้เพจหลักของบัญชี; เปิดลิงก์เพื่อดูว่าเป็นเพจไหน แล้วเชื่อมเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท (หรือให้โทเคนมีสิทธิ์ pages_read_engagement เพื่อให้ระบบสร้างเพจให้เอง)`);
     else if (noPage && !i.state.after) notes.push(`${noPage} โฆษณาไม่ได้บอกว่าโพสต์จากเพจไหน — ระบบจึงนับไว้ใต้เพจหลักของบัญชี; ดึงซ้ำภายหลังถ้า Meta ส่งข้อมูลมาเพิ่ม`);
     // Every ad on the fallback page is the symptom the dashboard shows as "มีข้อมูลแค่เพจเดียว": say it in one line, with the fix.
-    if (adRows.length && !mappedAds && !i.state.after) notes.push(`สรุป: โฆษณาทั้ง ${adRows.length} ตัวถูกนับไว้ใต้เพจ "${i.pageNames?.[i.sheetPageId] ?? i.sheetPageId}" เพราะ Meta ไม่ได้บอกเพจของ creative หรือชุดโฆษณาเลย — ตรวจว่าโทเคนที่ดึงโฆษณามีสิทธิ์ ads_read และ pages_read_engagement และเป็นโทเคนของผู้ใช้ที่ดูแลทุกเพจ แล้วกดดึงข้อมูลโฆษณาซ้ำ`);
+    if (adRows.length && !mappedAds && !i.state.after) notes.push(unmapped.size
+      ? `สรุป: โฆษณาทั้ง ${adRows.length} ตัวในชุดนี้ถูกนับไว้ใต้เพจ "${i.pageNames?.[i.sheetPageId] ?? i.sheetPageId}" เพราะเพจต้นทาง (${links}) ยังไม่ได้ผูกกับเพจในระบบ และระบบอ่านชื่อเพจไม่ได้ — เชื่อมเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท แล้วดึงซ้ำ`
+      : `สรุป: โฆษณาทั้ง ${adRows.length} ตัวถูกนับไว้ใต้เพจ "${i.pageNames?.[i.sheetPageId] ?? i.sheetPageId}" เพราะ Meta ไม่ได้บอกเพจของ creative หรือชุดโฆษณาเลย — ตรวจว่าโทเคนที่ดึงโฆษณามีสิทธิ์ ads_read และ pages_read_engagement และเป็นโทเคนของผู้ใช้ที่ดูแลทุกเพจ แล้วกดดึงข้อมูลโฆษณาซ้ำ`);
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,

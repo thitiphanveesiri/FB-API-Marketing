@@ -31,11 +31,12 @@ export async function POST(req: Request) {
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const pageMap: Record<string, string> = {};
     const stalePages: string[] = [];
+    const chans = await loadChannels();
     if (!ch.forceSheetPage) {
       const known = new Set(g.mapped.dataset.pages.map((p) => p.id));
       // Ads boosted from Instagram carry the IG account id in effective_object_story_id, so Instagram channels map to their own
       // page as well; without this those ads fall back to the account's default page.
-      for (const c of await loadChannels()) if ((c.channel === "facebook" || c.channel === "instagram") && c.active && c.accountId && c.sheetPageId) {
+      for (const c of chans) if ((c.channel === "facebook" || c.channel === "instagram") && c.active && c.accountId && c.sheetPageId) {
         if (known.has(c.sheetPageId)) pageMap[c.accountId] = c.sheetPageId;
         else stalePages.push(c.name || c.accountId);
       }
@@ -45,25 +46,32 @@ export async function POST(req: Request) {
     // Names are read in parallel and saved in one write; the agency/team of the account's own page is inherited, since it is
     // the same advertiser — otherwise those campaigns would vanish as soon as an agency or sales-rep filter is used.
     const accountPage = g.mapped.dataset.pages.find((p) => p.id === ch.sheetPageId);
-    const createdPages: string[] = [];
+    const igAccounts = new Set(chans.filter((c) => c.channel === "instagram" && c.accountId).map((c) => c.accountId));
+    const knownPages = new Set(g.mapped.dataset.pages.map((p) => p.id));
+    const createdPages: string[] = [], unnamedPages: string[] = [];
     const resolvePages = async (fbPageIds: string[]) => {
       const out: Record<string, string> = {}, missing: string[] = [];
       for (const id of fbPageIds) {
+        // Only Facebook Page ids: an Instagram actor id that is not a connected channel keeps the account's page.
+        if (!/^\d{5,}$/.test(id) || igAccounts.has(id)) continue;
         const own = systemPageIdFor(id);
-        if (g.mapped.dataset.pages.some((p) => p.id === own)) out[id] = own; else missing.push(id);
+        if (knownPages.has(own)) out[id] = own; else if (!missing.includes(id)) missing.push(id);
       }
+      if (!missing.length) return out;
       const named = await Promise.all(missing.map(async (id) => ({ id, name: await fetchPageName(id, ch.accessToken) })));
-      const rows = named.filter((x) => x.name).map((x) => ({
-        page_id: systemPageIdFor(x.id), name: x.name, active: true,
+      // A Page whose name Meta refuses to give (the token does not manage it) still gets its own system page. Otherwise every ad of
+      // it is counted under the account's page, which is what made the dashboard look like only one Page had ads; the admin renames
+      // the placeholder in Settings → Pages.
+      const rows = named.map((x) => ({
+        page_id: systemPageIdFor(x.id), name: x.name || `เพจ ${x.id}`, active: true,
         ...(accountPage?.agencyId ? { agency_id: accountPage.agencyId } : {}),
         ...(accountPage?.teamIds.length ? { sales_team: accountPage.teamIds.join(",") } : {}),
       }));
-      if (rows.length) {
-        await upsertRows("pages", ["page_id"], rows, "insert");
-        invalidateCache(); // the next batch must see the new pages instead of looking them up again
-        createdPages.push(...rows.map((r) => r.name));
-        for (const x of named) if (x.name) out[x.id] = systemPageIdFor(x.id);
-      }
+      await upsertRows("pages", ["page_id"], rows, "insert");
+      invalidateCache(); // the next batch must see the new pages instead of looking them up again
+      for (const x of named) { knownPages.add(systemPageIdFor(x.id)); out[x.id] = systemPageIdFor(x.id); }
+      createdPages.push(...named.filter((x) => x.name).map((x) => x.name));
+      unnamedPages.push(...named.filter((x) => !x.name).map((x) => `เพจ ${x.id}`));
       return out;
     };
     const out = await adsStep({ pageNames, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
@@ -73,6 +81,7 @@ export async function POST(req: Request) {
     const forced = ch.forceSheetPage ? `บัญชีนี้ตั้ง “บังคับใช้เพจที่เลือกกับโฆษณาทั้งหมด” — ทุกแคมเปญจะอยู่ใต้เพจ ${g.mapped.dataset.pages.find((p) => p.id === ch.sheetPageId)?.name ?? ch.sheetPageId}; ถ้าต้องการแยกตามเพจต้นทาง ให้แก้การเชื่อมต่อที่หน้า Upload แล้วเอาติ๊กออก` : "";
     const warnings = [...(out.warnings ?? []), forced,
       createdPages.length ? `เพิ่มเพจใหม่ ${createdPages.length} เพจจากเพจต้นทางของโฆษณา (${createdPages.slice(0, 3).join(", ")}${createdPages.length > 3 ? " …" : ""}) — ตั้งเอเจนซี/ทีมเซลล์ได้ที่หน้า Settings → Pages` : "",
+      unnamedPages.length ? `มี ${unnamedPages.length} เพจที่โทเคนอ่านชื่อจาก Meta ไม่ได้ ระบบจึงสร้างไว้ก่อนเป็น ${unnamedPages.slice(0, 3).join(", ")}${unnamedPages.length > 3 ? " …" : ""} — โฆษณาของเพจนั้นแยกออกมาอยู่ใต้เพจนี้แล้ว; เปลี่ยนชื่อได้ที่หน้า Settings → Pages (หรือเชื่อมเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท แล้วดึงซ้ำ)` : "",
       stalePages.length ? `เพจที่ผูกกับการเชื่อมช่องทางไม่มีอยู่ในรายการเพจของระบบ (${stalePages.slice(0, 3).join(", ")}${stalePages.length > 3 ? " …" : ""}) — โฆษณาของเพจนั้นถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; แก้การเชื่อมต่อที่หน้า Upload` : ""].filter(Boolean);
     return NextResponse.json({ ok: true, next: out.next, counts: out.counts, ...(warnings.length ? { warnings } : {}), byPage: out.byPage }, noStore);
   } catch (e) {
