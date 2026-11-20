@@ -156,6 +156,7 @@ export default function AdsPerformance() {
         <span className="block min-w-0"><span className="block font-medium text-ink">{r.ad.name}</span><span className="block text-xs text-muted">{r.campaign} · {r.ad.id}</span></span>
       </HoverPreview>) },
     { key: "creative", header: "Creative", render: (r) => <CreativeCell ad={r.ad} preview={<AdPreview ad={r.ad} summary={<AdSummary row={r} />} />} /> },
+    { key: "page", header: "Page", minW: 150, sort: (r) => r.page, render: (r) => <span className="text-sm">{r.page || "—"}</span> },
     { key: "reach", header: "Reach", align: "right", sort: (r) => r.reach, render: (r) => fmtInt(r.reach) },
     { key: "imp", header: "Impressions", align: "right", sort: (r) => r.impressions, render: (r) => fmtInt(r.impressions) },
     { key: "cpm", header: "CPM", align: "right", tip: "Cost per 1,000 impressions = Spend ÷ Impressions × 1,000", sort: (r) => r.cpm, render: (r) => fmtMoney(r.cpm, 1) },

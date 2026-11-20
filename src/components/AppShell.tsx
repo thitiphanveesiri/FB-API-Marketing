@@ -128,7 +128,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <button className="rounded-md p-1.5 text-muted hover:bg-gray-100 lg:hidden" onClick={() => setMenu((m) => !m)} aria-label="Toggle menu">{menu ? <X size={20} /> : <Menu size={20} />}</button>
           <Link href="/dashboard/ads" className="flex items-center gap-2 font-semibold text-ink">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white"><ShieldCheck size={17} /></span>
-            <span className="hidden sm:block leading-tight">Marketing<br className="hidden" /> Intelligence</span>
+            <span className="hidden sm:block leading-tight">BEQ</span>
           </Link>
 
           <label className="ml-1 hidden items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-sm md:flex">

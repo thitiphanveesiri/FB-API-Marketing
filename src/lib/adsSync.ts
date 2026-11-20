@@ -30,13 +30,16 @@ const act = (a: Action[] | undefined, types: string[]) => (a ?? []).filter((x) =
 
 interface RawAd {
   id: string; name?: string; effective_status?: string; updated_time?: string; campaign?: { id?: string; name?: string; objective?: string };
+  /** Some creatives carry no Page at all (catalogue / dynamic ads); the ad set then names the Page its ads are delivered for. */
+  adset?: { id?: string; name?: string; promoted_object?: { page_id?: string } };
   creative?: {
-    thumbnail_url?: string; image_url?: string; video_id?: string; object_type?: string; effective_object_story_id?: string; body?: string; title?: string;
+    thumbnail_url?: string; image_url?: string; video_id?: string; object_type?: string; effective_object_story_id?: string; object_story_id?: string; body?: string; title?: string;
     object_story_spec?: {
       page_id?: string;
-      link_data?: { message?: string; name?: string; description?: string };
-      video_data?: { message?: string; title?: string; link_description?: string };
-      photo_data?: { caption?: string };
+      instagram_actor_id?: string;
+      link_data?: { message?: string; name?: string; description?: string; picture?: string };
+      video_data?: { message?: string; title?: string; link_description?: string; image_url?: string };
+      photo_data?: { caption?: string; url?: string };
     };
   };
 }
@@ -51,18 +54,22 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // Detail levels, richest first. When Meta rejects one (code 100 invalid parameter, or 1/2 "unexpected error" for too much data) the next lighter one is tried,
     // and later batches stay on the level that worked — so a single bad field costs only that field, not the whole ad list.
     const CAMP = "campaign{id,name,objective}";
-    // Every level keeps the creative's Page (object_story_spec / effective_object_story_id): page mapping is what files an ad
-    // under the right page, so dropping it while Meta refuses heavier fields would send the whole campaign to the default page.
-    const PAGE = "effective_object_story_id,object_story_spec{page_id}";
-    // Ad copy for the hover preview. The richest levels ask for it together with the Page; the lightest levels leave it out.
-    const COPY = "body,title,object_story_spec{page_id,link_data{message,name,description},video_data{message,title,link_description},photo_data{caption}}";
-    // Copy comes from the creative's own body/title first, so the lighter levels keep those two even after the story block is gone.
+    // The ad set names the Page its ads are delivered for. It answers the ads whose creative has no Page at all (catalogue, dynamic),
+    // and it is a second, independent source when a creative's Page came back empty.
+    const ADSET = "adset{id,name,promoted_object{page_id}}";
+    // Every level keeps the creative's Page: page mapping is what files an ad under the right page, so dropping it while Meta
+    // refuses heavier fields would send the whole campaign to the default page. Both story-id fields are asked for on every level
+    // too: page-post creatives often have no object_story_spec, and the media lookup needs the story id to read the post's picture.
+    const STORY_ID = "effective_object_story_id,object_story_id";
+    // Ad copy and every picture Meta has for the creative. The lightest levels leave it out.
+    const COPY = `body,title,object_story_spec{page_id,instagram_actor_id,link_data{message,name,description,picture},video_data{message,title,link_description,image_url},photo_data{caption,url}}`;
+    const PAGE_ONLY = `${STORY_ID},object_story_spec{page_id,instagram_actor_id}`;
     const TIERS = [
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,video_id,object_type,${COPY}}`, filter: false, limit: 25, note: "ไม่กรองตามสถานะโฆษณา" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},creative{thumbnail_url,image_url,${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงคลิปวิดีโอ" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความโพสต์" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{body,title,${PAGE}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,video_id,object_type,${STORY_ID},${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,video_id,object_type,${STORY_ID},${COPY}}`, filter: false, limit: 25, note: "ไม่กรองตามสถานะโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,${STORY_ID},${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงคลิปวิดีโอ" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE_ONLY}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความโพสต์" },
+      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{body,title,${PAGE_ONLY}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
     ];
     // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
     const fetchAds = (t: number) => graph(`${acct}/ads`, {
@@ -83,19 +90,26 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
     // Ads whose creative has no image of its own (page-post, catalogue, dynamic): the picture lives on the underlying post/video.
     const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string }[] = [];
-    let noPage = 0;
+    const byPage: Record<string, number> = {};
+    let noPage = 0, mappedAds = 0;
+    /** The Page an ad posts as: the creative's own Page (object_story_spec, the prefix of its story id, or an Instagram actor for
+     *  IG-only ads), otherwise the Page the ad set delivers for. "" when Meta names neither — it can only fall back to the account's Page. */
+    const pageOf = (a: RawAd) => {
+      const c = a.creative ?? {}, storyId = c.effective_object_story_id || c.object_story_id || "";
+      return c.object_story_spec?.page_id || (storyId.includes("_") ? storyId.split("_")[0] : "") || c.object_story_spec?.instagram_actor_id || a.adset?.promoted_object?.page_id || "";
+    };
     // A page the ads post as but that was never connected: the caller resolves it (name from Meta, one write for the whole
     // batch) so its ads show under their own page. Pages that cannot be read stay on the account's page as before.
     let extra: Record<string, string> = {};
     if (i.resolvePages) {
       const wanted = new Set<string>();
-      for (const a of ads) { const c = a.creative ?? {}, id = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || ""; if (id && !i.pageMap?.[id]) wanted.add(id); }
+      for (const a of ads) { const id = pageOf(a); if (id && !i.pageMap?.[id]) wanted.add(id); }
       if (wanted.size) { try { extra = await i.resolvePages([...wanted].slice(0, 12)); } catch { /* keep the account's page */ } }
     }
     for (const a of ads) {
       const cid = a.campaign?.id; if (!cid) continue; // an ad without a campaign cannot be shown
-      const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id;
-      const fbPage = c.object_story_spec?.page_id || c.effective_object_story_id?.split("_")[0] || "";
+      const c = a.creative ?? {}, video = c.object_type === "VIDEO" || !!c.video_id, storyId = c.effective_object_story_id || c.object_story_id || "";
+      const fbPage = pageOf(a);
       // Ad copy: top-level body/title on the creative, or the text on the underlying story for page-post creatives.
       const story = c.object_story_spec ?? {};
       const caption = (c.body || story.link_data?.message || story.video_data?.message || story.photo_data?.caption || "").trim();
@@ -107,20 +121,22 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       else if (!fbPage && !mapped) noPage++;
+      if (mapped) mappedAds++;
       camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
       // The ad's own page (when known) wins on the dashboard, so one campaign can serve several pages.
       const row: SyncWrite["rows"][number] = { ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
-        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || "", video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "",
+        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || story.link_data?.picture || story.video_data?.image_url || story.photo_data?.url || "",
+        video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "",
         // Blank copy is left out so a lighter tier (or Meta returning no text) does not erase text already in the sheet.
         ...(caption ? { caption: caption.slice(0, 4000) } : {}), ...(headline ? { headline: headline.slice(0, 300) } : {}) };
       adRows.push(row);
-      if (!row.creative_url && (c.effective_object_story_id || c.video_id)) needMedia.push({ row, story: c.effective_object_story_id, video: c.video_id });
+      const rowPage = mapped ?? camps.get(cid)!.page_id;
+      byPage[rowPage] = (byPage[rowPage] ?? 0) + 1;
+      if (!row.creative_url && (storyId || c.video_id)) needMedia.push({ row, story: storyId, video: c.video_id });
     }
     // One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget.
     const mediaWarning = needMedia.length && !overBudget() ? await fillCreativeMedia(needMedia, i.token, f, base, overBudget) : null;
     counts.ads = adRows.length; counts.campaigns = camps.size;
-    const byPage: Record<string, number> = {};
-    for (const campaign of camps.values()) byPage[campaign.page_id] = (byPage[campaign.page_id] ?? 0) + 1;
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
     const more = !!j.paging?.next && !!j.paging.cursors?.after;
@@ -131,6 +147,8 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     else if (ads.length && !adRows.length && !i.state.after) notes.push("Meta ส่งโฆษณามาแต่ทุกตัวไม่มีแคมเปญ จึงไม่มีอะไรให้แสดง");
     if (unmapped.size && !i.state.after) notes.push(`เพจที่ลงประกาศโฆษณายังไม่ได้ผูกกับเพจในระบบ (${[...unmapped].slice(0, 3).join(", ")}${unmapped.size > 3 ? " …" : ""}) — แคมเปญถูกนับเข้ากับเพจหลักของบัญชีโฆษณา; ผูกเพจนั้นที่หน้า Upload → เชื่อมช่องทางแชท`);
     else if (noPage && !i.state.after) notes.push(`${noPage} โฆษณาไม่ได้บอกว่าโพสต์จากเพจไหน — ระบบจึงนับไว้ใต้เพจหลักของบัญชี; ดึงซ้ำภายหลังถ้า Meta ส่งข้อมูลมาเพิ่ม`);
+    // Every ad on the fallback page is the symptom the dashboard shows as "มีข้อมูลแค่เพจเดียว": say it in one line, with the fix.
+    if (adRows.length && !mappedAds && !i.state.after) notes.push(`สรุป: โฆษณาทั้ง ${adRows.length} ตัวถูกนับไว้ใต้เพจ "${i.pageNames?.[i.sheetPageId] ?? i.sheetPageId}" เพราะ Meta ไม่ได้บอกเพจของ creative หรือชุดโฆษณาเลย — ตรวจว่าโทเคนที่ดึงโฆษณามีสิทธิ์ ads_read และ pages_read_engagement และเป็นโทเคนของผู้ใช้ที่ดูแลทุกเพจ แล้วกดดึงข้อมูลโฆษณาซ้ำ`);
     return {
       next: more ? { phase: "ads", after: j.paging!.cursors!.after, ...(tier > 0 ? { tier } : {}) } : { phase: "insights" },
       writes,

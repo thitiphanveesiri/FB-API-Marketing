@@ -24,8 +24,8 @@ async function LoginCard({ searchParams }: { searchParams: Promise<{ error?: str
     <main className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-card">
         <div className="mb-5 flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white">M</span>
-          <span className="text-base font-semibold">Marketing Intelligence</span>
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white">B</span>
+          <span className="text-base font-semibold">BEQ</span>
         </div>
         <h1 className="text-xl font-semibold">Sign in</h1>
         <p className="mt-1 text-sm text-muted">Use your Google account. Only emails listed by an Administrator can get in.</p>

@@ -9,7 +9,7 @@ interface Acct { channelId: string; name: string; accountId: string }
 
 /** Administrators only: pull campaigns, ads, daily results and ad images from the Meta ad account into the Google Sheet. */
 export default function AdsSyncCard() {
-  const { user, reloadData, toast } = useStore();
+  const { data, user, reloadData, toast } = useStore();
   const [accts, setAccts] = useState<Acct[] | null>(null); const [ch, setCh] = useState(""); const [days, setDays] = useState("30");
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<AdsTotals | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
@@ -61,9 +61,20 @@ export default function AdsSyncCard() {
           <p className="font-medium">หมายเหตุ</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
         </div>}
-        {done && <p className="rounded-lg bg-brand-faint px-3 py-2 text-sm">ได้ {done.ads} โฆษณา ({done.campaigns} แคมเปญ) และสถิติรายวัน {done.rows} แถว</p>}
+        {done && <div className="rounded-lg bg-brand-faint px-3 py-2 text-sm">
+          <p>ได้ {done.ads} โฆษณา ({done.campaigns} แคมเปญ) และสถิติรายวัน {done.rows} แถว</p>
+          {pageSplit(done.byPage, data.pages) && <p className="mt-1 text-xs text-muted">แยกตามเพจ: {pageSplit(done.byPage, data.pages)}</p>}
+        </div>}
         <p className="text-xs text-muted">ดึงซ้ำได้ ข้อมูลวันเดิมจะถูกอัปเดตทับ ไม่ซ้ำ · วันที่นับตามเขตเวลาของบัญชีโฆษณา · ภาพโฆษณาเป็นลิงก์จาก Meta ที่หมดอายุได้ ดึงใหม่เพื่อรีเฟรชภาพ</p>
       </div>
     </Card>
   );
+}
+
+/** "เพจ A 12 · เพจ B 8" — which page each pulled ad was filed under, so a wrong page is visible right after the sync. */
+function pageSplit(byPage: Record<string, number> | undefined, pages: { id: string; name: string }[]): string {
+  const entries = Object.entries(byPage ?? {}).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return "";
+  const shown = entries.slice(0, 4).map(([id, n]) => `${pages.find((p) => p.id === id)?.name ?? id} ${n}`).join(" · ");
+  return entries.length > 4 ? `${shown} …` : shown;
 }

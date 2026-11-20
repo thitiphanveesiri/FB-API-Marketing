@@ -3,10 +3,10 @@ import "./globals.css";
 import { PRE_PAINT_SCRIPT } from "@/lib/prePaint";
 
 export const metadata: Metadata = {
-  title: "Marketing Intelligence Dashboard",
+  title: "BEQ",
   description: "Facebook Ads performance, chat quality and lead management",
   icons: { apple: "/icons/icon-192.png" },
-  appleWebApp: { capable: true, title: "Marketing", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "BEQ", statusBarStyle: "default" },
 };
 export const viewport: Viewport = { themeColor: "#087a58", width: "device-width", initialScale: 1 };
 

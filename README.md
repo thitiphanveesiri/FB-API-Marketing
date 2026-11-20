@@ -1,4 +1,4 @@
-# Marketing Intelligence Dashboard
+# BEQ
 
 Facebook Ads performance, chat-quality analytics, Inbox, Kanban lead board, data import, quality control and settings — one multi-page Next.js app.
 **Phase 1 (this build):** fully working front end on clearly labelled **Demo Data**. No Facebook account is accessed; nothing is sent to real customers.
