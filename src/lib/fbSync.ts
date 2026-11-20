@@ -46,7 +46,8 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
   return env.FB_PAGE_ID && env.FB_PAGE_TOKEN ? [{ fbPageId: env.FB_PAGE_ID, token: env.FB_PAGE_TOKEN, sheetPageId: env.FB_SHEET_PAGE_ID }] : [];
 }
 
-export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+export type FetchInit = { headers?: Record<string, string> };
+export type FetchFn = (url: string, init?: FetchInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; fbtrace_id?: string } }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -55,21 +56,22 @@ const transient = (status: number, code?: number) => status >= 500 || code === 1
 
 /** fetch for Meta that gives up after `ms` instead of hanging until the platform kills the whole request. A timeout looks like
  *  Meta's own "code 1" (too much data) so callers can fall back to a lighter query right away. */
-export const metaFetchWith = (ms: number): FetchFn => async (u) => {
-  try { return (await fetch(u, { cache: "no-store", signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
+export const metaFetchWith = (ms: number): FetchFn => async (u, init) => {
+  try { return (await fetch(u, { cache: "no-store", headers: init?.headers, signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
   catch (e) {
     if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(Math.max(3000, ms) / 1000)} วินาที` } }) };
     throw e;
   }
 };
 /** Default timeout: META_TIMEOUT_MS (default 12 s). */
-export const metaFetch: FetchFn = (u) => metaFetchWith(Number(process.env.META_TIMEOUT_MS) || 12000)(u);
+export const metaFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_TIMEOUT_MS) || 12000)(u, init);
 
 /** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
  *  failed once will fail again, and every repeat eats the time budget). */
 export async function graph(path: string, params: Record<string, string>, token: string, f: FetchFn, base: string, retryMs = 900, retries = 2): Promise<Graph> {
   for (let attempt = 0; ; attempt++) {
-    const r = await f(`${base}/${metaApiVersion()}/${path}?${new URLSearchParams({ ...params, access_token: token })}`);
+    // The token travels in the Authorization header, not the URL, so it never lands in request logs, proxies or error text.
+    const r = await f(`${base}/${metaApiVersion()}/${path}?${new URLSearchParams(params)}`, { headers: { Authorization: `Bearer ${token}` } });
     const j = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
     if (r.ok && !j.error) return j;
     const code = j.error?.code;

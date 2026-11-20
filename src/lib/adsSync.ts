@@ -132,10 +132,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       adRows.push(row);
       const rowPage = mapped ?? camps.get(cid)!.page_id;
       byPage[rowPage] = (byPage[rowPage] ?? 0) + 1;
-      if (!row.creative_url && (storyId || c.video_id)) needMedia.push({ row, story: storyId, video: c.video_id });
+      if (!row.creative_url) needMedia.push({ row, story: storyId, video: c.video_id }); // also ads with neither story nor video (Instagram-only, dynamic, image-hash creatives)
     }
     // One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget.
-    const mediaWarning = needMedia.length && !overBudget() ? await fillCreativeMedia(needMedia, i.token, f, base, overBudget) : null;
+    const mediaWarning = needMedia.length && !overBudget() ? await fillCreativeMedia(needMedia, i.token, f, base, overBudget, acct) : null;
     counts.ads = adRows.length; counts.campaigns = camps.size;
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
@@ -223,7 +223,7 @@ export async function listAdAccounts(token: string, f: FetchFn, base: string): P
   collect(j.data);
   for (let page = 0; page < 3 && seen.size < 200; page++) {
     const next = j.paging?.next; if (!next) break;
-    const r = await f(next);
+    const r = await f(next, { headers: { Authorization: `Bearer ${token}` } });
     const k = ((await r.json().catch(() => ({}))) ?? {}) as Graph;
     if (!r.ok || k.error) throw new FbError(`Meta ตอบ ${r.status}: ${k.error?.message ?? "อ่านรายการบัญชีโฆษณาไม่สำเร็จ"}`, false, k.error?.code);
     collect(k.data); j = k;
@@ -242,12 +242,17 @@ async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: st
   return `Meta ไม่ส่งโฆษณาของบัญชี ${who} กลับมาเลย — สาเหตุที่พบบ่อย: (1) เลือกบัญชีโฆษณาผิดบัญชี (2) คนที่ออกโทเคนยังไม่ได้ถูกเพิ่มเข้าบัญชีนี้ — เพิ่มที่ Business Settings → Ad accounts → Add people (ให้สิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ใช่คนในบัญชี Meta จะตอบว่ารายการว่างโดยไม่แจ้ง error) (3) บัญชีนี้ไม่มีโฆษณาจริง`;
 }
 
+type CreativeExtra = {
+  effective_instagram_media_id?: string; image_hash?: string;
+  asset_feed_spec?: { images?: { hash?: string; url?: string }[]; videos?: { thumbnail_url?: string }[] };
+  object_story_spec?: { link_data?: { image_hash?: string; child_attachments?: { picture?: string; image_hash?: string }[] } };
+};
 type MediaNode = { full_picture?: string; message?: string; attachments?: { data?: { media_type?: string; target?: { id?: string } }[] }; picture?: string | { data?: { url?: string } }; error?: { message?: string } };
 
 /** Creatives with no image of their own (page-post, catalogue, dynamic) only point at the post. Read the post's real picture and the
  *  video cover — one batched request per kind, so 40 ads cost two calls. A refusal (usually a token without pages_read_engagement)
  *  only loses the picture, never the ad row. */
-async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string }[], token: string, f: FetchFn, base: string, overBudget: () => boolean): Promise<string | null> {
+async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string }[], token: string, f: FetchFn, base: string, overBudget: () => boolean, acct?: string): Promise<string | null> {
   const errors: string[] = [];
   /** Later field lists exist for a request Meta refused: the post lookup asks for attachments last, so a rejection still returns the picture. */
   const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, MediaNode>> => {
@@ -276,9 +281,44 @@ async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?
     const url = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url ?? "";
     if (url && !p.row.creative_url) p.row.creative_url = url;
   }
+  // Last resort for ads still without a picture (Instagram-only, dynamic / flexible, carousel, image-hash creatives). One extra batched
+  // read of those ads' creatives; every step is best-effort, so a refusal only costs the picture.
+  const bare = picks.filter((p) => !p.row.creative_url && p.row.ad_id);
+  if (bare.length && !overBudget()) {
+    const ads = await batch(bare.map((p) => String(p.row.ad_id)), [
+      "creative{effective_instagram_media_id,image_hash,asset_feed_spec{images{hash,url},videos{thumbnail_url}},object_story_spec{link_data{image_hash,child_attachments{picture,image_hash}}}}",
+      "creative{effective_instagram_media_id,image_hash}",
+    ]) as unknown as Record<string, { creative?: CreativeExtra; error?: unknown }>;
+    const hashes = new Set<string>(), igIds = new Set<string>(), found = new Map<string, { hash?: string; ig?: string }>();
+    for (const p of bare) {
+      const c = ads[String(p.row.ad_id)]?.creative; if (!c) continue;
+      const af = c.asset_feed_spec, link = c.object_story_spec?.link_data, child = link?.child_attachments?.[0];
+      const direct = af?.images?.find((x) => x.url)?.url || child?.picture || af?.videos?.find((x) => x.thumbnail_url)?.thumbnail_url;
+      if (direct) { p.row.creative_url = direct; continue; }
+      const hash = c.image_hash || link?.image_hash || child?.image_hash || af?.images?.[0]?.hash;
+      if (hash) hashes.add(hash);
+      if (c.effective_instagram_media_id) igIds.add(c.effective_instagram_media_id);
+      found.set(String(p.row.ad_id), { hash, ig: c.effective_instagram_media_id });
+    }
+    // image hash → hosted image URL (the account's image library)
+    const urlByHash = new Map<string, string>();
+    if (acct && hashes.size && !overBudget()) {
+      try {
+        const r = await graph(`${acct}/adimages`, { hashes: JSON.stringify([...hashes].slice(0, 50)), fields: "hash,url" }, token, f, base, 900, 0);
+        for (const x of (r.data ?? []) as { hash?: string; url?: string }[]) if (x.hash && x.url) urlByHash.set(x.hash, x.url);
+      } catch (e) { if (e instanceof FbError) errors.push(e.message); else throw e; }
+    }
+    const igMedia = igIds.size && !overBudget() ? await batch([...igIds], ["media_url,thumbnail_url", "thumbnail_url"]) as unknown as Record<string, { media_url?: string; thumbnail_url?: string }> : {};
+    for (const p of bare) {
+      if (p.row.creative_url) continue;
+      const hit = found.get(String(p.row.ad_id)); if (!hit) continue;
+      const ig = hit.ig ? igMedia[hit.ig] : undefined;
+      p.row.creative_url = (hit.hash && urlByHash.get(hit.hash)) || ig?.media_url || ig?.thumbnail_url || "";
+    }
+  }
   const missing = picks.filter((p) => !p.row.creative_url).length;
   if (!missing) return null;
   return errors.length
-    ? `${missing} โฆษณาไม่มีรูป — ดึงรูปจากโพสต์ Facebook ไม่ได้เพราะ ${errors[0]} (โทเคนต้องมีสิทธิ์ pages_read_engagement และเป็นโทเคนของเพจที่ลงโฆษณา)`
+    ? `${missing} โฆษณาไม่มีรูป — Meta ไม่ให้ดึงรูปจากโพสต์หรือคลังรูปโฆษณา (${errors[0]}) — โทเคนต้องมีสิทธิ์ ads_read และ pages_read_engagement และต้องเป็นโทเคนของเพจที่ลงโฆษณา`
     : `${missing} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`;
 }

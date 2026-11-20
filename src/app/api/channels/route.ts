@@ -21,7 +21,7 @@ const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new 
  *  An ad account whose stored token still works keeps it (it may be a never-expiring system-user token); one whose token Meta says is dead
  *  (expired / revoked) gets the new token — that is why pasting a fresh token revives ad pulls that had stopped. Never throws. */
 async function connectAdAccounts(userToken: string, sheetPageId: string, all: Channel[]): Promise<{ added: number; existing: number; refreshed: number; names: string[]; message: string }> {
-  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>;
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<FetchFn>;
   try {
     const accts = await listAdAccounts(userToken, f, base);
     if (!accts.length) return { added: 0, existing: 0, refreshed: 0, names: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ถ้าต้องการดึงโฆษณาด้วย ให้เพิ่มสิทธิ์ ads_read แล้วสร้างโทเคนใหม่" };
@@ -50,7 +50,7 @@ async function connectAdAccounts(userToken: string, sheetPageId: string, all: Ch
 async function listAdsAction(b: Body, all: Channel[]) {
   const typed = (b.accessToken ?? "").trim();
   if (typed && !/^[\w-]{20,400}$/.test(typed)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
-  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u) => fetch(u, { cache: "no-store" }) as ReturnType<FetchFn>;
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<FetchFn>;
   const tokens = typed ? [typed] : [...new Set(all.filter((c) => c.channel === "ads" && c.active && c.accessToken).map((c) => c.accessToken))];
   if (!tokens.length) return fail(400, "ยังไม่มีโทเคนให้ค้นหา — วาง Access Token ที่มีสิทธิ์ ads_read ในช่องด้านล่างก่อน");
   const found = new Map<string, { id: string; name: string; status?: number; currency?: string }>();
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
       }
       let info = { name: prev?.name ?? "", currency: "", timezone: "" };
       try {
-        info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u) => fetch(u, { cache: "no-store" }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
+        info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
       } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e instanceof FbError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
       await saveChannel({ channelId, channel: "ads", accountId: digits, name: info.name || prev?.name || `act_${digits}`, accessToken: token, sheetPageId, forceSheetPage: b.forceSheetPage === true, active: true });
       invalidateCache();
