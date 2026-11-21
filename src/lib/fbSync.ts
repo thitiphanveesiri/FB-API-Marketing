@@ -46,7 +46,7 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
   return env.FB_PAGE_ID && env.FB_PAGE_TOKEN ? [{ fbPageId: env.FB_PAGE_ID, token: env.FB_PAGE_TOKEN, sheetPageId: env.FB_SHEET_PAGE_ID }] : [];
 }
 
-export type FetchInit = { headers?: Record<string, string> };
+export type FetchInit = { method?: string; headers?: Record<string, string>; body?: string };
 export type FetchFn = (url: string, init?: FetchInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; fbtrace_id?: string } }
 
@@ -57,7 +57,7 @@ const transient = (status: number, code?: number) => status >= 500 || code === 1
 /** fetch for Meta that gives up after `ms` instead of hanging until the platform kills the whole request. A timeout looks like
  *  Meta's own "code 1" (too much data) so callers can fall back to a lighter query right away. */
 export const metaFetchWith = (ms: number): FetchFn => async (u, init) => {
-  try { return (await fetch(u, { cache: "no-store", headers: init?.headers, signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
+  try { return (await fetch(u, { cache: "no-store", method: init?.method, headers: init?.headers, body: init?.body, signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
   catch (e) {
     if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(Math.max(3000, ms) / 1000)} วินาที` } }) };
     throw e;

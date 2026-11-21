@@ -13,7 +13,7 @@ import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 60;
 const GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/${metaApiVersion()}`;
-const INSTAGRAM_GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/${metaApiVersion("v27.0")}`;
+const INSTAGRAM_GRAPH = () => `${process.env.FB_GRAPH_BASE || "https://graph.facebook.com"}/${metaApiVersion()}`;
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
 const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new URL(req.url).origin;
 
@@ -21,7 +21,7 @@ const origin = (req: Request) => process.env.APP_URL?.replace(/\/$/, "") || new 
  *  An ad account whose stored token still works keeps it (it may be a never-expiring system-user token); one whose token Meta says is dead
  *  (expired / revoked) gets the new token — that is why pasting a fresh token revives ad pulls that had stopped. Never throws. */
 async function connectAdAccounts(userToken: string, sheetPageId: string, all: Channel[]): Promise<{ added: number; existing: number; refreshed: number; names: string[]; message: string }> {
-  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<FetchFn>;
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", method: init?.method, headers: init?.headers, body: init?.body }) as ReturnType<FetchFn>;
   try {
     const accts = await listAdAccounts(userToken, f, base);
     if (!accts.length) return { added: 0, existing: 0, refreshed: 0, names: [], message: "โทเคนนี้มองไม่เห็นบัญชีโฆษณา — ถ้าต้องการดึงโฆษณาด้วย ให้เพิ่มสิทธิ์ ads_read แล้วสร้างโทเคนใหม่" };
@@ -50,7 +50,7 @@ async function connectAdAccounts(userToken: string, sheetPageId: string, all: Ch
 async function listAdsAction(b: Body, all: Channel[]) {
   const typed = (b.accessToken ?? "").trim();
   if (typed && !/^[\w-]{20,400}$/.test(typed)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
-  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<FetchFn>;
+  const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com", f: FetchFn = (u, init) => fetch(u, { cache: "no-store", method: init?.method, headers: init?.headers, body: init?.body }) as ReturnType<FetchFn>;
   const tokens = typed ? [typed] : [...new Set(all.filter((c) => c.channel === "ads" && c.active && c.accessToken).map((c) => c.accessToken))];
   if (!tokens.length) return fail(400, "ยังไม่มีโทเคนให้ค้นหา — วาง Access Token ที่มีสิทธิ์ ads_read ในช่องด้านล่างก่อน");
   const found = new Map<string, { id: string; name: string; status?: number; currency?: string }>();
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
       }
       let info = { name: prev?.name ?? "", currency: "", timezone: "" };
       try {
-        info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u, init) => fetch(u, { cache: "no-store", headers: init?.headers }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
+        info = await checkAdAccount(actId(digits), token || prev!.accessToken, (u, init) => fetch(u, { cache: "no-store", method: init?.method, headers: init?.headers, body: init?.body }) as ReturnType<Parameters<typeof checkAdAccount>[2]>, process.env.FB_GRAPH_BASE || "https://graph.facebook.com");
       } catch (e) { return fail(400, isExpiredMetaToken(e) ? expiredMetaTokenMessage("ads") : e instanceof FbError ? e.message : "เชื่อมต่อ Meta ไม่สำเร็จ"); }
       await saveChannel({ channelId, channel: "ads", accountId: digits, name: info.name || prev?.name || `act_${digits}`, accessToken: token, sheetPageId, forceSheetPage: b.forceSheetPage === true, active: true });
       invalidateCache();
@@ -180,7 +180,7 @@ export async function POST(req: Request) {
     const appSecret = secret || existing?.appSecret || "";
     const verifyToken = existing?.verifyToken || defaultVerifyToken() || newVerifyToken();
     await saveChannel({ channelId, channel: "facebook", accountId, name, accessToken: pageToken, appSecret, verifyToken, sheetPageId, active: true });
-    const instagramLookup = await instagramOf(accountId, pageToken);
+    const instagramLookup = await instagramOf(accountId, userToken);
     const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
     const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
     if (instagram) {
@@ -220,6 +220,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
   }
   const wide = await widenToken(token, info, secret); // long-lived user token → Page tokens that do not expire
   info = wide.info;
+  const instagramUserToken = info.kind === "user" ? wide.userToken || token : "";
   const pages = info.kind === "page" ? [{ id: info.id, name: info.name, token }] : info.pages;
   const uniquePages = [...new Map(pages.map((page) => [page.id, page])).values()];
   if (!uniquePages.length) return fail(400, "โทเคนนี้มองไม่เห็นเพจใดเลย — ใน Graph API Explorer ขอสิทธิ์ pages_show_list, pages_messaging, pages_manage_metadata, pages_read_engagement, instagram_basic, instagram_manage_messages และ instagram_manage_comments แล้วสร้าง Access Token ใหม่");
@@ -262,7 +263,7 @@ async function connectAll(b: Body, all: Channel[], systemPages: { id: string; na
         subscribed = response.ok && result.success === true;
         if (!subscribed) subscribeMessage = scrub(result.error?.message ?? `HTTP ${response.status}`);
       } catch { subscribeMessage = "เชื่อมต่อ Meta ไม่สำเร็จ"; }
-      const instagramLookup = await instagramOf(page.id, page.token);
+      const instagramLookup = await instagramOf(page.id, instagramUserToken);
       const instagram = instagramLookup.status === "found" ? instagramLookup.account : null;
       const instagramLookupMessage = instagramLookup.status === "error" ? instagramLookup.message : "";
       if (instagram) {
@@ -314,9 +315,10 @@ type InstagramLookup =
   | { status: "none" }
   | { status: "error"; message: string };
 
-async function instagramOf(pageId: string, pageToken: string): Promise<InstagramLookup> {
+async function instagramOf(pageId: string, userToken: string): Promise<InstagramLookup> {
+  if (!userToken) return { status: "error", message: "เชื่อม Facebook แล้ว แต่ Meta ต้องใช้ User Access Token เพื่อค้นหาบัญชี Instagram ของเพจโดยอัตโนมัติ หากต้องการเชื่อม Instagram ให้เชื่อมใหม่ด้วย User Access Token ของผู้ใช้ที่ดูแลเพจ (Page token ยังใช้กับ Facebook ได้ตามปกติ)" };
   try {
-    const response = await fetch(`${INSTAGRAM_GRAPH()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: pageToken })}`, {
+    const response = await fetch(`${INSTAGRAM_GRAPH()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: userToken })}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });

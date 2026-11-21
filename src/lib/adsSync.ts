@@ -2,6 +2,7 @@
 // Pure apart from the injected fetch. One call = one small batch (Vercel time limits).
 import { FbError, graph, metaAdsFetch, type FetchFn, type Graph } from "./fbSync";
 import type { SyncWrite } from "./fbSync";
+import { metaApiVersion } from "./metaApi";
 
 export type AdsPhase = "ads" | "insights" | "done";
 /** tier = level of detail of the ad list; win = which 30-day window of the daily results; lim = rows per page of the daily results (smaller after Meta says "too much data"). */
@@ -372,17 +373,63 @@ export interface MediaSources { post?: MediaNode; cover?: string; hashUrl?: stri
  */
 async function readMediaSources(picks: (CreativeRef & { key: string })[], token: string, f: FetchFn, base: string, acct: string | undefined, stillOk: () => boolean): Promise<{ byKey: Map<string, MediaSources>; errors: string[] }> {
   const errors: string[] = [];
-  /** Later field lists exist for a request Meta refused: the post lookup asks for attachments last, so a rejection still returns the picture. */
+  /** Meta removed root GET /?ids=...; use Batch Requests instead. Batch results follow operation order, but each item can fail independently. */
   const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, unknown>> => {
-    const uniq = [...new Set(ids.filter((x): x is string => !!x))].slice(0, 50);
+    const uniq = [...new Set(ids.filter((x): x is string => !!x))];
     if (!uniq.length) return {};
-    let last: FbError | undefined;
-    for (const fields of fieldLists) {
-      try { return (await graph("", { ids: uniq.join(","), fields }, token, f, base, 900, 0)) as unknown as Record<string, unknown>; }
-      catch (e) { if (!(e instanceof FbError)) throw e; last = e; if (e.rateLimited) break; }
+    const out: Record<string, unknown> = {};
+    const asError = (status: number, body?: { error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } }, fallback?: string) => {
+      const code = body?.error?.code;
+      const rate = status === 429 || (code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)));
+      const message = (body?.error?.message || fallback || `Batch item HTTP ${status}`).replace(/access_token=[^&]+/gi, "access_token=…");
+      return new FbError(`Meta ตอบ ${status}: ${message}${code != null ? ` (code ${code}${body?.error?.error_subcode ? `/${body.error.error_subcode}` : ""}${body?.error?.fbtrace_id ? `, trace ${body.error.fbtrace_id}` : ""})` : ""}`.slice(0, 260), rate, code);
+    };
+    const parseBody = (value: unknown): { [key: string]: unknown; error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } } | null => {
+      try {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as { [key: string]: unknown; error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } } : null;
+      } catch { return null; }
+    };
+    for (let start = 0; start < uniq.length; start += 50) {
+      let remaining = uniq.slice(start, start + 50), last: FbError | undefined;
+      for (const fields of fieldLists) {
+        if (!remaining.length || !stillOk()) break;
+        try {
+          const operations = remaining.map((id) => ({ method: "GET", relative_url: `${encodeURIComponent(id)}?fields=${encodeURIComponent(fields)}` }));
+          const response = await f(`${base}/${metaApiVersion()}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ access_token: token, batch: JSON.stringify(operations), include_headers: "false" }).toString(),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !Array.isArray(payload)) {
+            const parsed = parseBody(payload);
+            throw asError(response.status, parsed ?? undefined, "Graph API Batch request failed");
+          }
+          const failed: string[] = [];
+          let batchRateLimited = false;
+          for (let index = 0; index < remaining.length; index++) {
+            const item = payload[index] as { code?: number; body?: unknown } | null | undefined;
+            const status = Number(item?.code) || 0;
+            const body = parseBody(item?.body);
+            if (item && status >= 200 && status < 300 && body && !body.error) out[remaining[index]] = body;
+            else {
+              failed.push(remaining[index]);
+              last = asError(status, body ?? undefined, item ? "Invalid batch subresponse" : "Missing batch subresponse");
+              batchRateLimited ||= last.rateLimited;
+            }
+          }
+          remaining = failed;
+          if (batchRateLimited) break;
+        } catch (error) {
+          if (!(error instanceof FbError)) throw error;
+          last = error;
+          if (error.rateLimited) break;
+        }
+      }
+      if (remaining.length) errors.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
     }
-    if (last) errors.push(last.message);
-    return {};
+    return out;
   };
   const byKey = new Map<string, MediaSources>();
   const put = (key: string, v: MediaSources) => byKey.set(key, { ...(byKey.get(key) ?? {}), ...v });
@@ -461,7 +508,10 @@ async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?
   const missing = picks.filter((p) => sharpness(p.row.creative_url as string | undefined) < 2).length;
   const none = picks.filter((p) => !p.row.creative_url).length;
   if (!missing) return null;
-  if (errors.length) return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ไม่ให้ดึงรูปจากโพสต์หรือคลังรูปโฆษณา (${errors[0]}) — โทเคนต้องมีสิทธิ์ ads_read และ pages_read_engagement และต้องเป็นโทเคนของเพจที่ลงโฆษณา`;
+  if (errors.length) {
+    const permission = /permission|access|oauth|scope|code 10|code 200/i.test(errors[0]);
+    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permission ? " — ตรวจสิทธิ์ ads_read และ pages_read_engagement รวมถึงสิทธิ์เข้าถึงเพจที่ลงโฆษณา" : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง"}`;
+  }
   return none ? `${none} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`
     : `${missing} โฆษณาใช้รูปขนาดจิ๋วที่ Meta ตอบกลับมา (crop 64×64) และหาต้นฉบับไม่เจอ — กดดึงซ้ำหรือรีเฟรชรูปที่หน้า Upload`;
 }
