@@ -53,7 +53,7 @@ interface RawAd {
     };
   };
 }
-interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; actions?: Action[] }
+interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; inline_link_clicks?: string; actions?: Action[] }
 
 /* ------------------------------------------------------------------ picture quality ---------------------------------------------------------------- */
 
@@ -277,10 +277,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const windows = Math.max(1, Math.ceil(i.days / WINDOW_DAYS)), win = Math.min(windows - 1, Math.max(0, i.state.win ?? 0));
     const untilD = new Date(now.getTime() - win * WINDOW_DAYS * 86400000), sinceD = new Date(Math.max(now.getTime() - i.days * 86400000, untilD.getTime() - (WINDOW_DAYS - 1) * 86400000));
     const since = day(sinceD), until = day(untilD);
-    // Full field list first; if Meta rejects it (code 100) the same query is retried with the core fields only, and later batches keep using them.
+    // Link Clicks are the dashboard's canonical metric: ask for inline_link_clicks in every tier and never substitute clicks (all).
+    // If Meta refuses that metric, fail clearly rather than silently changing its definition. The fallback only drops reach.
     // date_start is named on purpose: with time_increment Meta also returns it by itself, but a row whose date is missing is
     // dropped by the sheet mapper, so asking for it costs nothing and cannot lose a day of results.
-    const FULL = "ad_id,date_start,spend,reach,impressions,clicks,inline_link_clicks,actions", CORE = "ad_id,date_start,spend,impressions,clicks,actions";
+    const FULL = "ad_id,date_start,spend,reach,impressions,inline_link_clicks,actions", CORE = "ad_id,date_start,spend,impressions,inline_link_clicks,actions";
     let lim = Math.min(INSIGHT_LIMITS.length - 1, Math.max(0, i.state.lim ?? 0)), core = i.state.fallback === true, j: Graph | undefined;
     const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_LIMITS[lim]), ...(i.state.after ? { after: i.state.after } : {}) },
       i.token, f, base, 900, lim >= INSIGHT_LIMITS.length - 1 ? 1 : 0);
@@ -294,9 +295,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       }
     }
     const rows: SyncWrite["rows"] = [];
+    let missingLinkClicks = 0;
     for (const r of (j.data ?? []) as RawInsight[]) {
       if (!r.ad_id || !r.date_start) continue;
-      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), reach: num(r.reach), impressions: num(r.impressions), clicks: num(r.inline_link_clicks ?? r.clicks),
+      if (r.inline_link_clicks == null) missingLinkClicks++;
+      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), ...(r.reach != null ? { reach: num(r.reach) } : {}), impressions: num(r.impressions), ...(r.inline_link_clicks != null ? { clicks: num(r.inline_link_clicks) } : {}),
         messages: act(r.actions, ["onsite_conversion.messaging_conversation_started_7d"]), purchases: act(r.actions, ["omni_purchase", "purchase"]) });
     }
     counts.rows = rows.length;
@@ -304,7 +307,8 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const more = !!j.paging?.next && !!j.paging.cursors?.after, carry = { ...(core ? { fallback: true } : {}), ...(lim > 0 ? { lim } : {}) };
     const next: AdsState = more ? { phase: "insights", after: j.paging!.cursors!.after, win, ...carry } : win + 1 < windows ? { phase: "insights", win: win + 1, ...carry } : { phase: "done" };
     const notes: string[] = [];
-    if (core) notes.push("Meta ไม่ให้ฟิลด์ reach/คลิกลิงก์ ระบบจึงดึงสถิติแบบพื้นฐาน (ค่า Reach อาจเป็น 0)");
+    if (core) notes.push("Meta ไม่ให้ฟิลด์ Reach ในคำขอแบบเต็ม ระบบจึงดึงแบบสำรอง โดยยังใช้ Link Clicks เท่านั้นและคง Reach เดิมใน Sheet (ไม่เขียน 0 ทับ)");
+    if (missingLinkClicks) notes.push(`Meta ไม่ได้ส่ง Link Clicks กลับมา ${missingLinkClicks} แถว — ไม่ได้นำ Clicks (all) มาแทน; ค่าที่มีอยู่ใน Sheet จะไม่ถูกเขียนทับ`);
     if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลเยอะเกินไป ระบบจึงดึงทีละ ${INSIGHT_LIMITS[lim]} แถว (ยอดรวมยังครบ)`);
     return { next, writes, counts, ...(notes.length ? { warnings: notes } : {}) };
   }
