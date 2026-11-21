@@ -1,5 +1,5 @@
 // SERVER ONLY. Administrators only. Answers "why 502?" without Vercel logs: checks the Google Sheet read, every Facebook page
-// token and every linked Instagram account, then reports which connection is broken and what to do about it.
+// token and every already-linked Instagram account, then reports which connection is broken and what to do about it.
 import { connection, NextResponse } from "next/server";
 import { adminOnly, noStore } from "@/lib/adminGate";
 import { loadChannels, type Channel } from "@/lib/channels";
@@ -73,8 +73,10 @@ export async function GET(req: Request) {
 
   const pages = await Promise.all(fb.map(async (c): Promise<Check> => {
     try {
-      const j = (await graph(encodeURIComponent(c.accountId), { fields: "name,instagram_business_account{id,username}" }, c.accessToken, f, graphBase(), 900, 1)) as { name?: string; instagram_business_account?: { id?: string; username?: string } };
-      const ig = j.instagram_business_account;
+      const j = (await graph(encodeURIComponent(c.accountId), { fields: "name" }, c.accessToken, f, graphBase(), 900, 1)) as { name?: string };
+      // instagram_business_account requires a User token. This health check only has Page tokens, so use the linked IG channel saved at connect time.
+      const linkedIg = igs.find((item) => item.channelId === `instagram:${c.accountId}`);
+      const ig = linkedIg ? { id: linkedIg.accountId, username: linkedIg.name.replace(/^@/, "") } : undefined;
       // The two failures that look like a "502" while the token is fine: Meta 500s on the page's conversation list, and code 100 (cannot read that inbox).
       const [messenger, insta, token] = await Promise.all([
         probe(`${encodeURIComponent(c.accountId)}/conversations`, "messenger", c.accessToken),

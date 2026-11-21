@@ -111,33 +111,58 @@ export function mapSheets(tabs: RawTabs): MapResult {
 
   // ads
   const ads: Ad[] = [];
+  // Same policy as the orphan pages above: a missing campaign row used to drop the ad *and every performance row it owned*, which
+  // is where "some of my data disappears" came from (an ad sync that ran out of time writes ads and campaigns in separate calls,
+  // so the campaigns half can be missing while the ads half landed). Keep the ad under a clearly-named placeholder instead.
+  const missingCamps = new Map<string, Campaign>();
   for (const r of tab("ads").rows) {
     const id = r.get("ad_id"), name = r.get("name"), cid = r.get("campaign_id");
     if (!id) { warn("ads", r.n, "ad_id is required — row skipped"); continue; }
     if (idHint(id)) warn("ads", r.n, `ad_id "${id}"${idHint(id)}`);
-    if (!campIds.has(cid)) { warn("ads", r.n, `campaign_id "${cid}" not found — row skipped`); continue; }
+    const ckey = cid || "(ไม่มี campaign_id)";
+    if (!campIds.has(ckey) && !missingCamps.has(ckey)) {
+      const adPage = r.get("page_id");
+      missingCamps.set(ckey, { id: ckey, name: `${ckey} (ไม่พบในแท็บ Campaigns)`, pageId: adPage || (pages.length === 1 ? pages[0].id : ""),
+        agencyId: pages.find((p) => p.id === adPage)?.agencyId ?? "", objective: "" });
+      warn("campaigns", 1, `campaign_id "${ckey}" is used by ads but is missing from the campaigns tab — the ads are shown under "${ckey} (ไม่พบในแท็บ Campaigns)". Run the Ads sync (or add the campaign row) to restore the real campaign name and page.`);
+    }
     if (ads.some((a) => a.id === id)) { warn("ads", r.n, `Duplicate ad_id ${id} — skipped`); continue; }
     const st = pick<AdStatus>(["Active", "Paused", "Learning", "Ended"], r.get("status"));
     if (r.get("status") && !st) warn("ads", r.n, `Unknown status "${r.get("status")}" — set to Active`);
     const ct = pick(["Image", "Video", "Carousel"] as const, r.get("creative_type")) ?? "Image";
     const adPage = r.get("page_id");
     if (adPage && !pageIds.has(adPage)) orphan(adPage, "ads");
-    ads.push({ id, name: name || id, campaignId: cid, ...(adPage ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")) }, ...(r.get("caption") ? { caption: r.get("caption") } : {}), ...(r.get("headline") ? { headline: r.get("headline") } : {}), updatedAt: dateOnly(r.get("updated_at")) ?? "" });
+    const ref = r.get("creative_ref");
+    ads.push({ id, name: name || id, campaignId: ckey, ...(adPage ? { pageId: adPage } : {}), status: st ?? "Active", creative: { type: ct, hue: hue(id), url: httpsUrl(r.get("creative_url")), video: httpsUrl(r.get("video_url")), ...(ref ? { ref } : {}) }, ...(r.get("caption") ? { caption: r.get("caption") } : {}), ...(r.get("headline") ? { headline: r.get("headline") } : {}), updatedAt: dateOnly(r.get("updated_at")) ?? "" });
   }
   const adIds = new Set(ads.map((a) => a.id));
 
   // performance
   const perf: DailyPerf[] = []; const seen = new Set<string>();
+  // A performance row whose ad row is gone (a deleted ad, or an ad sync that stopped halfway) used to be dropped with it, which
+  // made the dashboard's totals lower than Ads Manager. The money is real, so the row is kept under a clearly-named placeholder ad.
+  let orphanPerf = 0;
+  const ORPHAN_CAMP = "(no ad row)";
   for (const r of tab("ad_performance").rows) {
     const date = dateOnly(r.get("date")), adId = r.get("ad_id");
     if (!date) { warn("ad_performance", r.n, `Invalid or missing date "${r.get("date")}" — row skipped`); continue; }
-    if (!adIds.has(adId)) { warn("ad_performance", r.n, `ad_id "${adId}" not found in ads — row skipped${idHint(adId)}`); continue; }
+    if (!adIds.has(adId)) {
+      if (idHint(adId) || orphanPerf >= 500) { warn("ad_performance", r.n, `ad_id "${adId}" not found in ads — row skipped${idHint(adId)}`); continue; }
+      if (!missingCamps.has(ORPHAN_CAMP)) {
+        missingCamps.set(ORPHAN_CAMP, { id: ORPHAN_CAMP, name: "(ไม่พบในแท็บ Ads) โฆษณาที่ถูกลบหรือยังไม่ได้ดึง", pageId: "", agencyId: "", objective: "" });
+        warn("ads", 1, `มีแถวสถิติของโฆษณาที่ไม่อยู่ในแท็บ ads — ตัวเลขยังนับรวมใน Dashboard ใต้“(ไม่พบในแท็บ Ads) โฆษณาที่ถูกลบหรือยังไม่ได้ดึง” กดดึงข้อมูลโฆษณาเพื่อเรียกชื่อและรูปของโฆษณากลับมา`);
+      }
+      orphanPerf++;
+      ads.push({ id: adId, name: `${adId} (ไม่พบในแท็บ Ads)`, campaignId: ORPHAN_CAMP, status: "Ended", creative: { type: "Image", hue: hue(adId) }, updatedAt: "" });
+      adIds.add(adId);
+    }
     const spend = parseNumber(r.get("spend")), imp = parseNumber(r.get("impressions"));
     if (spend == null || imp == null) { warn("ad_performance", r.n, "spend and impressions must be numbers — row skipped"); continue; }
     const k = `${adId}|${date}`; if (seen.has(k)) { warn("ad_performance", r.n, `Duplicate ${adId} on ${date} — skipped (no double counting)`); continue; } seen.add(k);
     const n = (c: string) => parseNumber(r.get(c)) ?? 0;
     perf.push({ adId, date, spend, reach: n("reach"), impressions: imp, clicks: n("clicks"), messages: n("messages"), purchases: n("purchases"), source: "import" });
   }
+  for (const c of missingCamps.values()) if (!campaigns.some((x) => x.id === c.id)) campaigns.push(c);
 
   // leads
   const leads: Lead[] = []; const leadIds = new Set<string>();

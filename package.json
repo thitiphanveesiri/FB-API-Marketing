@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "tsx --test src/lib/adsSync.test.ts src/lib/instagramWebhook.test.ts",
     "lint": "eslint"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
