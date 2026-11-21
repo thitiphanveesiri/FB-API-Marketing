@@ -13,11 +13,11 @@ import { Ad } from "@/lib/types";
 import { fmtShort, ANCHOR } from "@/lib/dates";
 import { pageOfAd } from "@/lib/queries";
 
-type MetricKey = "spend" | "reach" | "impressions" | "cpm" | "clicks" | "ctr" | "cpc" | "messages" | "cpmsg" | "purchases" | "conv" | "cpp";
+type MetricKey = "spend" | "reach" | "impressions" | "cpm" | "clicks" | "clicksAll" | "ctr" | "cpc" | "messages" | "cpmsg" | "purchases" | "conv" | "cpp";
 
 interface Row {
   ad: Ad; campaign: string; page: string; reach: number; impressions: number; cpm: Num; ctr: Num; costPerMsg: Num; cqc: Num;
-  purchases: number; spend: number; cpc: Num; qrate: Num; leadCount: number; quality: ReturnType<typeof chatQuality>; messages: number;
+  purchases: number; spend: number; cpc: Num; clicks: number; clicksAll: Num; idle: boolean; qrate: Num; leadCount: number; quality: ReturnType<typeof chatQuality>; messages: number;
 }
 /** One campaign on one page: every ad of that campaign whose creative posts as that page. */
 interface PageRow {
@@ -34,6 +34,8 @@ export default function AdsPerformance() {
   const [qFilter, setQFilter] = useState("all");
   const [view, setView] = useState<"ads" | "pages">("ads");
   const [openGroup, setOpenGroup] = useState<PageRow | null>(null);
+  // Ads that had no spend and no impressions in the range (pages that stopped advertising): hidden unless this switch is on.
+  const [showIdle, setShowIdle] = useState(false);
 
   const series = (fn: (day: ReturnType<typeof aggregate>) => Num) =>
     D.days.map((d) => fn(aggregate(D.perf.filter((p) => p.date === d))) ?? 0);
@@ -47,6 +49,7 @@ export default function AdsPerformance() {
       impressions: { v: fmtCompact(c.impressions), d: pctChange(c.impressions, p.impressions), s: series((a) => a.impressions) },
       cpm: { v: fmtMoney(dc.cpm, 1), d: pctChange(dc.cpm, dp.cpm), s: series((a) => derive(a).cpm) },
       clicks: { v: fmtInt(c.clicks), d: pctChange(c.clicks, p.clicks), s: series((a) => a.clicks) },
+      clicksAll: { v: c.clicksAllRows > 0 ? fmtInt(c.clicksAll) : "—", d: c.clicksAllRows > 0 && p.clicksAllRows > 0 ? pctChange(c.clicksAll, p.clicksAll) : null, s: series((a) => (a.clicksAllRows > 0 ? a.clicksAll : null)) },
       ctr: { v: fmtPct(dc.ctr, 2), d: pctChange(dc.ctr, dp.ctr), s: series((a) => derive(a).ctr) },
       cpc: { v: fmtMoney(dc.cpc, 2), d: pctChange(dc.cpc, dp.cpc), s: series((a) => derive(a).cpc) },
       messages: { v: fmtInt(c.messages), d: pctChange(c.messages, p.messages), s: series((a) => a.messages) },
@@ -58,7 +61,7 @@ export default function AdsPerformance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [D]);
 
-  const rows: Row[] = useMemo(() => {
+  const allRows: Row[] = useMemo(() => {
     const camps = new Map(D.data.campaigns.map((c) => [c.id, c]));
     const pages = new Map(D.data.pages.map((p) => [p.id, p]));
     return D.ads.map((ad) => {
@@ -68,11 +71,14 @@ export default function AdsPerformance() {
       const c = camps.get(ad.campaignId)!;
       return {
         ad, campaign: c.name, page: pages.get(pageOfAd(ad, c))?.name ?? "", reach: a.reach, impressions: a.impressions, cpm: d.cpm, ctr: d.ctr,
-        costPerMsg: d.costPerMessage, cqc: ls.qualified ? a.spend / ls.qualified : null, purchases: a.purchases, spend: a.spend, cpc: d.cpc,
+        costPerMsg: d.costPerMessage, cqc: ls.qualified ? a.spend / ls.qualified : null, purchases: a.purchases, spend: a.spend, cpc: d.cpc, clicks: a.clicks, clicksAll: a.clicksAllRows > 0 ? a.clicksAll : null, idle: !(a.spend > 0 || a.impressions > 0),
         qrate: ls.qualifiedRate, leadCount: ls.valid, quality: chatQuality(ls.qualifiedRate, ls.valid), messages: a.messages,
       };
-    }).filter((r) => r.spend > 0 || r.impressions > 0);
+    });
   }, [D]);
+  const rows = useMemo(() => allRows.filter((r) => !r.idle), [allRows]);
+  const idleRows = useMemo(() => allRows.filter((r) => r.idle), [allRows]);
+  const shown = showIdle ? [...rows, ...idleRows] : rows;
 
   // Meta reports daily results per ad, and each ad's Page comes from its creative: grouping those same rows by campaign + Page
   // answers "this campaign runs on several pages — how did each page do" without asking Meta for a Page breakdown (it has none).
@@ -105,9 +111,8 @@ export default function AdsPerformance() {
     for (const [key, list] of groups) {
       const ids = new Set(list.map((a) => a.id));
       const perf = list.flatMap((a) => perfByAd.get(a.id) ?? []);
-      if (!perf.length) continue;
       const a = aggregate(perf), d = derive(a);
-      if (a.spend <= 0 && a.impressions <= 0) continue;
+      if (!showIdle && (!perf.length || (a.spend <= 0 && a.impressions <= 0))) continue;
       const c = camps.get(list[0].campaignId)!;
       const pid = pageOfAd(list[0], c);
       const ls = leadStats(D.leads.filter((l) => !!l.adId && ids.has(l.adId)));
@@ -121,7 +126,7 @@ export default function AdsPerformance() {
       });
     }
     return out.sort((x, y) => y.spend - x.spend);
-  }, [D]);
+  }, [D, showIdle]);
 
   // Outlier thresholds: > 1.5× median cost per message flags "high cost"
   const median = useMemo(() => {
@@ -148,25 +153,27 @@ export default function AdsPerformance() {
   }, [D, rows, median]);
   const anyAttention = attention.highCost + attention.poor + attention.waiting + attention.overdue > 0;
 
-  const filtered = qFilter === "all" ? rows : qFilter === "flag" ? rows.filter((r) => highCost(r) || lowPerf(r)) : rows.filter((r) => r.quality === qFilter);
+  const filtered = qFilter === "all" ? shown : qFilter === "flag" ? shown.filter((r) => highCost(r) || lowPerf(r)) : shown.filter((r) => r.quality === qFilter);
 
   const cols: Column<Row>[] = [
     { key: "name", header: "Campaign / Ads", sort: (r) => r.ad.name, minW: 230, sticky: true, render: (r) => (
       <HoverPreview content={<AdPreview ad={r.ad} summary={<AdSummary row={r} />} />} className="w-full" focusable>
-        <span className="block min-w-0"><span className="block font-medium text-ink">{r.ad.name}</span><span className="block text-xs text-muted">{r.campaign} · {r.ad.id}</span></span>
+        <span className="block min-w-0"><span className="block font-medium text-ink">{r.ad.name}{r.idle && <span className="ml-2 align-middle"><Badge tone="gray">ไม่มียอด</Badge></span>}</span><span className="block text-xs text-muted">{r.campaign} · {r.ad.id}</span></span>
       </HoverPreview>) },
     { key: "creative", header: "Creative", render: (r) => <CreativeCell ad={r.ad} preview={<AdPreview ad={r.ad} summary={<AdSummary row={r} />} />} /> },
     { key: "page", header: "Page", minW: 150, sort: (r) => r.page, render: (r) => <span className="text-sm">{r.page || "—"}</span> },
     { key: "reach", header: "Reach", align: "right", sort: (r) => r.reach, render: (r) => fmtInt(r.reach) },
     { key: "imp", header: "Impressions", align: "right", sort: (r) => r.impressions, render: (r) => fmtInt(r.impressions) },
     { key: "cpm", header: "CPM", align: "right", tip: "Cost per 1,000 impressions = Spend ÷ Impressions × 1,000", sort: (r) => r.cpm, render: (r) => fmtMoney(r.cpm, 1) },
-    { key: "ctr", header: "CTR", align: "right", tip: "Click-through rate = Clicks ÷ Impressions × 100", sort: (r) => r.ctr, render: (r) => fmtPct(r.ctr, 2) },
+    { key: "clicks", header: "Link Clicks", align: "right", tip: "Meta inline_link_clicks — clicks that lead to a destination", sort: (r) => r.clicks, render: (r) => fmtInt(r.clicks) },
+    { key: "clicksAll", header: "Clicks (all)", align: "right", tip: "Every click on the ad (reactions, expand, profile…) — usually higher than Link Clicks. — = not synced yet", sort: (r) => r.clicksAll, render: (r) => (r.clicksAll == null ? "—" : fmtInt(r.clicksAll)) },
+    { key: "ctr", header: "CTR (link)", align: "right", tip: "Link Clicks ÷ Impressions × 100", sort: (r) => r.ctr, render: (r) => fmtPct(r.ctr, 2) },
     { key: "cpmsg", header: "Cost / Message", align: "right", tip: "Spend ÷ messaging conversations started (Meta-reported). Red = more than 1.5× the median.", sort: (r) => r.costPerMsg,
       render: (r) => <span className={highCost(r) ? "rounded bg-red-50 px-1.5 py-0.5 font-semibold text-red-600" : ""}>{fmtMoney(r.costPerMsg, 1)}</span> },
     { key: "cqc", header: "CQC", align: "right", tip: "Cost per Qualified Chat = Spend ÷ qualified leads (from CRM lead grading)", sort: (r) => r.cqc, render: (r) => fmtMoney(r.cqc, 0) },
     { key: "pur", header: "Purchases", align: "right", tip: "Meta-reported purchases (not CRM-confirmed)", sort: (r) => r.purchases, render: (r) => fmtInt(r.purchases) },
     { key: "spend", header: "Spend", align: "right", sort: (r) => r.spend, render: (r) => fmtMoney(r.spend) },
-    { key: "cpc", header: "CPC", align: "right", tip: "Cost per click = Spend ÷ Clicks", sort: (r) => r.cpc, render: (r) => fmtMoney(r.cpc, 2) },
+    { key: "cpc", header: "CPC (link)", align: "right", tip: "Spend ÷ Link Clicks", sort: (r) => r.cpc, render: (r) => fmtMoney(r.cpc, 2) },
     { key: "q", header: "Chat Quality", tip: "Based on qualified lead rate for this ad: Excellent ≥40%, Good ≥25%, Average ≥12%, Poor <12%. Needs ≥3 valid leads.", sort: (r) => r.qrate, render: (r) => <ChatQualityBadge q={r.quality} /> },
   ];
 
@@ -197,6 +204,7 @@ export default function AdsPerformance() {
     { id: "impressions", label: "Impressions", group: "Cost & Visibility", fmt: (n) => fmtCompact(n) },
     { id: "cpm", label: "CPM", group: "Cost & Visibility", tip: "Cost per 1,000 impressions", lowerIsBetter: true, fmt: (n) => fmtMoney(n, 1) },
     { id: "clicks", label: "Link Clicks", group: "Acquisition", tip: "Meta inline_link_clicks — clicks that lead to a selected destination or experience", fmt: (n) => fmtInt(n) },
+    { id: "clicksAll", label: "Clicks (all)", group: "Acquisition", tip: "Meta clicks — every click on the ad, including non-link clicks. Shown next to Link Clicks so both can be compared.", fmt: (n) => fmtInt(n) },
     { id: "ctr", label: "CTR (link)", group: "Acquisition", tip: "Link Clicks ÷ Impressions × 100", fmt: (n) => fmtPct(n, 2) },
     { id: "cpc", label: "CPC (link)", group: "Acquisition", tip: "Spend ÷ Link Clicks", lowerIsBetter: true, fmt: (n) => fmtMoney(n, 2) },
     { id: "messages", label: "Total Messages", group: "Conversion", tip: "Messaging conversations started, as reported by Meta", fmt: (n) => fmtInt(n) },
@@ -216,7 +224,7 @@ export default function AdsPerformance() {
       const dv = derive(a);
       switch (metric) {
         case "spend": return a.spend; case "reach": return a.reach; case "impressions": return a.impressions; case "cpm": return dv.cpm;
-        case "clicks": return a.clicks; case "ctr": return dv.ctr; case "cpc": return dv.cpc; case "messages": return a.messages;
+        case "clicks": return a.clicks; case "clicksAll": return a.clicksAllRows > 0 ? a.clicksAll : null; case "ctr": return dv.ctr; case "cpc": return dv.cpc; case "messages": return a.messages;
         case "cpmsg": return dv.costPerMessage; case "purchases": return a.purchases; case "cpp": return dv.costPerPurchase; default: return null;
       }
     };
@@ -260,13 +268,14 @@ export default function AdsPerformance() {
 
       <Card title="Campaign performance"
         subtitle={view === "ads"
-          ? `${rows.length} ads with delivery in this range · hover the ad name or creative to preview the image, copy and results`
+          ? `${rows.length} ads with delivery in this range${idleRows.length ? ` · ไม่มียอด ${idleRows.length}` : ""} · hover the ad name or creative to preview the image, copy and results`
           : `${pageRows.length} แถว แคมเปญ × เพจ · เลือกแคมเปญในตัวกรองด้านบนเพื่อเทียบเฉพาะแคมเปญนั้น · กดที่แถวเพื่อดูรายโฆษณา`}
         right={<div className="flex flex-wrap items-center justify-end gap-2">
           <div className="flex gap-1">
             <Btn size="sm" variant={view === "ads" ? "primary" : "secondary"} onClick={() => setView("ads")}>รายโฆษณา</Btn>
             <Btn size="sm" variant={view === "pages" ? "primary" : "secondary"} onClick={() => setView("pages")}>แยกตามเพจ</Btn>
           </div>
+          <Btn size="sm" variant={showIdle ? "primary" : "secondary"} onClick={() => setShowIdle((v) => !v)} title="โฆษณาที่ไม่มียอดใช้จ่ายหรือการแสดงผลในช่วงที่เลือก (เช่น เพจที่หยุดยิงแล้ว)">{showIdle ? "ซ่อนที่ไม่มียอด" : `แสดงที่ไม่มียอด (${idleRows.length})`}</Btn>
           {view === "ads" && <Select value={qFilter} onChange={setQFilter} options={[{ value: "all", label: "All chat quality" }, { value: "flag", label: "⚠ High cost / low performance" }, ...["Excellent", "Good", "Average", "Poor", "No data"].map((v) => ({ value: v, label: v }))]} />}
         </div>}>
         {view === "ads" ? <>
@@ -285,21 +294,21 @@ export default function AdsPerformance() {
         {open && <CampaignDetail row={open} />}
       </Drawer>
       <Drawer open={!!openGroup} onClose={() => setOpenGroup(null)} title={openGroup ? `${openGroup.campaign} · ${openGroup.page}` : ""} width={560}>
-        {openGroup && <PageGroupDetail group={openGroup} />}
+        {openGroup && <PageGroupDetail group={openGroup} showIdle={showIdle} />}
       </Drawer>
     </div>
   );
 }
 
 /** The ads behind one campaign-on-one-page row: which creative carries that page, and what each costs. */
-function PageGroupDetail({ group }: { group: PageRow }) {
+function PageGroupDetail({ group, showIdle }: { group: PageRow; showIdle: boolean }) {
   const D = useDash();
   const ads = useMemo(() => group.ads.map((ad) => {
     const a = aggregate(D.perf.filter((p) => p.adId === ad.id));
     const d = derive(a);
     const ls = leadStats(D.leads.filter((l) => l.adId === ad.id));
     return { ad, spend: a.spend, messages: a.messages, costPerMsg: d.costPerMessage, quality: chatQuality(ls.qualifiedRate, ls.valid) };
-  }).filter((r) => r.spend > 0 || r.messages > 0).sort((a, b) => b.spend - a.spend), [D, group]);
+  }).filter((r) => showIdle || r.spend > 0 || r.messages > 0).sort((a, b) => b.spend - a.spend), [D, group, showIdle]);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
@@ -346,7 +355,7 @@ function CampaignDetail({ row }: { row: Row }) {
       <div className="flex items-center gap-3"><CreativeCell ad={row.ad} size={56} />
         <div><p className="text-sm text-muted">{row.campaign} · {row.page}</p><div className="mt-1 flex gap-1.5"><Badge tone={row.ad.status === "Active" ? "green" : row.ad.status === "Paused" ? "amber" : "gray"}>{row.ad.status}</Badge><Badge>{row.ad.id}</Badge><ChatQualityBadge q={row.quality} /></div></div></div>
       <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-        {[["Spend", fmtMoney(row.spend)], ["Messages", fmtInt(row.messages)], ["Cost / msg", fmtMoney(row.costPerMsg, 1)], ["CTR", fmtPct(row.ctr, 2)], ["CPC", fmtMoney(row.cpc, 2)], ["CQC", fmtMoney(row.cqc, 0)]].map(([k, v]) => (
+        {[["Spend", fmtMoney(row.spend)], ["Messages", fmtInt(row.messages)], ["Cost / msg", fmtMoney(row.costPerMsg, 1)], ["Link Clicks", fmtInt(row.clicks)], ["Clicks (all)", row.clicksAll == null ? "—" : fmtInt(row.clicksAll)], ["CTR (link)", fmtPct(row.ctr, 2)], ["CPC (link)", fmtMoney(row.cpc, 2)], ["CQC", fmtMoney(row.cqc, 0)]].map(([k, v]) => (
           <div key={k} className="rounded-lg bg-gray-50 p-2.5"><div className="text-xs text-muted">{k}</div><div className="font-semibold tabnum">{v}</div></div>))}
       </div>
       <ChartCard title="Spend & messages by day"><TimeChart data={data} height={220} series={[{ key: "spend", name: "Spend", type: "bar", color: "#a7d9c6" }, { key: "messages", name: "Messages", yAxisId: "right", color: "#087a58" }]} /></ChartCard>

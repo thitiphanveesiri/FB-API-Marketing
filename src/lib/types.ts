@@ -96,6 +96,7 @@ export interface FbPage {
   active: boolean;
   agencyId: string | null;
   teamIds: string[]; // sales rep user ids
+  adKeywords?: string[]; // ad sync: words in a campaign/ad name that belong to this page ("*" = the rest)
 }
 export interface Agency {
   id: string;
@@ -133,7 +134,8 @@ export interface DailyPerf {
   spend: number;
   reach: number;
   impressions: number;
-  clicks: number;
+  clicks: number; // link clicks
+  clicksAll?: number; // every click on the ad (Meta `clicks`); undefined = not synced
   messages: number; // Meta "messaging conversations started"
   purchases: number; // Meta-reported purchases (NOT CRM confirmed)
   source: "demo" | "import";

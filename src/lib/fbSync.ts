@@ -70,8 +70,8 @@ export const metaFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.
  *  nested inside it regularly takes Meta 10-30 s to build. The 12 s default used to cut those answers off mid-flight,
  *  which the tier ladder below reads as "Meta refuses these fields" — so an account that is merely slow was silently
  *  downgraded to the lightest query (no ad text, and on the old ladder no images at all).
- *  META_ADS_TIMEOUT_MS (default 25 s) covers ad-account reads; page and chat calls keep META_TIMEOUT_MS. */
-export const metaAdsFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_ADS_TIMEOUT_MS) || 25000)(u, init);
+ *  META_ADS_TIMEOUT_MS (default 45 s) covers ad-account reads; page and chat calls keep META_TIMEOUT_MS. */
+export const metaAdsFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_ADS_TIMEOUT_MS) || 45000)(u, init);
 
 /** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
  *  failed once will fail again, and every repeat eats the time budget). */

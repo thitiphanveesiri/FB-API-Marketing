@@ -7,7 +7,7 @@ import { isMetaCdnLink, needsFreshLink } from "@/lib/creativeUrl";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /** Meta ad ids are digits (sometimes with an underscore for the account prefix); nothing else is put into a Graph query. */
 const ID = /^[\w:-]{1,48}$/;
@@ -32,8 +32,10 @@ export async function POST(req: Request) {
     // `all` (or a request with no usable ids): sweep the whole ads tab — used by the "รีเฟรชรูป" button.
     const targets = (b.all || !wanted.size ? owned.filter((a) => needsFreshLink(a, now)) : owned.filter((a) => wanted.has(a.id))).slice(0, limit);
     if (!targets.length) return NextResponse.json({ ok: true, urls: {}, checked: 0, fixed: 0 }, noStore);
-    const chans = (await loadChannels(false)).filter((c) => c.channel === "ads" && c.active && c.accessToken && c.accountId);
+    const allChannels = await loadChannels(false);
+    const chans = allChannels.filter((c) => c.channel === "ads" && c.active && c.accessToken && c.accountId);
     if (!chans.length) return fail(400, "ยังไม่มีการเชื่อมบัญชีโฆษณา จึงรีเฟรชรูปล่าสุดจาก Meta ไม่ได้ (ตั้งค่าที่หน้า Upload)");
+    const pageTokensByFbId = Object.fromEntries(allChannels.filter((c) => c.channel === "facebook" && c.active && c.accountId && c.accessToken).map((c) => [c.accountId, c.accessToken]));
     const base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
     const urls: Record<string, string> = {};
     const videos = new Map<string, string>();
@@ -43,7 +45,7 @@ export async function POST(req: Request) {
     for (const ch of chans) {
       if (!open.length) break;
       try {
-        const got = await resolveCreativeLinks(open, ch.accessToken, metaAdsFetch, base, actId(ch.accountId));
+        const got = await resolveCreativeLinks(open, ch.accessToken, metaAdsFetch, base, actId(ch.accountId), pageTokensByFbId);
         for (const [id, v] of Object.entries(got)) { urls[id] = v.url; if (v.video) videos.set(id, v.video); }
         open = open.filter((x) => !got[x.adId]);
       } catch (e) { if (e instanceof FbError) errors.push(e.message); else throw e; }
