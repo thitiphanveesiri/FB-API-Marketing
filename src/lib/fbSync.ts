@@ -46,7 +46,7 @@ export function fbConfigs(env: Record<string, string | undefined> = process.env)
   return env.FB_PAGE_ID && env.FB_PAGE_TOKEN ? [{ fbPageId: env.FB_PAGE_ID, token: env.FB_PAGE_TOKEN, sheetPageId: env.FB_SHEET_PAGE_ID }] : [];
 }
 
-export type FetchInit = { headers?: Record<string, string> };
+export type FetchInit = { method?: string; headers?: Record<string, string>; body?: string };
 export type FetchFn = (url: string, init?: FetchInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 export interface Graph { data?: unknown[]; paging?: { next?: string; cursors?: { after?: string } }; error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; fbtrace_id?: string } }
 
@@ -57,7 +57,7 @@ const transient = (status: number, code?: number) => status >= 500 || code === 1
 /** fetch for Meta that gives up after `ms` instead of hanging until the platform kills the whole request. A timeout looks like
  *  Meta's own "code 1" (too much data) so callers can fall back to a lighter query right away. */
 export const metaFetchWith = (ms: number): FetchFn => async (u, init) => {
-  try { return (await fetch(u, { cache: "no-store", headers: init?.headers, signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
+  try { return (await fetch(u, { cache: "no-store", method: init?.method, headers: init?.headers, body: init?.body, signal: AbortSignal.timeout(Math.max(3000, ms)) })) as Awaited<ReturnType<FetchFn>>; }
   catch (e) {
     if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) return { ok: false, status: 504, json: async () => ({ error: { code: 1, message: `Meta ตอบช้าเกิน ${Math.round(Math.max(3000, ms) / 1000)} วินาที` } }) };
     throw e;
@@ -65,6 +65,13 @@ export const metaFetchWith = (ms: number): FetchFn => async (u, init) => {
 };
 /** Default timeout: META_TIMEOUT_MS (default 12 s). */
 export const metaFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_TIMEOUT_MS) || 12000)(u, init);
+
+/** Marketing API reads are a different animal from a Page's inbox: one page of `/ads` with campaign, ad set and creative
+ *  nested inside it regularly takes Meta 10-30 s to build. The 12 s default used to cut those answers off mid-flight,
+ *  which the tier ladder below reads as "Meta refuses these fields" — so an account that is merely slow was silently
+ *  downgraded to the lightest query (no ad text, and on the old ladder no images at all).
+ *  META_ADS_TIMEOUT_MS (default 25 s) covers ad-account reads; page and chat calls keep META_TIMEOUT_MS. */
+export const metaAdsFetch: FetchFn = (u, init) => metaFetchWith(Number(process.env.META_ADS_TIMEOUT_MS) || 25000)(u, init);
 
 /** `retries`: how many times the SAME request is repeated on Meta's transient errors. Use 0 when a lighter query is the better answer (a heavy query that
  *  failed once will fail again, and every repeat eats the time budget). */

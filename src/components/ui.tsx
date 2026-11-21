@@ -472,13 +472,17 @@ export function imageSrc(url?: string): string | undefined {
   const m = url.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^#]*&)?id=|thumbnail\?(?:[^#]*&)?id=)([\w-]+)/);
   return m ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w800` : url;
 }
-export function AdThumb({ hue, type, size = 40, src, hasVideo }: { hue: number; type: string; size?: number; src?: string; hasVideo?: boolean }) {
-  const [bad, setBad] = useState(false);
-  const img = bad ? undefined : imageSrc(src);
+export function AdThumb({ hue, type, size = 40, src, hasVideo, adId }: { hue: number; type: string; size?: number; src?: string; hasVideo?: boolean; adId?: string }) {
+  // A picture link from Meta is signed and stops answering after a few days, so a row that looked fine on sync day can be blank
+  // now. Use the link this page already re-fetched, ask for a new one when the saved link has aged out or fails to load.
+  const live = useCreativeUrl(adId, src);
+  const [failed, setFailed] = useState<string | undefined>();
+  useEffect(() => { if (adId && live && linkLooksExpired(live)) askForFreshLink(adId); }, [adId, live]);
+  const img = live === failed ? undefined : imageSrc(live);
   return (
     <span className="relative inline-flex shrink-0 items-end justify-end overflow-hidden rounded-lg" style={{ width: size, height: size, background: `linear-gradient(135deg, hsl(${hue} 55% 78%), hsl(${(hue + 40) % 360} 50% 62%))` }} title={img ? type : `${type} — ยังไม่ได้ใส่รูป/วิดีโอ`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- links are pasted by the user and can point anywhere */}
-      {img && <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className="absolute inset-0 h-full w-full object-cover" />}
+      {img && <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailed(live); if (adId) askForFreshLink(adId); }} className="absolute inset-0 h-full w-full object-cover" />}
       <span className="relative m-0.5 rounded bg-surface/80 px-1 text-[9px] font-semibold text-gray-700">{hasVideo ? "▶" : type[0]}</span>
     </span>
   );
@@ -524,3 +528,5 @@ export function ChannelIcon({ id, size = 14, color, className }: { id: ChannelMa
   const Mark = id === "instagram" ? Instagram : id === "line" ? Line : id === "whatsapp" ? WhatsApp : Facebook;
   return <span className={cn("inline-flex shrink-0 items-center justify-center", className)} style={{ color: color ?? CHANNEL_MARK_COLOR[id] }}><Mark size={size} /></span>;
 }
+import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
+import { linkLooksExpired } from "@/lib/creativeUrl";

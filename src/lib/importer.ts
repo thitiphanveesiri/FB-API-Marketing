@@ -17,7 +17,7 @@ const AD_FIELDS: FieldDef[] = [
   F("spend", "Amount spent", true, "number", ["amount spent", "amount spent (thb)", "spend", "cost", "amount spent (usd)", "จำนวนเงินที่ใช้จ่าย", "ยอดใช้จ่าย"]),
   F("reach", "Reach", false, "int", ["reach", "การเข้าถึง"]),
   F("impressions", "Impressions", true, "int", ["impressions", "การแสดงผล"]),
-  F("clicks", "Clicks", false, "int", ["clicks", "link clicks", "clicks (all)", "การคลิกลิงก์", "คลิกลิงก์"]),
+  F("clicks", "Link Clicks", false, "int", ["link clicks", "inline link clicks", "inline_link_clicks", "การคลิกลิงก์", "คลิกลิงก์"]),
   F("messages", "Messaging conversations started", false, "int", ["messaging conversations started", "messages", "results", "new messaging contacts", "การสนทนาทางข้อความที่เริ่มต้น", "ผลลัพธ์"]),
   F("purchases", "Purchases", false, "int", ["purchases", "website purchases", "purchase", "การซื้อ"]),
 ];

@@ -1,19 +1,27 @@
 // Pull ads + daily results straight from a Meta ad account (Marketing API) and turn them into sheet rows.
 // Pure apart from the injected fetch. One call = one small batch (Vercel time limits).
-import { FbError, graph, metaFetch, type FetchFn, type Graph } from "./fbSync";
+import { FbError, graph, metaAdsFetch, type FetchFn, type Graph } from "./fbSync";
 import type { SyncWrite } from "./fbSync";
+import { metaApiVersion } from "./metaApi";
 
 export type AdsPhase = "ads" | "insights" | "done";
 /** tier = level of detail of the ad list; win = which 30-day window of the daily results; lim = rows per page of the daily results (smaller after Meta says "too much data"). */
 export interface AdsState { phase: AdsPhase; after?: string; fallback?: boolean; tier?: number; win?: number; lim?: number }
 export interface AdsCounts { ads: number; campaigns: number; rows: number }
-/** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as. */
-export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
+/** pageMap: Facebook page id → page id in the system. An ad account can serve several pages, so each ad's page comes from the page its creative posts as.
+ *  knownCampaignPages: the page each campaign is filed under in the sheet already — used when this batch cannot tell, so a lighter pull never moves a campaign somewhere else.
+ *  knownCreativeUrls: ads whose picture link was pasted by a person (not a Meta link) — the admin's own link wins and is never
+ *  overwritten by the sync, which is what makes the Google Drive option in the creative editor actually stick. */
+export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; knownCampaignPages?: Record<string, string>; knownCreativeUrls?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
 export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warnings?: string[]; byPage?: Record<string, number> }
 
-const ADS_PER_CALL = 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
+const ADS_PER_CALL = Number(process.env.ADS_PAGE_SIZE) || 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
 /** One request to our own route must finish inside the platform limit (60 s). Past this many ms no further fallback is attempted: fail with a clear message instead. */
-const BUDGET_MS = 40000;
+const BUDGET_MS = Number(process.env.ADS_BUDGET_MS) || 35000;
+/** How much of that budget the picture lookups may still use. They only ever add image quality, so they are the first thing to be cut — and the reason a pull can end with small pictures instead of no pictures at all. */
+/** The picture lookups may keep working a little past the main deadline — they only ever add image quality, and the route still
+ *  has to answer inside its own time limit, so this stays below maxDuration (60 s) with room for the sheet writes. */
+const MEDIA_BUDGET_MS = Number(process.env.ADS_MEDIA_BUDGET_MS) || 45000;
 const ALL_STATUS = JSON.stringify(["ACTIVE", "PAUSED", "DELETED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED", "PENDING_BILLING_INFO", "CAMPAIGN_PAUSED", "ARCHIVED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]);
 
 export const actId = (raw: string) => "act_" + raw.replace(/\D/g, "");
@@ -34,26 +42,104 @@ interface RawAd {
   adset?: { id?: string; name?: string; promoted_object?: { page_id?: string } };
   creative?: {
     thumbnail_url?: string; image_url?: string; video_id?: string; object_type?: string; effective_object_story_id?: string; object_story_id?: string; body?: string; title?: string;
+    /** Where the picture really lives when the creative itself only carries a 64×64 cut-out: the Instagram media, or a hash into the account's image library. */
+    effective_instagram_media_id?: string; image_hash?: string;
+    asset_feed_spec?: { images?: { hash?: string; url?: string }[]; videos?: { thumbnail_url?: string }[] };
     object_story_spec?: {
       page_id?: string;
       instagram_actor_id?: string;
-      link_data?: { message?: string; name?: string; description?: string; picture?: string };
+      link_data?: { message?: string; name?: string; description?: string; picture?: string; image_hash?: string; child_attachments?: { picture?: string; image_hash?: string }[] };
       video_data?: { message?: string; title?: string; link_description?: string; image_url?: string };
       photo_data?: { caption?: string; url?: string };
     };
   };
 }
-interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; actions?: Action[] }
+interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; inline_link_clicks?: string; actions?: Action[] }
+
+/* ------------------------------------------------------------------ picture quality ---------------------------------------------------------------- */
+
+/**
+ * Meta hands out several links for the same picture and they are not equally good.
+ * `creative.thumbnail_url` (and `link_data.picture`) is a small cut-out — its URL says so in the crop directive
+ * (`_p64x64`, `stp=c0.5000x0.5000f_…`): 349 of the reference account's 708 ads are page-post ("STATUS") creatives
+ * that answer nothing but that crop. `0` = no link, `1` = a crop small enough to look wrong in the dashboard's
+ * 16:9 preview, `2` = a full-size picture.
+ */
+export function sharpness(url: string | undefined): 0 | 1 | 2 {
+  if (!url) return 0;
+  const m = /_p(\d{1,4})x\1(?![\d])/i.exec(url); // _p64x64, _p120x120 …
+  if (m && Number(m[1]) <= 320) return 1;
+  if (/[?&]stp=c\d/i.test(url)) return 1; // a crop directive without an explicit size
+  return 2;
+}
+
+/** Meta sometimes answers an object or a string where a list was asked for (and a field it refused can come back as
+ *  anything); a creative shape we did not expect must never break a pull. */
+const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+/** The best link Meta gives inside the creative itself, sharpest first (an earlier candidate wins a tie: it is the more authoritative field). */
+function bestCreativeUrl(c: NonNullable<RawAd["creative"]>): { url: string; sharp: 0 | 1 | 2 } {
+  const spec = c.object_story_spec, link = spec?.link_data, child = list<{ picture?: string; image_hash?: string }>(link?.child_attachments)[0];
+  const cands = [c.image_url, list<{ url?: string }>(c.asset_feed_spec?.images).find((x) => x.url)?.url, child?.picture, c.thumbnail_url, link?.picture, spec?.video_data?.image_url, spec?.photo_data?.url, list<{ thumbnail_url?: string }>(c.asset_feed_spec?.videos).find((x) => x.thumbnail_url)?.thumbnail_url];
+  let best = "", sharp = 0 as 0 | 1 | 2;
+  for (const u of cands) {
+    const s = sharpness(u);
+    if (s > sharp) { sharp = s; best = u ?? ""; }
+  }
+  return { url: best, sharp: sharp as 0 | 1 | 2 };
+}
+
+/** `true` when `next` is a better picture link than the one we already hold. */
+const better = (next: string | undefined, have: string | undefined) => !!next && sharpness(next) > sharpness(have);
+
+/**
+ * A short, stable description of where Meta keeps this ad's picture. The CDN links themselves are signed and stop
+ * answering after a few days (`…&oe=6B05D2FB` is the expiry), while these ids do not change — so the sheet stores both,
+ * and the dashboard asks for a fresh link when the stored one has aged out.
+ */
+export function creativeRef(a: RawAd): string {
+  const c = a.creative ?? {}, spec = c.object_story_spec, link = spec?.link_data, child = link?.child_attachments?.[0];
+  const out: string[] = [];
+  const story = c.effective_object_story_id || c.object_story_id;
+  if (story) out.push(`s:${story}`);
+  if (c.video_id) out.push(`v:${c.video_id}`);
+  if (c.effective_instagram_media_id) out.push(`i:${c.effective_instagram_media_id}`);
+  const hash = c.image_hash || link?.image_hash || child?.image_hash || list<{ hash?: string }>(c.asset_feed_spec?.images).find((x) => x.hash)?.hash;
+  if (hash) out.push(`h:${hash}`);
+  return out.join(",");
+}
+export interface CreativeRef { story?: string; video?: string; ig?: string; hash?: string }
+export function parseCreativeRef(ref: string | undefined): CreativeRef {
+  const out: CreativeRef = {};
+  for (const part of (ref ?? "").split(",")) {
+    const i = part.indexOf(":"); if (i < 1) continue;
+    const k = part.slice(0, i).trim(), v = part.slice(i + 1).trim(); if (!v) continue;
+    if (k === "s") out.story = v; else if (k === "v") out.video = v; else if (k === "i") out.ig = v; else if (k === "h") out.hash = v;
+  }
+  return out;
+}
+
+/* ----------------------------------------------------------------------- the ads ladder ----------------------------------------------------------------------- */
 
 export async function adsStep(i: AdsInput): Promise<AdsOutput> {
-  const f = i.fetchFn ?? metaFetch, base = i.base ?? "https://graph.facebook.com";
-  const acct = actId(i.accountId), now = i.now ?? new Date(), t0 = Date.now(), overBudget = () => Date.now() - t0 > BUDGET_MS;
+  const f = i.fetchFn ?? metaAdsFetch, base = i.base ?? "https://graph.facebook.com";
+  const acct = actId(i.accountId), now = i.now ?? new Date(), t0 = Date.now();
+  const overBudget = () => Date.now() - t0 > BUDGET_MS;
+  const mediaBudgetOk = () => Date.now() - t0 < MEDIA_BUDGET_MS;
   const counts: AdsCounts = { ads: 0, campaigns: 0, rows: 0 }, writes: SyncWrite[] = [];
 
   if (i.state.phase === "ads") {
-    // Detail levels, richest first. When Meta rejects one (code 100 invalid parameter, or 1/2 "unexpected error" for too much data) the next lighter one is tried,
-    // and later batches stay on the level that worked — so a single bad field costs only that field, not the whole ad list.
+    /* Detail levels, richest first. When Meta rejects one (code 100 invalid parameter, or 1/2 "unexpected error" for too much
+     * data — which is also how a too-slow answer surfaces inside our own timeout) the next lighter one is tried, and later
+     * batches stay on the level that worked — so a single bad field costs only that field, not the whole ad list.
+     * Two rules the ladder used to break, and the dashboard symptoms they caused:
+     *  - every level asks for the picture links (thumbnail_url/image_url) and the story ids, because those are the cheap
+     *    fields; the heavy ones are the nested ad text. The old last level asked for neither picture field, so a slow
+     *    account came back with 700 ads and zero images.
+     *  - the last level drops object_story_spec as well, because that nested field is the one Meta most often refuses;
+     *    when every level still asked for it, no level could get through and the whole pull failed with "0 ads". */
     const CAMP = "campaign{id,name,objective}";
+    const CAMP_LIGHT = "campaign{id,name}";
     // The ad set names the Page its ads are delivered for. It answers the ads whose creative has no Page at all (catalogue, dynamic),
     // and it is a second, independent source when a creative's Page came back empty.
     const ADSET = "adset{id,name,promoted_object{page_id}}";
@@ -61,15 +147,21 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     // refuses heavier fields would send the whole campaign to the default page. Both story-id fields are asked for on every level
     // too: page-post creatives often have no object_story_spec, and the media lookup needs the story id to read the post's picture.
     const STORY_ID = "effective_object_story_id,object_story_id";
-    // Ad copy and every picture Meta has for the creative. The lightest levels leave it out.
-    const COPY = `body,title,object_story_spec{page_id,instagram_actor_id,link_data{message,name,description,picture},video_data{message,title,link_description,image_url},photo_data{caption,url}}`;
-    const PAGE_ONLY = `${STORY_ID},object_story_spec{page_id,instagram_actor_id}`;
+    // The picture, at every level: what the ad carries itself, plus the two ids the lookups below need to reach the real file.
+    const MEDIA = `thumbnail_url,image_url,video_id,object_type,effective_instagram_media_id,image_hash,${STORY_ID}`;
+    // Ad copy from the underlying post. Kept from level 0 down to 2, dropped after that: it is the heaviest part of the query
+    // and the only fields that ever made Meta refuse a whole page of ads.
+    const COPY = `body,title,object_story_spec{page_id,instagram_actor_id,link_data{message,name,picture,child_attachments{picture}},video_data{message,title,image_url},photo_data{caption,url}}`;
+    const PAGE_ONLY = `object_story_spec{page_id,instagram_actor_id}`;
     const TIERS = [
-      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,video_id,object_type,${STORY_ID},${COPY}}`, filter: true, limit: ADS_PER_CALL, note: "" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,video_id,object_type,${STORY_ID},${COPY}}`, filter: false, limit: 25, note: "ไม่กรองตามสถานะโฆษณา" },
-      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{thumbnail_url,image_url,${STORY_ID},${COPY}}`, filter: false, limit: 25, note: "ไม่ดึงคลิปวิดีโอ" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{thumbnail_url,image_url,body,title,${PAGE_ONLY}}`, filter: false, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและข้อความโพสต์" },
-      { fields: `id,name,effective_status,updated_time,campaign{id,name},creative{body,title,${PAGE_ONLY}}`, filter: false, limit: 25, note: "ไม่ดึงภาพโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{${MEDIA},${COPY},asset_feed_spec{images{hash,url},videos{thumbnail_url}}}`, filter: true, limit: ADS_PER_CALL, note: "" },
+      { fields: `id,name,effective_status,updated_time,${CAMP},${ADSET},creative{${MEDIA},body,title,${PAGE_ONLY}}`, filter: true, limit: ADS_PER_CALL, note: "ไม่ดึงข้อความและรูปจากโพสต์ต้นทาง" },
+      { fields: `id,name,effective_status,updated_time,${CAMP_LIGHT},creative{${MEDIA},body,title,${PAGE_ONLY}}`, filter: true, limit: 25, note: "ไม่ดึงวัตถุประสงค์แคมเปญและชุดโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP_LIGHT},creative{${MEDIA},${PAGE_ONLY}}`, filter: false, limit: 25, note: "ไม่ดึงข้อความโฆษณา" },
+      { fields: `id,name,effective_status,updated_time,${CAMP_LIGHT},creative{thumbnail_url,image_url,${STORY_ID}}`, filter: false, limit: 25, note: "ดึงเฉพาะชื่อแคมเปญและรูปโฆษณา" },
+      // The way out when Meta refuses the picture fields themselves: names and statuses still land. Because a field Meta did
+      // not answer is left out of the write (never written blank), the pictures an earlier richer pull stored stay in the sheet.
+      { fields: `id,name,effective_status,updated_time,${CAMP_LIGHT}`, filter: false, limit: 25, note: "ดึงเฉพาะชื่อโฆษณา (Meta ไม่ยอมรับฟิลด์รูปภาพ) — รูปเดิมที่ยังอยู่ใน Sheet ไม่ถูกลบ" },
     ];
     // A heavy query that Meta refused (or that timed out) is not repeated: the next lighter level is tried at once. Only the lightest level may repeat once.
     const fetchAds = (t: number) => graph(`${acct}/ads`, {
@@ -78,18 +170,26 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     let tier = Math.min(TIERS.length - 1, Math.max(0, i.state.tier ?? (i.state.fallback ? TIERS.length - 1 : 0)));
     let j: Graph | undefined, lastErr: FbError | undefined;
     for (; tier < TIERS.length; tier++) {
+      if (tier > 0 && overBudget()) break; // do not start another heavy page when the route has seconds left
       try { j = await fetchAds(tier); break; }
       catch (e) {
         if (!(e instanceof FbError)) throw e;
         lastErr = e;
-        if (e.rateLimited || (e.code !== 100 && e.code !== 1 && e.code !== 2) || i.state.after || overBudget()) break; // only the first batch can change level (a paging cursor belongs to its query)
+        if (e.rateLimited || (e.code !== 100 && e.code !== 1 && e.code !== 2) || i.state.after) break; // only the first batch can change level (a paging cursor belongs to its query)
       }
+    }
+    // The budget ran out halfway down the ladder. Asking for the lightest level is still worth one try: it is the query
+    // Meta always answers, and "names + a small picture" beats "nothing at all" for the dashboard.
+    if (!j && !lastErr?.rateLimited && !i.state.after && tier < TIERS.length - 1) {
+      tier = TIERS.length - 1;
+      try { j = await fetchAds(tier); lastErr = undefined; } catch (e) { if (e instanceof FbError) lastErr = e; else throw e; }
     }
     if (!j) throw new FbError(`ดึงรายการโฆษณาไม่สำเร็จ${tier > 0 ? ` (ลองลดรายละเอียดแล้ว ${Math.min(tier + 1, TIERS.length)} ระดับ)` : ""}: ${lastErr?.message ?? "ไม่ทราบสาเหตุ"}`, lastErr?.rateLimited ?? false, lastErr?.code);
     const ads = (j.data ?? []) as RawAd[];
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
-    // Ads whose creative has no image of its own (page-post, catalogue, dynamic): the picture lives on the underlying post/video.
-    const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string }[] = [];
+    // Ads whose picture is not a full-size file yet (page-post, catalogue, dynamic, Instagram-only): the picture lives on the
+    // underlying post, in the account's image library, or on the Instagram media node.
+    const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; hash?: string; weak: boolean }[] = [];
     const byPage: Record<string, number> = {};
     let noPage = 0, mappedAds = 0;
     /** The Page an ad posts as: the creative's own Page (object_story_spec, the prefix of its story id, or an Instagram actor for
@@ -114,28 +214,40 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const story = c.object_story_spec ?? {};
       const caption = (c.body || story.link_data?.message || story.video_data?.message || story.photo_data?.caption || "").trim();
       const headline = (c.title || story.link_data?.name || story.video_data?.title || "").trim();
+      // The ad's own picture, as sharp as the creative itself allows. Anything short of a full-size file is looked up below.
+      const pic = bestCreativeUrl(c);
+      // A link someone pasted themselves (Google Drive, their own server) stays theirs: no Meta picture, no ref, no media lookups.
+      const mine = i.knownCreativeUrls?.[a.id];
       // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
       const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
       const viaMap = fbPage ? (i.pageMap?.[fbPage] ?? extra[fbPage]) : undefined;
       // a freshly created page is not in pageNames yet, so its own id from `extra` is proof that it exists
-      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap) ? viaMap : undefined) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
+      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap ? viaMap : undefined)) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       else if (!fbPage && !mapped) noPage++;
       if (mapped) mappedAds++;
-      camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: mapped ?? camps.get(cid)?.page_id ?? i.sheetPageId, objective: a.campaign?.objective || camps.get(cid)?.objective || "" });
+      // A campaign's Page is only ever re-decided from positive evidence: an ad that names its page, or (for a campaign seen
+      // for the first time) the page this ad account belongs to. Without that rule a lighter pull — which may not ask for the
+      // ad set at all — moved campaigns that were filed correctly back onto the account's default page.
+      const campPage = mapped ?? camps.get(cid)?.page_id ?? i.knownCampaignPages?.[cid] ?? "";
+      const campObjective = a.campaign?.objective || camps.get(cid)?.objective || "";
+      camps.set(cid, { campaign_id: cid, name: a.campaign?.name || cid, page_id: campPage || i.sheetPageId, ...(campObjective ? { objective: campObjective } : {}) });
       // The ad's own page (when known) wins on the dashboard, so one campaign can serve several pages.
       const row: SyncWrite["rows"][number] = { ad_id: a.id, name: a.name || a.id, campaign_id: cid, ...(mapped ? { page_id: mapped } : {}), status: adStatus(a.effective_status), creative_type: video ? "Video" : "Image",
-        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now), creative_url: c.image_url || c.thumbnail_url || story.link_data?.picture || story.video_data?.image_url || story.photo_data?.url || "",
-        video_url: c.video_id ? `https://www.facebook.com/watch/?v=${c.video_id}` : "",
-        // Blank copy is left out so a lighter tier (or Meta returning no text) does not erase text already in the sheet.
+        updated_at: (a.updated_time ?? "").slice(0, 10) || day(now),
+        // A field Meta did not answer at this detail level is left out of the write instead of written blank, so it cannot
+        // erase a value an earlier (richer) pull already stored. Blank ad text used to wipe good pictures and copy.
+        ...(mine ? {} : pic.url ? { creative_url: pic.url } : {}), ...(c.video_id ? { video_url: `https://www.facebook.com/watch/?v=${c.video_id}` } : {}),
+        ...(!mine && (storyId || c.video_id || c.effective_instagram_media_id) ? { creative_ref: creativeRef(a) } : {}),
         ...(caption ? { caption: caption.slice(0, 4000) } : {}), ...(headline ? { headline: headline.slice(0, 300) } : {}) };
       adRows.push(row);
       const rowPage = mapped ?? camps.get(cid)!.page_id;
       byPage[rowPage] = (byPage[rowPage] ?? 0) + 1;
-      if (!row.creative_url) needMedia.push({ row, story: storyId, video: c.video_id }); // also ads with neither story nor video (Instagram-only, dynamic, image-hash creatives)
+      if (!mine && pic.sharp < 2) needMedia.push({ row, story: storyId, video: c.video_id, ig: c.effective_instagram_media_id, hash: c.image_hash || story.link_data?.image_hash, weak: pic.sharp === 1 });
+      // also ads with neither story nor video (Instagram-only, dynamic, image-hash creatives)
     }
-    // One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget.
-    const mediaWarning = needMedia.length && !overBudget() ? await fillCreativeMedia(needMedia, i.token, f, base, overBudget, acct) : null;
+    // One batched lookup per kind (not one request per ad) keeps this inside the route budget.
+    const mediaWarning = needMedia.length && mediaBudgetOk() ? await fillCreativeMedia(needMedia, i.token, f, base, mediaBudgetOk, acct) : (needMedia.length ? `${needMedia.length} โฆษณายังใช้รูปขนาดเล็ก/ไม่มีรูป — หมดเวลาประมวลผลของคำขอนี้ กดดึงซ้ำจะได้รูปเต็ม` : null);
     counts.ads = adRows.length; counts.campaigns = camps.size;
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
@@ -166,8 +278,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const windows = Math.max(1, Math.ceil(i.days / WINDOW_DAYS)), win = Math.min(windows - 1, Math.max(0, i.state.win ?? 0));
     const untilD = new Date(now.getTime() - win * WINDOW_DAYS * 86400000), sinceD = new Date(Math.max(now.getTime() - i.days * 86400000, untilD.getTime() - (WINDOW_DAYS - 1) * 86400000));
     const since = day(sinceD), until = day(untilD);
-    // Full field list first; if Meta rejects it (code 100) the same query is retried with the core fields only, and later batches keep using them.
-    const FULL = "ad_id,spend,reach,impressions,clicks,inline_link_clicks,actions", CORE = "ad_id,spend,impressions,clicks,actions";
+    // Link Clicks are the dashboard's canonical metric: ask for inline_link_clicks in every tier and never substitute clicks (all).
+    // If Meta refuses that metric, fail clearly rather than silently changing its definition. The fallback only drops reach.
+    // date_start is named on purpose: with time_increment Meta also returns it by itself, but a row whose date is missing is
+    // dropped by the sheet mapper, so asking for it costs nothing and cannot lose a day of results.
+    const FULL = "ad_id,date_start,spend,reach,impressions,inline_link_clicks,actions", CORE = "ad_id,date_start,spend,impressions,inline_link_clicks,actions";
     let lim = Math.min(INSIGHT_LIMITS.length - 1, Math.max(0, i.state.lim ?? 0)), core = i.state.fallback === true, j: Graph | undefined;
     const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_LIMITS[lim]), ...(i.state.after ? { after: i.state.after } : {}) },
       i.token, f, base, 900, lim >= INSIGHT_LIMITS.length - 1 ? 1 : 0);
@@ -181,9 +296,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       }
     }
     const rows: SyncWrite["rows"] = [];
+    let missingLinkClicks = 0;
     for (const r of (j.data ?? []) as RawInsight[]) {
       if (!r.ad_id || !r.date_start) continue;
-      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), reach: num(r.reach), impressions: num(r.impressions), clicks: num(r.inline_link_clicks ?? r.clicks),
+      if (r.inline_link_clicks == null) missingLinkClicks++;
+      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), ...(r.reach != null ? { reach: num(r.reach) } : {}), impressions: num(r.impressions), ...(r.inline_link_clicks != null ? { clicks: num(r.inline_link_clicks) } : {}),
         messages: act(r.actions, ["onsite_conversion.messaging_conversation_started_7d"]), purchases: act(r.actions, ["omni_purchase", "purchase"]) });
     }
     counts.rows = rows.length;
@@ -191,7 +308,8 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const more = !!j.paging?.next && !!j.paging.cursors?.after, carry = { ...(core ? { fallback: true } : {}), ...(lim > 0 ? { lim } : {}) };
     const next: AdsState = more ? { phase: "insights", after: j.paging!.cursors!.after, win, ...carry } : win + 1 < windows ? { phase: "insights", win: win + 1, ...carry } : { phase: "done" };
     const notes: string[] = [];
-    if (core) notes.push("Meta ไม่ให้ฟิลด์ reach/คลิกลิงก์ ระบบจึงดึงสถิติแบบพื้นฐาน (ค่า Reach อาจเป็น 0)");
+    if (core) notes.push("Meta ไม่ให้ฟิลด์ Reach ในคำขอแบบเต็ม ระบบจึงดึงแบบสำรอง โดยยังใช้ Link Clicks เท่านั้นและคง Reach เดิมใน Sheet (ไม่เขียน 0 ทับ)");
+    if (missingLinkClicks) notes.push(`Meta ไม่ได้ส่ง Link Clicks กลับมา ${missingLinkClicks} แถว — ไม่ได้นำ Clicks (all) มาแทน; ค่าที่มีอยู่ใน Sheet จะไม่ถูกเขียนทับ`);
     if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลเยอะเกินไป ระบบจึงดึงทีละ ${INSIGHT_LIMITS[lim]} แถว (ยอดรวมยังครบ)`);
     return { next, writes, counts, ...(notes.length ? { warnings: notes } : {}) };
   }
@@ -242,83 +360,178 @@ async function emptyAccountWhy(acct: string, token: string, f: FetchFn, base: st
   return `Meta ไม่ส่งโฆษณาของบัญชี ${who} กลับมาเลย — สาเหตุที่พบบ่อย: (1) เลือกบัญชีโฆษณาผิดบัญชี (2) คนที่ออกโทเคนยังไม่ได้ถูกเพิ่มเข้าบัญชีนี้ — เพิ่มที่ Business Settings → Ad accounts → Add people (ให้สิทธิ์ ads_read อย่างเดียวไม่พอ ถ้าไม่ใช่คนในบัญชี Meta จะตอบว่ารายการว่างโดยไม่แจ้ง error) (3) บัญชีนี้ไม่มีโฆษณาจริง`;
 }
 
-type CreativeExtra = {
-  effective_instagram_media_id?: string; image_hash?: string;
-  asset_feed_spec?: { images?: { hash?: string; url?: string }[]; videos?: { thumbnail_url?: string }[] };
-  object_story_spec?: { link_data?: { image_hash?: string; child_attachments?: { picture?: string; image_hash?: string }[] } };
-};
 type MediaNode = { full_picture?: string; message?: string; attachments?: { data?: { media_type?: string; target?: { id?: string } }[] }; picture?: string | { data?: { url?: string } }; error?: { message?: string } };
+type CreativeExtra = { effective_instagram_media_id?: string; image_hash?: string; asset_feed_spec?: { images?: { hash?: string; url?: string }[]; videos?: { thumbnail_url?: string }[] }; object_story_spec?: { link_data?: { image_hash?: string; child_attachments?: { picture?: string; image_hash?: string }[] } } };
+/** Everything Meta knows about one ad's picture, from the four places it can be. */
+export interface MediaSources { post?: MediaNode; cover?: string; hashUrl?: string; direct?: string }
 
-/** Creatives with no image of their own (page-post, catalogue, dynamic) only point at the post. Read the post's real picture and the
- *  video cover — one batched request per kind, so 40 ads cost two calls. A refusal (usually a token without pages_read_engagement)
- *  only loses the picture, never the ad row. */
-async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string }[], token: string, f: FetchFn, base: string, overBudget: () => boolean, acct?: string): Promise<string | null> {
+/**
+ * Where an ad's picture really lives. Creatives with no image of their own (page-post, catalogue, dynamic) — and the many
+ * that only carry Meta's 64×64 cut-out — point at the post, the video, the Instagram media node or the account's image library.
+ * One batched request per kind, so 40 ads cost two or three calls. A refusal (usually a token without pages_read_engagement)
+ * only loses the picture, never the ad row.
+ */
+async function readMediaSources(picks: (CreativeRef & { key: string })[], token: string, f: FetchFn, base: string, acct: string | undefined, stillOk: () => boolean): Promise<{ byKey: Map<string, MediaSources>; errors: string[] }> {
   const errors: string[] = [];
-  /** Later field lists exist for a request Meta refused: the post lookup asks for attachments last, so a rejection still returns the picture. */
-  const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, MediaNode>> => {
-    const uniq = [...new Set(ids.filter((x): x is string => !!x))].slice(0, 50);
+  /** Meta removed root GET /?ids=...; use Batch Requests instead. Batch results follow operation order, but each item can fail independently. */
+  const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, unknown>> => {
+    const uniq = [...new Set(ids.filter((x): x is string => !!x))];
     if (!uniq.length) return {};
-    let last: FbError | undefined;
-    for (const fields of fieldLists) {
-      try { return (await graph("", { ids: uniq.join(","), fields }, token, f, base, 900, 0)) as unknown as Record<string, MediaNode>; }
-      catch (e) { if (!(e instanceof FbError)) throw e; last = e; if (e.rateLimited) break; }
+    const out: Record<string, unknown> = {};
+    const asError = (status: number, body?: { error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } }, fallback?: string) => {
+      const code = body?.error?.code;
+      const rate = status === 429 || (code != null && ([4, 17, 32, 613].includes(code) || (code >= 80000 && code <= 80014)));
+      const message = (body?.error?.message || fallback || `Batch item HTTP ${status}`).replace(/access_token=[^&]+/gi, "access_token=…");
+      return new FbError(`Meta ตอบ ${status}: ${message}${code != null ? ` (code ${code}${body?.error?.error_subcode ? `/${body.error.error_subcode}` : ""}${body?.error?.fbtrace_id ? `, trace ${body.error.fbtrace_id}` : ""})` : ""}`.slice(0, 260), rate, code);
+    };
+    const parseBody = (value: unknown): { [key: string]: unknown; error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } } | null => {
+      try {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as { [key: string]: unknown; error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } } : null;
+      } catch { return null; }
+    };
+    for (let start = 0; start < uniq.length; start += 50) {
+      let remaining = uniq.slice(start, start + 50), last: FbError | undefined;
+      for (const fields of fieldLists) {
+        if (!remaining.length || !stillOk()) break;
+        try {
+          const operations = remaining.map((id) => ({ method: "GET", relative_url: `${encodeURIComponent(id)}?fields=${encodeURIComponent(fields)}` }));
+          const response = await f(`${base}/${metaApiVersion()}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ access_token: token, batch: JSON.stringify(operations), include_headers: "false" }).toString(),
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !Array.isArray(payload)) {
+            const parsed = parseBody(payload);
+            throw asError(response.status, parsed ?? undefined, "Graph API Batch request failed");
+          }
+          const failed: string[] = [];
+          let batchRateLimited = false;
+          for (let index = 0; index < remaining.length; index++) {
+            const item = payload[index] as { code?: number; body?: unknown } | null | undefined;
+            const status = Number(item?.code) || 0;
+            const body = parseBody(item?.body);
+            if (item && status >= 200 && status < 300 && body && !body.error) out[remaining[index]] = body;
+            else {
+              failed.push(remaining[index]);
+              last = asError(status, body ?? undefined, item ? "Invalid batch subresponse" : "Missing batch subresponse");
+              batchRateLimited ||= last.rateLimited;
+            }
+          }
+          remaining = failed;
+          if (batchRateLimited) break;
+        } catch (error) {
+          if (!(error instanceof FbError)) throw error;
+          last = error;
+          if (error.rateLimited) break;
+        }
+      }
+      if (remaining.length) errors.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
     }
-    if (last) errors.push(last.message);
-    return {};
+    return out;
   };
+  const byKey = new Map<string, MediaSources>();
+  const put = (key: string, v: MediaSources) => byKey.set(key, { ...(byKey.get(key) ?? {}), ...v });
+
   const posts = await batch(picks.map((p) => p.story), ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"]);
-  const covers = overBudget() ? {} : await batch(picks.map((p) => p.video), ["picture"]);
+  const covers = stillOk() ? await batch(picks.map((p) => p.video), ["picture"]) : {};
   for (const p of picks) {
-    const post = p.story ? posts[p.story] : undefined;
-    if (post && !post.error) {
-      if (post.full_picture && !p.row.creative_url) p.row.creative_url = post.full_picture;
-      if (!p.row.caption && post.message) p.row.caption = String(post.message).slice(0, 4000);
-      // A lighter ad tier drops video_id: the post's own video attachment still gives the id, so the player keeps working.
-      const videoTarget = post.attachments?.data?.find((x) => x.media_type === "video" && x.target?.id)?.target?.id;
-      if (videoTarget && !p.row.video_url) { p.row.video_url = `https://www.facebook.com/watch/?v=${videoTarget}`; p.row.creative_type = "Video"; }
-    }
-    const cover = p.video ? covers[p.video] : undefined;
-    const url = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url ?? "";
-    if (url && !p.row.creative_url) p.row.creative_url = url;
+    const post = p.story ? posts[p.story] as MediaNode | undefined : undefined;
+    if (post && !post.error) put(p.key, { post });
+    const cover = p.video ? covers[p.video] as MediaNode | undefined : undefined;
+    const coverUrl = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url;
+    if (coverUrl) put(p.key, { cover: coverUrl });
   }
-  // Last resort for ads still without a picture (Instagram-only, dynamic / flexible, carousel, image-hash creatives). One extra batched
-  // read of those ads' creatives; every step is best-effort, so a refusal only costs the picture.
-  const bare = picks.filter((p) => !p.row.creative_url && p.row.ad_id);
-  if (bare.length && !overBudget()) {
-    const ads = await batch(bare.map((p) => String(p.row.ad_id)), [
+  // Last resort for ads still without a full-size picture (Instagram-only, dynamic / flexible, carousel, image-hash creatives):
+  // one extra batched read of those ads' creatives, then the library / Instagram lookups it points at.
+  const open = picks.filter((p) => { const s = byKey.get(p.key); return !better(s?.post?.full_picture, undefined) && !better(s?.cover, undefined) && !s?.direct; });
+  if (open.length && stillOk()) {
+    const extras = await batch(open.map((p) => p.key), [
       "creative{effective_instagram_media_id,image_hash,asset_feed_spec{images{hash,url},videos{thumbnail_url}},object_story_spec{link_data{image_hash,child_attachments{picture,image_hash}}}}",
       "creative{effective_instagram_media_id,image_hash}",
-    ]) as unknown as Record<string, { creative?: CreativeExtra; error?: unknown }>;
+    ]) as unknown as Record<string, { creative?: CreativeExtra }>;
     const hashes = new Set<string>(), igIds = new Set<string>(), found = new Map<string, { hash?: string; ig?: string }>();
-    for (const p of bare) {
-      const c = ads[String(p.row.ad_id)]?.creative; if (!c) continue;
-      const af = c.asset_feed_spec, link = c.object_story_spec?.link_data, child = link?.child_attachments?.[0];
-      const direct = af?.images?.find((x) => x.url)?.url || child?.picture || af?.videos?.find((x) => x.thumbnail_url)?.thumbnail_url;
-      if (direct) { p.row.creative_url = direct; continue; }
-      const hash = c.image_hash || link?.image_hash || child?.image_hash || af?.images?.[0]?.hash;
+    for (const p of open) {
+      const c = (p.key ? extras[p.key]?.creative : undefined) ?? (p.ig || p.hash ? { effective_instagram_media_id: p.ig, image_hash: p.hash } : undefined);
+      if (!c) continue;
+      const af = c.asset_feed_spec, link = c.object_story_spec?.link_data, child = list<{ picture?: string; image_hash?: string }>(link?.child_attachments)[0];
+      const direct = list<{ url?: string }>(af?.images).find((x) => x.url)?.url || child?.picture || list<{ thumbnail_url?: string }>(af?.videos).find((x) => x.thumbnail_url)?.thumbnail_url;
+      if (direct) put(p.key, { direct });
+      const hash = c.image_hash || link?.image_hash || child?.image_hash || list<{ hash?: string }>(af?.images)[0]?.hash;
       if (hash) hashes.add(hash);
       if (c.effective_instagram_media_id) igIds.add(c.effective_instagram_media_id);
-      found.set(String(p.row.ad_id), { hash, ig: c.effective_instagram_media_id });
+      found.set(p.key, { hash, ig: c.effective_instagram_media_id });
     }
     // image hash → hosted image URL (the account's image library)
     const urlByHash = new Map<string, string>();
-    if (acct && hashes.size && !overBudget()) {
+    if (acct && hashes.size && stillOk()) {
       try {
         const r = await graph(`${acct}/adimages`, { hashes: JSON.stringify([...hashes].slice(0, 50)), fields: "hash,url" }, token, f, base, 900, 0);
         for (const x of (r.data ?? []) as { hash?: string; url?: string }[]) if (x.hash && x.url) urlByHash.set(x.hash, x.url);
       } catch (e) { if (e instanceof FbError) errors.push(e.message); else throw e; }
     }
-    const igMedia = igIds.size && !overBudget() ? await batch([...igIds], ["media_url,thumbnail_url", "thumbnail_url"]) as unknown as Record<string, { media_url?: string; thumbnail_url?: string }> : {};
-    for (const p of bare) {
-      if (p.row.creative_url) continue;
-      const hit = found.get(String(p.row.ad_id)); if (!hit) continue;
+    const igMedia = igIds.size && stillOk() ? await batch([...igIds], ["media_url,thumbnail_url", "thumbnail_url"]) as unknown as Record<string, { media_url?: string; thumbnail_url?: string }> : {};
+    for (const p of open) {
+      const hit = found.get(p.key); if (!hit) continue;
       const ig = hit.ig ? igMedia[hit.ig] : undefined;
-      p.row.creative_url = (hit.hash && urlByHash.get(hit.hash)) || ig?.media_url || ig?.thumbnail_url || "";
+      // The Instagram media node is the file that actually delivered the ad, so it wins over the account's image library
+      // (usually the same picture, but the library can hold an older cut of it).
+      const url = ig?.media_url || ig?.thumbnail_url || (hit.hash ? urlByHash.get(hit.hash) : undefined);
+      if (url) put(p.key, { hashUrl: url });
     }
   }
-  const missing = picks.filter((p) => !p.row.creative_url).length;
+  return { byKey, errors };
+}
+
+/** Picks every link Meta found for these ads and keeps the sharpest one, then the ad text the post carries. */
+function applyMediaSources(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; hash?: string; weak?: boolean }[], src: Map<string, MediaSources>) {
+  for (const p of picks) {
+    const key = String(p.row.ad_id ?? "");
+    const s = src.get(key); if (!s) continue;
+    const candidates = [s.post?.full_picture, s.hashUrl, s.direct, s.cover].filter((x): x is string => !!x);
+    for (const u of candidates) if (better(u, p.row.creative_url as string | undefined)) p.row.creative_url = u;
+    const post = p.story ? s.post : undefined;
+    if (post && !post.error) {
+      if (!p.row.caption && post.message) p.row.caption = String(post.message).slice(0, 4000);
+      // A lighter ad tier drops video_id: the post's own video attachment still gives the id, so the player keeps working.
+      const videoTarget = list<{ media_type?: string; target?: { id?: string } }>(post.attachments?.data).find((x) => x.media_type === "video" && x.target?.id)?.target?.id;
+      if (videoTarget && !p.row.video_url) { p.row.video_url = `https://www.facebook.com/watch/?v=${videoTarget}`; p.row.creative_type = "Video"; }
+    }
+  }
+}
+
+/** One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget. A refusal only costs the picture. */
+async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; hash?: string; weak: boolean }[], token: string, f: FetchFn, base: string, stillOk: () => boolean, acct?: string): Promise<string | null> {
+  const { byKey, errors } = await readMediaSources(picks.map((p) => ({ key: String(p.row.ad_id ?? ""), story: p.story, video: p.video, ig: p.ig, hash: p.hash })), token, f, base, acct, stillOk);
+  applyMediaSources(picks, byKey);
+  const missing = picks.filter((p) => sharpness(p.row.creative_url as string | undefined) < 2).length;
+  const none = picks.filter((p) => !p.row.creative_url).length;
   if (!missing) return null;
-  return errors.length
-    ? `${missing} โฆษณาไม่มีรูป — Meta ไม่ให้ดึงรูปจากโพสต์หรือคลังรูปโฆษณา (${errors[0]}) — โทเคนต้องมีสิทธิ์ ads_read และ pages_read_engagement และต้องเป็นโทเคนของเพจที่ลงโฆษณา`
-    : `${missing} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`;
+  if (errors.length) {
+    const permission = /permission|access|oauth|scope|code 10|code 200/i.test(errors[0]);
+    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permission ? " — ตรวจสิทธิ์ ads_read และ pages_read_engagement รวมถึงสิทธิ์เข้าถึงเพจที่ลงโฆษณา" : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง"}`;
+  }
+  return none ? `${none} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`
+    : `${missing} โฆษณาใช้รูปขนาดจิ๋วที่ Meta ตอบกลับมา (crop 64×64) และหาต้นฉบับไม่เจอ — กดดึงซ้ำหรือรีเฟรชรูปที่หน้า Upload`;
+}
+
+/**
+ * Fresh picture links for ads already in the sheet, straight from their stored creative_ref. Meta's CDN links are signed
+ * and stop answering after a few days, which is what makes saved ad images break; the ids do not expire, so the
+ * dashboard asks for this when a link it holds has aged out.
+ */
+export async function resolveCreativeLinks(ads: { adId: string; ref?: string; url?: string }[], token: string, f: FetchFn, base: string, acct?: string): Promise<Record<string, { url: string; video?: string }>> {
+  const picks = ads.map((a) => ({ key: a.adId, ...parseCreativeRef(a.ref) }));
+  const { byKey } = await readMediaSources(picks, token, f, base, acct, () => true);
+  const out: Record<string, { url: string; video?: string }> = {};
+  for (const a of ads) {
+    const s = byKey.get(a.adId);
+    const cands = [s?.post?.full_picture, s?.hashUrl, s?.direct, s?.cover].filter((x): x is string => !!x);
+    let url = sharpness(a.url) === 2 ? a.url ?? "" : "";
+    for (const u of cands) if (better(u, url)) url = u;
+    const videoTarget = list<{ media_type?: string; target?: { id?: string } }>(s?.post?.attachments?.data).find((x) => x.media_type === "video" && x.target?.id)?.target?.id;
+    if (url) out[a.adId] = { url, ...(videoTarget ? { video: `https://www.facebook.com/watch/?v=${videoTarget}` } : {}) };
+  }
+  return out;
 }

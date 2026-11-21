@@ -1,12 +1,17 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, imageSrc } from "@/components/ui";
+import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
+import { linkLooksExpired } from "@/lib/creativeUrl";
 import type { Ad } from "@/lib/types";
 
 /** Card shown when hovering an ad: its creative, the copy Meta returned, and the metrics the page passes in. */
 export default function AdPreview({ ad, summary }: { ad: Ad; summary?: ReactNode }) {
-  const [bad, setBad] = useState(false);
-  const src = bad ? undefined : imageSrc(ad.creative.url);
+  // A saved Meta link stops answering after a few days: use the one this page re-fetched, and ask when it has aged out.
+  const live = useCreativeUrl(ad.id, ad.creative.url);
+  const [failed, setFailed] = useState<string | undefined>();
+  useEffect(() => { if (linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live]);
+  const src = live === failed ? undefined : imageSrc(live);
   const tone = ad.status === "Active" ? "green" : ad.status === "Paused" ? "amber" : "gray";
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
@@ -14,7 +19,7 @@ export default function AdPreview({ ad, summary }: { ad: Ad; summary?: ReactNode
         style={{ background: `linear-gradient(135deg, hsl(${ad.creative.hue} 55% 78%), hsl(${(ad.creative.hue + 40) % 360} 50% 62%))` }}>
         {src
           // eslint-disable-next-line @next/next/no-img-element -- links are pasted by the user and can point anywhere
-          ? <img src={src} alt={ad.name} referrerPolicy="no-referrer" onError={() => setBad(true)} className="h-full w-full object-cover" />
+          ? <img src={src} alt={ad.name} referrerPolicy="no-referrer" onError={() => { setFailed(live); askForFreshLink(ad.id); }} className="h-full w-full object-cover" />
           : <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700/80">{ad.creative.type === "Video" ? "▶ วิดีโอ — ยังไม่มีภาพ" : "ยังไม่มีรูปครีเอทีฟ"}</span>}
         {ad.creative.video && <span className="absolute left-2 top-2 rounded bg-gray-900/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">▶ วิดีโอ</span>}
       </div>
