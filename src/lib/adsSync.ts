@@ -105,6 +105,8 @@ function bestCreativeUrl(c: NonNullable<RawAd["creative"]>): { url: string; shar
 }
 
 /** `true` when `next` is a better picture link than the one we already hold. */
+/** A link to a video file (not a picture) — it belongs in video_url, never in the picture column. */
+export const isVideoFile = (u?: string) => !!u && /\.(mp4|webm|mov)(\?|#|$)/i.test(u);
 const better = (next: string | undefined, have: string | undefined) => !!next && sharpness(next) > sharpness(have);
 
 /**
@@ -526,11 +528,21 @@ async function readMediaSources(picks: (CreativeRef & { key: string })[], token:
       const ig = hit.ig ? igMedia[hit.ig] : undefined;
       // The Instagram media node is the file that actually delivered the ad, so it wins over the account's image library
       // (usually the same picture, but the library can hold an older cut of it).
-      const url = ig?.media_url || ig?.thumbnail_url || (hit.hash ? urlByHash.get(hit.hash) : undefined);
+      // For an Instagram video `media_url` is the .mp4 itself, which no <img> can show: the cover is the picture.
+      const igPicture = ig && (isVideoFile(ig.media_url) ? ig.thumbnail_url : ig.media_url || ig.thumbnail_url);
+      const url = igPicture || (hit.hash ? urlByHash.get(hit.hash) : undefined);
       if (url) put(p.key, { hashUrl: url });
     }
   }
   return { byKey, errors };
+}
+
+/** A saved .mp4 in the picture column is a video: keep it as the video link (unless one exists) and drop it so a real cover can replace it. */
+export function moveVideoOutOfPicture(row: { creative_url?: unknown; video_url?: unknown; creative_type?: unknown }) {
+  const u = row.creative_url as string | undefined;
+  if (!isVideoFile(u)) return;
+  if (!row.video_url) { row.video_url = u; row.creative_type = "Video"; }
+  row.creative_url = "";
 }
 
 /** Picks every link Meta found for these ads and keeps the sharpest one, then the ad text the post carries. */
@@ -538,6 +550,7 @@ function applyMediaSources(picks: { row: SyncWrite["rows"][number]; story?: stri
   for (const p of picks) {
     const key = String(p.row.ad_id ?? "");
     const s = src.get(key); if (!s) continue;
+    moveVideoOutOfPicture(p.row);
     const candidates = [s.post?.full_picture, s.hashUrl, s.direct, s.cover].filter((x): x is string => !!x);
     for (const u of candidates) if (better(u, p.row.creative_url as string | undefined)) p.row.creative_url = u;
     const post = p.story ? s.post : undefined;
@@ -580,10 +593,11 @@ export async function resolveCreativeLinks(ads: { adId: string; ref?: string; ur
   for (const a of ads) {
     const s = byKey.get(a.adId);
     const cands = [s?.post?.full_picture, s?.hashUrl, s?.direct, s?.cover].filter((x): x is string => !!x);
-    let url = sharpness(a.url) === 2 ? a.url ?? "" : "";
+    let url = sharpness(a.url) === 2 && !isVideoFile(a.url) ? a.url ?? "" : "";
     for (const u of cands) if (better(u, url)) url = u;
     const videoTarget = list<{ media_type?: string; target?: { id?: string } }>(s?.post?.attachments?.data).find((x) => x.media_type === "video" && x.target?.id)?.target?.id;
-    if (url) out[a.adId] = { url, ...(videoTarget ? { video: `https://www.facebook.com/watch/?v=${videoTarget}` } : {}) };
+    const video = videoTarget ? `https://www.facebook.com/watch/?v=${videoTarget}` : isVideoFile(a.url) ? a.url : undefined;
+    if (url) out[a.adId] = { url, ...(video ? { video } : {}) };
   }
   return out;
 }

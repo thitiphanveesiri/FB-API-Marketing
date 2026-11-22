@@ -32,14 +32,15 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
   const v = media.videoUrl;
   const yt = v ? youtubeId(v) : undefined;
   const refreshed = useCreativeUrl(ad.id, ad.creative.url);
-  const live = media.imageUrl ? refreshed : undefined;
+  // A video filed as the picture has no usable image of its own, but a refreshed cover (a real picture) is welcome.
+  const live = media.imageUrl ? refreshed : (refreshed && !isVideoFileUrl(refreshed) ? refreshed : undefined);
   const src = imageSrc(live);
-  useEffect(() => { if (media.imageUrl && linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live, media.imageUrl]);
+  useEffect(() => { if (media.imageUrl ? linkLooksExpired(live) : !live) askForFreshLink(ad.id); }, [ad.id, live, media.imageUrl]);
   return (
     <>
       <HoverPreview content={preview ?? <AdPreview ad={ad} />}>
         <button type="button" onClick={(e) => { e.stopPropagation(); show(); }} aria-label={`ดูครีเอทีฟ ${ad.name}`} className="rounded-lg outline-none ring-brand-2 hover:opacity-90 focus-visible:ring-2">
-          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={live} adId={media.imageUrl ? ad.id : undefined} hasVideo={!!v} />
+          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={live} adId={ad.id} hasVideo={!!v} />
         </button>
       </HoverPreview>
       <Modal open={open} onClose={() => setOpen(false)} title={ad.name} width={640}
