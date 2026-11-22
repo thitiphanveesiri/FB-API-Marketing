@@ -156,7 +156,7 @@ export default function FbSyncCard() {
         <div className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">
             {pages.length > 1 && <Select label="เพจ Facebook" value={which} onChange={setWhich} options={[{ value: "all", label: `ทุกเพจ (${pages.length})` }, ...resolved.map((r) => ({ value: r.fb, label: r.label }))]} disabled={busy} />}
-            <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "3", label: "3 วัน" }, { value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }, { value: "180", label: "180 วัน (6 เดือน)" }, { value: "365", label: "365 วัน (1 ปี)" }, { value: "730", label: "730 วัน (2 ปี)" }]} disabled={busy} />
+            <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "3", label: "3 วัน" }, { value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }]} disabled={busy} />
             <Btn variant="primary" onClick={() => void run()} disabled={busy || checking}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : which === "all" && pages.length > 1 ? "ดึงข้อมูลทั้งหมด" : "ดึงข้อมูลตอนนี้"}</Btn>
             <Btn onClick={() => void checkConnections()} disabled={busy || checking}><ShieldCheck size={14} className={checking ? "animate-pulse" : ""} /> {checking ? "กำลังตรวจสอบ…" : "ตรวจสอบการเชื่อมต่อ"}</Btn>
             {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
