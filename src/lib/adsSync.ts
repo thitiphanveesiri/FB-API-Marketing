@@ -393,7 +393,7 @@ export interface MediaSources { post?: MediaNode; cover?: string; hashUrl?: stri
 async function readMediaSources(picks: (CreativeRef & { key: string })[], token: string, f: FetchFn, base: string, acct: string | undefined, stillOk: () => boolean, pageTokensByFbId: Record<string, string> = {}): Promise<{ byKey: Map<string, MediaSources>; errors: string[] }> {
   const errors: string[] = [];
   /** Meta removed root GET /?ids=...; use Batch Requests instead. Batch results follow operation order, but each item can fail independently. */
-  const batch = async (ids: (string | undefined)[], fieldLists: string[], requestToken = token): Promise<Record<string, unknown>> => {
+  const batch = async (ids: (string | undefined)[], fieldLists: string[], requestToken = token, errorSink: string[] = errors): Promise<Record<string, unknown>> => {
     const uniq = [...new Set(ids.filter((x): x is string => !!x))];
     if (!uniq.length) return {};
     const out: Record<string, unknown> = {};
@@ -446,31 +446,45 @@ async function readMediaSources(picks: (CreativeRef & { key: string })[], token:
           if (error.rateLimited) break;
         }
       }
-      if (remaining.length) errors.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
+      if (remaining.length) errorSink.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
     }
     return out;
   };
   const byKey = new Map<string, MediaSources>();
   const put = (key: string, v: MediaSources) => byKey.set(key, { ...(byKey.get(key) ?? {}), ...v });
 
-  // Page-owned posts/videos must be read with the Page's own access token. The Ad Account token is not a substitute,
-  // even when it has ads_read. If a source Page is not connected, retain the creative URL and continue with ad-account media.
-  const pageGroups = new Map<string, { token: string; stories: Set<string>; videos: Set<string> }>();
+  // Prefer a connected Page token for Page-owned posts/videos. If unavailable or refused, try the existing ad-account token;
+  // Meta still enforces that token's Page permissions, so this is only a best-effort fallback, not a permission bypass.
+  const pageGroups = new Map<string, { token: string; own: boolean; stories: Set<string>; videos: Set<string> }>();
+  const pageOfPick = (p: (typeof picks)[number]) => p.page || p.story?.split("_", 1)[0] || "";
   for (const p of picks) {
-    const pageId = p.page || p.story?.split("_", 1)[0];
-    const pageToken = pageId ? pageTokensByFbId[pageId] : undefined;
-    if (!pageId || !pageToken) continue;
-    const group = pageGroups.get(pageId) ?? { token: pageToken, stories: new Set<string>(), videos: new Set<string>() };
+    if (!p.story && !p.video) continue;
+    const pageId = pageOfPick(p), pageToken = pageId ? pageTokensByFbId[pageId] : undefined;
+    const key = pageId || "_";
+    const group = pageGroups.get(key) ?? { token: pageToken ?? token, own: !!pageToken, stories: new Set<string>(), videos: new Set<string>() };
     if (p.story) group.stories.add(p.story);
     if (p.video) group.videos.add(p.video);
-    pageGroups.set(pageId, group);
+    pageGroups.set(key, group);
   }
-  for (const [pageId, group] of pageGroups) {
+  const POST_FIELDS = ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"];
+  for (const [key, group] of pageGroups) {
     if (!stillOk()) break;
-    const posts = group.stories.size ? await batch([...group.stories], ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"], group.token) : {};
-    const covers = stillOk() && group.videos.size ? await batch([...group.videos], ["picture"], group.token) : {};
+    const pageErrors: string[] = [];
+    const initialErrorSink = group.own ? pageErrors : errors;
+    let posts = group.stories.size ? await batch([...group.stories], POST_FIELDS, group.token, initialErrorSink) : {};
+    let covers = stillOk() && group.videos.size ? await batch([...group.videos], ["picture"], group.token, initialErrorSink) : {};
+    // The Page's own token was refused for some of these: try those once more with the ad-account token.
+    if (group.own) {
+      const badStories = [...group.stories].filter((id) => { const n = posts[id] as MediaNode | undefined; return !n || n.error; });
+      const badVideos = [...group.videos].filter((id) => { const n = covers[id] as MediaNode | undefined; return !n || n.error; });
+      if (badStories.length && stillOk()) posts = { ...posts, ...(await batch(badStories, POST_FIELDS, token)) };
+      if (badVideos.length && stillOk()) covers = { ...covers, ...(await batch(badVideos, ["picture"], token)) };
+      const unresolvedStories = badStories.some((id) => { const n = posts[id] as MediaNode | undefined; return !n || n.error; });
+      const unresolvedVideos = badVideos.some((id) => { const n = covers[id] as MediaNode | undefined; return !n || n.error; });
+      if (unresolvedStories || unresolvedVideos) errors.push(...pageErrors);
+    }
     for (const p of picks) {
-      if ((p.page || p.story?.split("_", 1)[0]) !== pageId) continue;
+      if ((pageOfPick(p) || "_") !== key) continue;
       const post = p.story ? posts[p.story] as MediaNode | undefined : undefined;
       if (post && !post.error) put(p.key, { post });
       const cover = p.video ? covers[p.video] as MediaNode | undefined : undefined;

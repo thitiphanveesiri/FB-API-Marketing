@@ -106,23 +106,30 @@ test("Page video-cover lookup uses the source Page token", async () => {
   assert.equal(result["ad-video"].url, image("video-cover"));
 });
 
-test("without a connected Page token, story lookup is skipped and the ad creative URL is retained", async () => {
+test("without a connected Page token, the post is still read with the ad-account token", async () => {
   const requested: string[] = [];
   const fetchFn: FetchFn = async (_url, init) => {
-    const operations = readOperations(init?.body);
+    const operations = readOperations(init?.body, token);
     requested.push(...operations.map((operation) => decodeURIComponent(operation.relative_url.split("?", 1)[0])));
-    return {
-      ok: true,
-      status: 200,
-      json: async () => operations.map(() => ({
-        code: 200,
-        body: JSON.stringify({ creative: { asset_feed_spec: { images: [{ url: image("from-creative") }] } } }),
-      })),
-    };
+    return { ok: true, status: 200, json: async () => operations.map(() => ({ code: 200, body: JSON.stringify({ full_picture: image("post-full") }) })) };
   };
-  const result = await resolveCreativeLinks([
-    { adId: "ad-1", ref: "s:12345_1" },
-  ], token, fetchFn, "https://graph.facebook.com");
-  assert.deepEqual(requested, ["ad-1"]);
-  assert.equal(result["ad-1"].url, image("from-creative"));
+  const result = await resolveCreativeLinks([{ adId: "ad-1", ref: "s:12345_1" }], token, fetchFn, "https://graph.facebook.com");
+  assert.ok(requested.includes("12345_1"));
+  assert.equal(result["ad-1"].url, image("post-full"));
+});
+
+test("a connected Page's token is tried first; if Meta refuses it, that post is retried with the ad-account token", async () => {
+  const used: string[] = [];
+  const fetchFn: FetchFn = async (_url, init) => {
+    const t = new URLSearchParams(init?.body ?? "").get("access_token") ?? "";
+    used.push(t);
+    const operations = JSON.parse(new URLSearchParams(init?.body ?? "").get("batch") ?? "[]") as BatchOperation[];
+    return { ok: true, status: 200, json: async () => operations.map(() => t === pageToken
+      ? { code: 400, body: JSON.stringify({ error: { code: 10, message: "permission denied" } }) }
+      : { code: 200, body: JSON.stringify({ full_picture: image("recovered") }) }) };
+  };
+  const result = await resolveCreativeLinks([{ adId: "ad-1", ref: "s:12345_1" }], token, fetchFn, "https://graph.facebook.com", undefined, { "12345": pageToken });
+  assert.equal(used[0], pageToken);
+  assert.ok(used.includes(token));
+  assert.equal(result["ad-1"].url, image("recovered"));
 });
