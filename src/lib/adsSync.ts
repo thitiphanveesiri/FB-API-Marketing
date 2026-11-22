@@ -545,7 +545,10 @@ async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?
   if (!missing) return null;
   if (errors.length) {
     const permission = /permission|access|oauth|scope|code 10|code 200/i.test(errors[0]);
-    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permission ? " — โค้ดทำเต็มที่แล้ว ที่เหลือแก้ฝั่ง Meta: ใน Business Settings → System users ให้เพิ่มเพจที่ลงโฆษณาเป็น Assets ของ System User (สิทธิ์ Content/Full control) และให้โทเคนมี pages_read_engagement; ระบบจะคงรูปที่ได้ไว้ และดึงซ้ำจะได้รูปเต็มเมื่อสิทธิ์ครบ" : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง"}`;
+    const permissionHint = permission
+      ? " — ตรวจสิทธิ์ตามข้อผิดพลาดที่ Meta ส่งกลับ (เช่น pages_read_engagement หรือ Page Public Content Access) และยืนยันว่าผู้ใช้/System User ที่ออกโทเคนเข้าถึงเพจนั้นได้ใน Business Settings โดยให้เฉพาะสิทธิ์ขั้นต่ำที่จำเป็น จากนั้นเชื่อมต่อหรือซิงก์ใหม่; บาง creative อาจไม่มีรูปต้นฉบับให้ดึง"
+      : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง";
+    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permissionHint}`;
   }
   return none ? `${none} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`
     : `${missing} โฆษณาใช้รูปขนาดจิ๋วที่ Meta ตอบกลับมา (crop 64×64) และหาต้นฉบับไม่เจอ — กดดึงซ้ำหรือรีเฟรชรูปที่หน้า Upload`;
