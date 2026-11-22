@@ -57,3 +57,11 @@ test("built-in rules resolve to uniquely named Repository A Pages without Sheet 
   // A's source-Page resolution remains authoritative for names that B's classifier does not recognize.
   assert.equal(matchPageRule(rules, "generic campaign"), "");
 });
+
+test("built-in rules skip ambiguous Page-name matches instead of guessing", () => {
+  const known = new Set(["SYS-DANAI-A", "SYS-DANAI-B", "SYS-BEQ"]);
+  const names = { "SYS-DANAI-A": "Danai Clinic", "SYS-DANAI-B": "Danai Official", "SYS-BEQ": "BEQ Thailand" };
+  const rules = defaultPageRules({}, known, undefined, names);
+  assert.equal(matchPageRule(rules, "Danai campaign"), "");
+  assert.equal(matchPageRule(rules, "BEQ campaign"), "SYS-BEQ");
+});
