@@ -11,7 +11,7 @@ import { Badge, Btn, Card, ChatQualityBadge, Column, DataTable, Drawer, HoverPre
 import { ChartCard, TimeChart } from "@/components/charts";
 import { Ad } from "@/lib/types";
 import { fmtShort, ANCHOR } from "@/lib/dates";
-import { pageOfAd } from "@/lib/queries";
+import { groupPerfByAdInRange, pageOfAd } from "@/lib/queries";
 
 type MetricKey = "spend" | "reach" | "impressions" | "cpm" | "clicks" | "clicksAll" | "ctr" | "cpc" | "messages" | "cpmsg" | "purchases" | "conv" | "cpp";
 
@@ -86,19 +86,15 @@ export default function AdsPerformance() {
     const camps = new Map(D.data.campaigns.map((c) => [c.id, c]));
     const pageNames = new Map(D.data.pages.map((p) => [p.id, p.name]));
     const campaignOf = new Map(D.data.ads.map((a) => [a.id, a.campaignId]));
+    const perfByAd = groupPerfByAdInRange(D.data.perf, D.range);
     // Share is measured against the whole campaign (every page), so it stays correct while a Page filter is on.
     const totals = new Map<string, { spend: number; messages: number }>();
-    for (const p of D.data.perf) {
-      if (p.date < D.range.start || p.date > D.range.end) continue;
-      const cid = campaignOf.get(p.adId);
+    for (const [adId, perf] of perfByAd) {
+      const cid = campaignOf.get(adId);
       if (!cid || !camps.has(cid)) continue;
       const t = totals.get(cid) ?? { spend: 0, messages: 0 };
-      t.spend += p.spend; t.messages += p.messages; totals.set(cid, t);
-    }
-    const perfByAd = new Map<string, typeof D.perf>();
-    for (const p of D.perf) {
-      const list = perfByAd.get(p.adId);
-      if (list) list.push(p); else perfByAd.set(p.adId, [p]);
+      for (const p of perf) { t.spend += p.spend; t.messages += p.messages; }
+      totals.set(cid, t);
     }
     const groups = new Map<string, Ad[]>();
     for (const ad of D.ads) {

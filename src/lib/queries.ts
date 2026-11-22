@@ -71,6 +71,17 @@ export function perfFor(d: Dataset, ads: Ad[], r: Range): DailyPerf[] {
   const ids = new Set(ads.map((a) => a.id));
   return d.perf.filter((p) => ids.has(p.adId) && inRange(p.date, r));
 }
+/** Group ad performance rows after applying the selected inclusive date range. */
+export function groupPerfByAdInRange(perf: DailyPerf[], r: Range): Map<string, DailyPerf[]> {
+  const grouped = new Map<string, DailyPerf[]>();
+  for (const row of perf) {
+    if (!inRange(row.date, r)) continue;
+    const rows = grouped.get(row.adId);
+    if (rows) rows.push(row);
+    else grouped.set(row.adId, [row]);
+  }
+  return grouped;
+}
 export function leadsFor(d: Dataset, f: Filters, r: Range | null, opts: { includeDropped?: boolean } = {}): Lead[] {
   const adIds = new Set(adsFor(d, f).map((a) => a.id));
   const adLevelFilter = f.campaignId !== "all" || f.agencyId !== "all" || f.adStatus !== "all";
