@@ -6,10 +6,10 @@ import { linkLooksExpired } from "@/lib/creativeUrl";
 import AdPreview from "@/components/AdPreview";
 import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
+import { isVideoFileUrl, resolveCreativeMedia } from "@/lib/creativeMedia";
 import type { Ad } from "@/lib/types";
 
 const youtubeId = (u: string) => u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/)?.[1];
-const isFile = (u: string) => /\.(mp4|webm|mov)(\?|#|$)/i.test(u);
 const isFacebook = (u: string) => /^https:\/\/(?:www\.|web\.)?facebook\.com\//i.test(u);
 
 /** Ad thumbnail that opens a viewer for the real image/video; people who can upload data can paste the links. */
@@ -18,7 +18,8 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
   const [open, setOpen] = useState(false);
   const [img, setImg] = useState(""); const [vid, setVid] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const canEdit = roleCan.upload(user.role);
-  const show = () => { setImg(ad.creative.url ?? ""); setVid(ad.creative.video ?? ""); setErr(""); setOpen(true); };
+  const media = resolveCreativeMedia(ad.creative);
+  const show = () => { setImg(media.imageUrl ?? ""); setVid(media.videoUrl ?? ""); setErr(""); setOpen(true); };
   const save = async () => {
     const bad = [img, vid].find((v) => v.trim() && !/^https:\/\//i.test(v.trim()));
     if (bad) { setErr("ลิงก์ต้องขึ้นต้นด้วย https://"); return; }
@@ -26,15 +27,19 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
     if (ok) { toast("บันทึกครีเอทีฟแล้ว"); setOpen(false); }
   };
   // The stored Meta link ages out; show the refreshed one when this page has it, and ask for a new one when it is already past.
-  const v = ad.creative.video; const yt = v ? youtubeId(v) : undefined;
-  const live = useCreativeUrl(ad.id, ad.creative.url);
+  // Some imported rows put an .mp4 link in creative_url. Never pass that URL to <img>;
+  // treat it as video unless a dedicated video_url is already present.
+  const v = media.videoUrl;
+  const yt = v ? youtubeId(v) : undefined;
+  const refreshed = useCreativeUrl(ad.id, ad.creative.url);
+  const live = media.imageUrl ? refreshed : undefined;
   const src = imageSrc(live);
-  useEffect(() => { if (linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live]);
+  useEffect(() => { if (media.imageUrl && linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live, media.imageUrl]);
   return (
     <>
       <HoverPreview content={preview ?? <AdPreview ad={ad} />}>
         <button type="button" onClick={(e) => { e.stopPropagation(); show(); }} aria-label={`ดูครีเอทีฟ ${ad.name}`} className="rounded-lg outline-none ring-brand-2 hover:opacity-90 focus-visible:ring-2">
-          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={live} adId={ad.id} hasVideo={!!v} />
+          <AdThumb hue={ad.creative.hue} type={ad.creative.type} size={size} src={live} adId={media.imageUrl ? ad.id : undefined} hasVideo={!!v} />
         </button>
       </HoverPreview>
       <Modal open={open} onClose={() => setOpen(false)} title={ad.name} width={640}
@@ -43,7 +48,7 @@ export default function CreativeCell({ ad, size = 40, preview }: { ad: Ad; size?
           {/* eslint-disable-next-line @next/next/no-img-element -- pasted link */}
           {src && <img src={src} alt={ad.name} referrerPolicy="no-referrer" onError={() => askForFreshLink(ad.id)} className="max-h-[360px] w-full rounded-lg bg-gray-50 object-contain" />}
           {v && (yt ? <iframe className="aspect-video w-full rounded-lg" src={`https://www.youtube-nocookie.com/embed/${yt}`} title={ad.name} allowFullScreen />
-            : isFile(v) ? <video src={v} controls className="max-h-[360px] w-full rounded-lg bg-black" />
+            : isVideoFileUrl(v) ? <video src={v} controls className="max-h-[360px] w-full rounded-lg bg-black" />
             : isFacebook(v) ? <div className="space-y-1.5">
               <iframe className="aspect-video w-full rounded-lg bg-black" src={`https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(v)}&show_text=false`}
                 title={`วิดีโอโฆษณา ${ad.name}`} allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowFullScreen />

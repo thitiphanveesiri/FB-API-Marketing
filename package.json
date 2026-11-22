@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --test src/lib/adsSync.test.ts src/lib/instagramWebhook.test.ts src/lib/clicks.test.ts src/lib/pageRules.test.ts src/lib/queries.test.ts scripts/check-meta-page-token.test.mjs",
+    "test": "tsx --test src/lib/adsSync.test.ts src/lib/instagramWebhook.test.ts src/lib/clicks.test.ts src/lib/pageRules.test.ts src/lib/queries.test.ts src/lib/creativeMedia.test.ts scripts/check-meta-page-token.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {
