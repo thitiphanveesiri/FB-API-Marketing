@@ -8,7 +8,8 @@ const C = (name: string, note: string, required = false): SheetCol => ({ name, n
 export const SHEET_TABS: SheetTab[] = [
   { tab: "pages", required: true, purpose: "Facebook Pages you run ads / chat on", cols: [
     C("page_id", "Your own short ID, e.g. PG-1", true), C("name", "Page name", true), C("agency_id", "→ agencies.agency_id (blank = no agency)"),
-    C("active", "TRUE / FALSE (blank = TRUE)"), C("sales_team", "Comma-separated user_id of salespeople, e.g. U-R1,U-R2") ] },
+    C("active", "TRUE / FALSE (blank = TRUE)"), C("sales_team", "Comma-separated user_id of salespeople, e.g. U-R1,U-R2"),
+    C("ad_keywords", "Ad sync: comma-separated words in a campaign/ad name that belong to this page, e.g. danai,ดะนัย. A single * = every ad no other page matched") ] },
   { tab: "agencies", required: false, purpose: "Advertising agencies", cols: [
     C("agency_id", "e.g. AG-1", true), C("name", "Agency name", true), C("contact", "Contact person"), C("email", "Email"), C("active", "TRUE / FALSE") ] },
   { tab: "users", required: false, purpose: "People who use the dashboard (roles) and salespeople", cols: [
@@ -25,7 +26,7 @@ export const SHEET_TABS: SheetTab[] = [
     C("creative_ref", "Written by the ad sync: where Meta keeps this ad's picture (s:post id, v:video id, i:Instagram media id, h:image hash). When the saved image link goes stale the dashboard asks Meta for a fresh one from this. Leave blank for a link you pasted yourself.") ] },
   { tab: "ad_performance", required: true, purpose: "Meta-reported results, one row per ad per day (paste Ads Manager export here)", cols: [
     C("date", "YYYY-MM-DD (or DD/MM/YYYY)", true), C("ad_id", "→ ads.ad_id", true), C("spend", "Amount spent", true), C("reach", "Reach"),
-    C("impressions", "Impressions", true), C("clicks", "Link clicks"), C("messages", "Messaging conversations started"), C("purchases", "Meta-reported purchases") ] },
+    C("impressions", "Impressions", true), C("clicks", "Link clicks"), C("clicks_all", "Clicks (all) — every click on the ad, written by the ad sync; blank = not synced"), C("messages", "Messaging conversations started"), C("purchases", "Meta-reported purchases") ] },
   { tab: "leads", required: true, purpose: "One row per customer conversation (Lead ID must be unique)", cols: [
     C("lead_id", "Unique, e.g. L-00001", true), C("name", "Customer name", true), C("page_id", "→ pages.page_id", true), C("ad_id", "Source ad (blank if unknown)"),
     C("assigned_to", "→ users.user_id (blank = unassigned)"),

@@ -12,16 +12,31 @@ export interface AdsCounts { ads: number; campaigns: number; rows: number }
  *  knownCampaignPages: the page each campaign is filed under in the sheet already — used when this batch cannot tell, so a lighter pull never moves a campaign somewhere else.
  *  knownCreativeUrls: ads whose picture link was pasted by a person (not a Meta link) — the admin's own link wins and is never
  *  overwritten by the sync, which is what makes the Google Drive option in the creative editor actually stick. */
-export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; knownCampaignPages?: Record<string, string>; knownCreativeUrls?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
+/** Keywords (from the pages tab, column ad_keywords) that decide which page an ad belongs to by its campaign / ad name. "*" = every ad no keyword matched.
+ *  Needed when one ad account runs the same campaigns for several pages and Meta reports only a single page for all of them. */
+export interface PageRule { pageId: string; keywords: string[] }
+const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+/** The page a name belongs to: the longest matching keyword wins; ties keep the earlier page. Falls back to the "*" page; "" when no rule applies. */
+export function matchPageRule(rules: PageRule[] | undefined, text: string): string {
+  if (!rules?.length) return "";
+  const t = norm(text); let best = "", len = 0, star = "";
+  for (const r of rules) for (const raw of r.keywords) {
+    const k = norm(raw); if (!k) continue;
+    if (k === "*") { if (!star) star = r.pageId; continue; }
+    if (t.includes(k) && k.length > len) { best = r.pageId; len = k.length; }
+  }
+  return best || star;
+}
+export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; knownCampaignPages?: Record<string, string>; knownCreativeUrls?: Record<string, string>; pageTokensByFbId?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>>; pageRules?: PageRule[] }
 export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warnings?: string[]; byPage?: Record<string, number> }
 
 const ADS_PER_CALL = Number(process.env.ADS_PAGE_SIZE) || 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
-/** One request to our own route must finish inside the platform limit (60 s). Past this many ms no further fallback is attempted: fail with a clear message instead. */
-const BUDGET_MS = Number(process.env.ADS_BUDGET_MS) || 35000;
+/** One request to our own route must finish inside the platform limit (maxDuration 300 s). Past this many ms no further fallback is attempted: fail with a clear message instead. */
+const BUDGET_MS = Number(process.env.ADS_BUDGET_MS) || 120000;
 /** How much of that budget the picture lookups may still use. They only ever add image quality, so they are the first thing to be cut — and the reason a pull can end with small pictures instead of no pictures at all. */
 /** The picture lookups may keep working a little past the main deadline — they only ever add image quality, and the route still
- *  has to answer inside its own time limit, so this stays below maxDuration (60 s) with room for the sheet writes. */
-const MEDIA_BUDGET_MS = Number(process.env.ADS_MEDIA_BUDGET_MS) || 45000;
+ *  has to answer inside its own time limit, so this stays below maxDuration (300 s) with room for the sheet writes. */
+const MEDIA_BUDGET_MS = Number(process.env.ADS_MEDIA_BUDGET_MS) || 150000;
 const ALL_STATUS = JSON.stringify(["ACTIVE", "PAUSED", "DELETED", "PENDING_REVIEW", "DISAPPROVED", "PREAPPROVED", "PENDING_BILLING_INFO", "CAMPAIGN_PAUSED", "ARCHIVED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]);
 
 export const actId = (raw: string) => "act_" + raw.replace(/\D/g, "");
@@ -54,7 +69,7 @@ interface RawAd {
     };
   };
 }
-interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; inline_link_clicks?: string; actions?: Action[] }
+interface RawInsight { ad_id?: string; date_start?: string; spend?: string; reach?: string; impressions?: string; inline_link_clicks?: string; clicks?: string; actions?: Action[] }
 
 /* ------------------------------------------------------------------ picture quality ---------------------------------------------------------------- */
 
@@ -101,20 +116,22 @@ export function creativeRef(a: RawAd): string {
   const c = a.creative ?? {}, spec = c.object_story_spec, link = spec?.link_data, child = link?.child_attachments?.[0];
   const out: string[] = [];
   const story = c.effective_object_story_id || c.object_story_id;
+  const page = spec?.page_id || (story?.includes("_") ? story.split("_")[0] : "") || a.adset?.promoted_object?.page_id;
   if (story) out.push(`s:${story}`);
   if (c.video_id) out.push(`v:${c.video_id}`);
   if (c.effective_instagram_media_id) out.push(`i:${c.effective_instagram_media_id}`);
+  if (page) out.push(`p:${page}`);
   const hash = c.image_hash || link?.image_hash || child?.image_hash || list<{ hash?: string }>(c.asset_feed_spec?.images).find((x) => x.hash)?.hash;
   if (hash) out.push(`h:${hash}`);
   return out.join(",");
 }
-export interface CreativeRef { story?: string; video?: string; ig?: string; hash?: string }
+export interface CreativeRef { story?: string; video?: string; ig?: string; page?: string; hash?: string }
 export function parseCreativeRef(ref: string | undefined): CreativeRef {
   const out: CreativeRef = {};
   for (const part of (ref ?? "").split(",")) {
     const i = part.indexOf(":"); if (i < 1) continue;
     const k = part.slice(0, i).trim(), v = part.slice(i + 1).trim(); if (!v) continue;
-    if (k === "s") out.story = v; else if (k === "v") out.video = v; else if (k === "i") out.ig = v; else if (k === "h") out.hash = v;
+    if (k === "s") out.story = v; else if (k === "v") out.video = v; else if (k === "i") out.ig = v; else if (k === "p") out.page = v; else if (k === "h") out.hash = v;
   }
   return out;
 }
@@ -189,7 +206,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const camps = new Map<string, Record<string, string>>(), adRows: SyncWrite["rows"] = [], unmapped = new Set<string>();
     // Ads whose picture is not a full-size file yet (page-post, catalogue, dynamic, Instagram-only): the picture lives on the
     // underlying post, in the account's image library, or on the Instagram media node.
-    const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; hash?: string; weak: boolean }[] = [];
+    const needMedia: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; page?: string; hash?: string; weak: boolean }[] = [];
     const byPage: Record<string, number> = {};
     let noPage = 0, mappedAds = 0;
     /** The Page an ad posts as: the creative's own Page (object_story_spec, the prefix of its story id, or an Instagram actor for
@@ -203,7 +220,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     let extra: Record<string, string> = {};
     if (i.resolvePages) {
       const wanted = new Set<string>();
-      for (const a of ads) { const id = pageOf(a); if (id && !i.pageMap?.[id]) wanted.add(id); }
+      for (const a of ads) { const id = pageOf(a); if (id && !i.pageMap?.[id] && !matchPageRule(i.pageRules, `${a.campaign?.name ?? ""} ${a.name ?? ""}`)) wanted.add(id); }
       if (wanted.size) { try { extra = await i.resolvePages([...wanted].slice(0, 12)); } catch { /* keep the account's page */ } }
     }
     for (const a of ads) {
@@ -220,9 +237,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const mine = i.knownCreativeUrls?.[a.id];
       // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
       const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
+      const ruled = matchPageRule(i.pageRules, `${a.campaign?.name ?? ""} ${a.name ?? ""}`);
       const viaMap = fbPage ? (i.pageMap?.[fbPage] ?? extra[fbPage]) : undefined;
       // a freshly created page is not in pageNames yet, so its own id from `extra` is proof that it exists
-      const mapped = (viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap ? viaMap : undefined)) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined);
+      // A keyword rule written by the admin beats whatever page Meta reports (Meta often reports one page for ads shared by several).
+      const mapped = ruled || ((viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap ? viaMap : undefined)) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined));
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       else if (!fbPage && !mapped) noPage++;
       if (mapped) mappedAds++;
@@ -243,11 +262,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       adRows.push(row);
       const rowPage = mapped ?? camps.get(cid)!.page_id;
       byPage[rowPage] = (byPage[rowPage] ?? 0) + 1;
-      if (!mine && pic.sharp < 2) needMedia.push({ row, story: storyId, video: c.video_id, ig: c.effective_instagram_media_id, hash: c.image_hash || story.link_data?.image_hash, weak: pic.sharp === 1 });
+      if (!mine && pic.sharp < 2) needMedia.push({ row, story: storyId, video: c.video_id, ig: c.effective_instagram_media_id, page: fbPage, hash: c.image_hash || story.link_data?.image_hash, weak: pic.sharp === 1 });
       // also ads with neither story nor video (Instagram-only, dynamic, image-hash creatives)
     }
     // One batched lookup per kind (not one request per ad) keeps this inside the route budget.
-    const mediaWarning = needMedia.length && mediaBudgetOk() ? await fillCreativeMedia(needMedia, i.token, f, base, mediaBudgetOk, acct) : (needMedia.length ? `${needMedia.length} โฆษณายังใช้รูปขนาดเล็ก/ไม่มีรูป — หมดเวลาประมวลผลของคำขอนี้ กดดึงซ้ำจะได้รูปเต็ม` : null);
+    const mediaWarning = needMedia.length && mediaBudgetOk() ? await fillCreativeMedia(needMedia, i.token, f, base, mediaBudgetOk, acct, i.pageTokensByFbId) : (needMedia.length ? `${needMedia.length} โฆษณายังใช้รูปขนาดเล็ก/ไม่มีรูป — หมดเวลาประมวลผลของคำขอนี้ กดดึงซ้ำจะได้รูปเต็ม` : null);
     counts.ads = adRows.length; counts.campaigns = camps.size;
     if (camps.size) writes.push({ tab: "campaigns", keyCols: ["campaign_id"], rows: [...camps.values()], mode: "upsert" });
     if (adRows.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: adRows, mode: "upsert" });
@@ -278,11 +297,11 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const windows = Math.max(1, Math.ceil(i.days / WINDOW_DAYS)), win = Math.min(windows - 1, Math.max(0, i.state.win ?? 0));
     const untilD = new Date(now.getTime() - win * WINDOW_DAYS * 86400000), sinceD = new Date(Math.max(now.getTime() - i.days * 86400000, untilD.getTime() - (WINDOW_DAYS - 1) * 86400000));
     const since = day(sinceD), until = day(untilD);
-    // Link Clicks are the dashboard's canonical metric: ask for inline_link_clicks in every tier and never substitute clicks (all).
+    // Two click numbers, kept apart: inline_link_clicks (Link Clicks, the canonical one → clicks) and clicks (every click on the ad → clicks_all). Neither stands in for the other.
     // If Meta refuses that metric, fail clearly rather than silently changing its definition. The fallback only drops reach.
     // date_start is named on purpose: with time_increment Meta also returns it by itself, but a row whose date is missing is
     // dropped by the sheet mapper, so asking for it costs nothing and cannot lose a day of results.
-    const FULL = "ad_id,date_start,spend,reach,impressions,inline_link_clicks,actions", CORE = "ad_id,date_start,spend,impressions,inline_link_clicks,actions";
+    const FULL = "ad_id,date_start,spend,reach,impressions,inline_link_clicks,clicks,actions", CORE = "ad_id,date_start,spend,impressions,inline_link_clicks,clicks,actions";
     let lim = Math.min(INSIGHT_LIMITS.length - 1, Math.max(0, i.state.lim ?? 0)), core = i.state.fallback === true, j: Graph | undefined;
     const insights = (fields: string) => graph(`${acct}/insights`, { level: "ad", time_increment: "1", time_range: JSON.stringify({ since, until }), fields, limit: String(INSIGHT_LIMITS[lim]), ...(i.state.after ? { after: i.state.after } : {}) },
       i.token, f, base, 900, lim >= INSIGHT_LIMITS.length - 1 ? 1 : 0);
@@ -300,7 +319,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     for (const r of (j.data ?? []) as RawInsight[]) {
       if (!r.ad_id || !r.date_start) continue;
       if (r.inline_link_clicks == null) missingLinkClicks++;
-      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), ...(r.reach != null ? { reach: num(r.reach) } : {}), impressions: num(r.impressions), ...(r.inline_link_clicks != null ? { clicks: num(r.inline_link_clicks) } : {}),
+      rows.push({ date: r.date_start, ad_id: r.ad_id, spend: num(r.spend), ...(r.reach != null ? { reach: num(r.reach) } : {}), impressions: num(r.impressions), ...(r.inline_link_clicks != null ? { clicks: num(r.inline_link_clicks) } : {}), ...(r.clicks != null ? { clicks_all: num(r.clicks) } : {}),
         messages: act(r.actions, ["onsite_conversion.messaging_conversation_started_7d"]), purchases: act(r.actions, ["omni_purchase", "purchase"]) });
     }
     counts.rows = rows.length;
@@ -308,8 +327,8 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     const more = !!j.paging?.next && !!j.paging.cursors?.after, carry = { ...(core ? { fallback: true } : {}), ...(lim > 0 ? { lim } : {}) };
     const next: AdsState = more ? { phase: "insights", after: j.paging!.cursors!.after, win, ...carry } : win + 1 < windows ? { phase: "insights", win: win + 1, ...carry } : { phase: "done" };
     const notes: string[] = [];
-    if (core) notes.push("Meta ไม่ให้ฟิลด์ Reach ในคำขอแบบเต็ม ระบบจึงดึงแบบสำรอง โดยยังใช้ Link Clicks เท่านั้นและคง Reach เดิมใน Sheet (ไม่เขียน 0 ทับ)");
-    if (missingLinkClicks) notes.push(`Meta ไม่ได้ส่ง Link Clicks กลับมา ${missingLinkClicks} แถว — ไม่ได้นำ Clicks (all) มาแทน; ค่าที่มีอยู่ใน Sheet จะไม่ถูกเขียนทับ`);
+    if (core) notes.push("Meta ไม่ให้ฟิลด์ Reach ในคำขอแบบเต็ม ระบบจึงดึงแบบสำรอง โดยยังใช้ Link Clicks และ Clicks (all) และคง Reach เดิมใน Sheet (ไม่เขียน 0 ทับ)");
+    if (missingLinkClicks) notes.push(`Meta ไม่ได้ส่ง Link Clicks กลับมา ${missingLinkClicks} แถว — Link Clicks ไม่ถูกอัปเดตรอบนี้ (ไม่เอา Clicks (all) มาแทน) ค่าเดิมใน Sheet ไม่ถูกเขียนทับ`);
     if (lim > 0) notes.push(`Meta ตอบว่าข้อมูลเยอะเกินไป ระบบจึงดึงทีละ ${INSIGHT_LIMITS[lim]} แถว (ยอดรวมยังครบ)`);
     return { next, writes, counts, ...(notes.length ? { warnings: notes } : {}) };
   }
@@ -371,10 +390,10 @@ export interface MediaSources { post?: MediaNode; cover?: string; hashUrl?: stri
  * One batched request per kind, so 40 ads cost two or three calls. A refusal (usually a token without pages_read_engagement)
  * only loses the picture, never the ad row.
  */
-async function readMediaSources(picks: (CreativeRef & { key: string })[], token: string, f: FetchFn, base: string, acct: string | undefined, stillOk: () => boolean): Promise<{ byKey: Map<string, MediaSources>; errors: string[] }> {
+async function readMediaSources(picks: (CreativeRef & { key: string })[], token: string, f: FetchFn, base: string, acct: string | undefined, stillOk: () => boolean, pageTokensByFbId: Record<string, string> = {}): Promise<{ byKey: Map<string, MediaSources>; errors: string[] }> {
   const errors: string[] = [];
   /** Meta removed root GET /?ids=...; use Batch Requests instead. Batch results follow operation order, but each item can fail independently. */
-  const batch = async (ids: (string | undefined)[], fieldLists: string[]): Promise<Record<string, unknown>> => {
+  const batch = async (ids: (string | undefined)[], fieldLists: string[], requestToken = token, errorSink: string[] = errors): Promise<Record<string, unknown>> => {
     const uniq = [...new Set(ids.filter((x): x is string => !!x))];
     if (!uniq.length) return {};
     const out: Record<string, unknown> = {};
@@ -398,8 +417,8 @@ async function readMediaSources(picks: (CreativeRef & { key: string })[], token:
           const operations = remaining.map((id) => ({ method: "GET", relative_url: `${encodeURIComponent(id)}?fields=${encodeURIComponent(fields)}` }));
           const response = await f(`${base}/${metaApiVersion()}`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({ access_token: token, batch: JSON.stringify(operations), include_headers: "false" }).toString(),
+            headers: { Authorization: `Bearer ${requestToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ access_token: requestToken, batch: JSON.stringify(operations), include_headers: "false" }).toString(),
           });
           const payload = await response.json().catch(() => null);
           if (!response.ok || !Array.isArray(payload)) {
@@ -427,21 +446,51 @@ async function readMediaSources(picks: (CreativeRef & { key: string })[], token:
           if (error.rateLimited) break;
         }
       }
-      if (remaining.length) errors.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
+      if (remaining.length) errorSink.push(last?.message ?? `ค้นหารูปไม่ครบ ${remaining.length} รายการก่อนหมดเวลาประมวลผล`);
     }
     return out;
   };
   const byKey = new Map<string, MediaSources>();
   const put = (key: string, v: MediaSources) => byKey.set(key, { ...(byKey.get(key) ?? {}), ...v });
 
-  const posts = await batch(picks.map((p) => p.story), ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"]);
-  const covers = stillOk() ? await batch(picks.map((p) => p.video), ["picture"]) : {};
+  // Prefer a connected Page token for Page-owned posts/videos. If unavailable or refused, try the existing ad-account token;
+  // Meta still enforces that token's Page permissions, so this is only a best-effort fallback, not a permission bypass.
+  const pageGroups = new Map<string, { token: string; own: boolean; stories: Set<string>; videos: Set<string> }>();
+  const pageOfPick = (p: (typeof picks)[number]) => p.page || p.story?.split("_", 1)[0] || "";
   for (const p of picks) {
-    const post = p.story ? posts[p.story] as MediaNode | undefined : undefined;
-    if (post && !post.error) put(p.key, { post });
-    const cover = p.video ? covers[p.video] as MediaNode | undefined : undefined;
-    const coverUrl = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url;
-    if (coverUrl) put(p.key, { cover: coverUrl });
+    if (!p.story && !p.video) continue;
+    const pageId = pageOfPick(p), pageToken = pageId ? pageTokensByFbId[pageId] : undefined;
+    const key = pageId || "_";
+    const group = pageGroups.get(key) ?? { token: pageToken ?? token, own: !!pageToken, stories: new Set<string>(), videos: new Set<string>() };
+    if (p.story) group.stories.add(p.story);
+    if (p.video) group.videos.add(p.video);
+    pageGroups.set(key, group);
+  }
+  const POST_FIELDS = ["full_picture,message,attachments{media_type,target{id}}", "full_picture,message"];
+  for (const [key, group] of pageGroups) {
+    if (!stillOk()) break;
+    const pageErrors: string[] = [];
+    const initialErrorSink = group.own ? pageErrors : errors;
+    let posts = group.stories.size ? await batch([...group.stories], POST_FIELDS, group.token, initialErrorSink) : {};
+    let covers = stillOk() && group.videos.size ? await batch([...group.videos], ["picture"], group.token, initialErrorSink) : {};
+    // The Page's own token was refused for some of these: try those once more with the ad-account token.
+    if (group.own) {
+      const badStories = [...group.stories].filter((id) => { const n = posts[id] as MediaNode | undefined; return !n || n.error; });
+      const badVideos = [...group.videos].filter((id) => { const n = covers[id] as MediaNode | undefined; return !n || n.error; });
+      if (badStories.length && stillOk()) posts = { ...posts, ...(await batch(badStories, POST_FIELDS, token)) };
+      if (badVideos.length && stillOk()) covers = { ...covers, ...(await batch(badVideos, ["picture"], token)) };
+      const unresolvedStories = badStories.some((id) => { const n = posts[id] as MediaNode | undefined; return !n || n.error; });
+      const unresolvedVideos = badVideos.some((id) => { const n = covers[id] as MediaNode | undefined; return !n || n.error; });
+      if (unresolvedStories || unresolvedVideos) errors.push(...pageErrors);
+    }
+    for (const p of picks) {
+      if ((pageOfPick(p) || "_") !== key) continue;
+      const post = p.story ? posts[p.story] as MediaNode | undefined : undefined;
+      if (post && !post.error) put(p.key, { post });
+      const cover = p.video ? covers[p.video] as MediaNode | undefined : undefined;
+      const coverUrl = typeof cover?.picture === "string" ? cover.picture : cover?.picture?.data?.url;
+      if (coverUrl) put(p.key, { cover: coverUrl });
+    }
   }
   // Last resort for ads still without a full-size picture (Instagram-only, dynamic / flexible, carousel, image-hash creatives):
   // one extra batched read of those ads' creatives, then the library / Instagram lookups it points at.
@@ -502,15 +551,18 @@ function applyMediaSources(picks: { row: SyncWrite["rows"][number]; story?: stri
 }
 
 /** One batched lookup per kind (not one request per ad) keeps this inside the 40 s route budget. A refusal only costs the picture. */
-async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; hash?: string; weak: boolean }[], token: string, f: FetchFn, base: string, stillOk: () => boolean, acct?: string): Promise<string | null> {
-  const { byKey, errors } = await readMediaSources(picks.map((p) => ({ key: String(p.row.ad_id ?? ""), story: p.story, video: p.video, ig: p.ig, hash: p.hash })), token, f, base, acct, stillOk);
+async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?: string; video?: string; ig?: string; page?: string; hash?: string; weak: boolean }[], token: string, f: FetchFn, base: string, stillOk: () => boolean, acct?: string, pageTokensByFbId: Record<string, string> = {}): Promise<string | null> {
+  const { byKey, errors } = await readMediaSources(picks.map((p) => ({ key: String(p.row.ad_id ?? ""), story: p.story, video: p.video, ig: p.ig, page: p.page, hash: p.hash })), token, f, base, acct, stillOk, pageTokensByFbId);
   applyMediaSources(picks, byKey);
   const missing = picks.filter((p) => sharpness(p.row.creative_url as string | undefined) < 2).length;
   const none = picks.filter((p) => !p.row.creative_url).length;
   if (!missing) return null;
   if (errors.length) {
     const permission = /permission|access|oauth|scope|code 10|code 200/i.test(errors[0]);
-    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permission ? " — ตรวจสิทธิ์ ads_read และ pages_read_engagement รวมถึงสิทธิ์เข้าถึงเพจที่ลงโฆษณา" : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง"}`;
+    const permissionHint = permission
+      ? " — ตรวจสิทธิ์ตามข้อผิดพลาดที่ Meta ส่งกลับ (เช่น pages_read_engagement หรือ Page Public Content Access) และยืนยันว่าผู้ใช้/System User ที่ออกโทเคนเข้าถึงเพจนั้นได้ใน Business Settings โดยให้เฉพาะสิทธิ์ขั้นต่ำที่จำเป็น จากนั้นเชื่อมต่อหรือซิงก์ใหม่; บาง creative อาจไม่มีรูปต้นฉบับให้ดึง"
+      : " — ตรวจรายละเอียดข้อผิดพลาดจาก Meta แล้วลองซิงก์อีกครั้ง";
+    return `${missing} โฆษณาไม่ได้รูปเต็มความละเอียด — Meta ตอบกลับข้อผิดพลาดในการค้นหารูป (${errors[0]})${permissionHint}`;
   }
   return none ? `${none} โฆษณายังไม่มีรูปจาก Meta — โพสต์อาจถูกลบ หรือเป็นโฆษณาแบบไดนามิกที่ไม่มีภาพเดียว; ซิงก์ใหม่ภายหลังได้`
     : `${missing} โฆษณาใช้รูปขนาดจิ๋วที่ Meta ตอบกลับมา (crop 64×64) และหาต้นฉบับไม่เจอ — กดดึงซ้ำหรือรีเฟรชรูปที่หน้า Upload`;
@@ -521,9 +573,9 @@ async function fillCreativeMedia(picks: { row: SyncWrite["rows"][number]; story?
  * and stop answering after a few days, which is what makes saved ad images break; the ids do not expire, so the
  * dashboard asks for this when a link it holds has aged out.
  */
-export async function resolveCreativeLinks(ads: { adId: string; ref?: string; url?: string }[], token: string, f: FetchFn, base: string, acct?: string): Promise<Record<string, { url: string; video?: string }>> {
+export async function resolveCreativeLinks(ads: { adId: string; ref?: string; url?: string }[], token: string, f: FetchFn, base: string, acct?: string, pageTokensByFbId: Record<string, string> = {}): Promise<Record<string, { url: string; video?: string }>> {
   const picks = ads.map((a) => ({ key: a.adId, ...parseCreativeRef(a.ref) }));
-  const { byKey } = await readMediaSources(picks, token, f, base, acct, () => true);
+  const { byKey } = await readMediaSources(picks, token, f, base, acct, () => true, pageTokensByFbId);
   const out: Record<string, { url: string; video?: string }> = {};
   for (const a of ads) {
     const s = byKey.get(a.adId);

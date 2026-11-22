@@ -3,13 +3,15 @@ import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { loadChannels } from "@/lib/channels";
 import { fetchPageName, systemPageIdFor } from "@/lib/autoPage";
 import { adsStep, type AdsState } from "@/lib/adsSync";
+import { defaultPageRules } from "@/lib/adPageRules";
 import { FbError } from "@/lib/fbSync";
 import { isMetaCdnLink } from "@/lib/creativeUrl";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 
-export const maxDuration = 60;
+// Vercel Fluid compute lets a function run far longer than the old 60 s (300 s on Hobby). The ad pull is the heaviest call, so give it room.
+export const maxDuration = 300;
 const adsChannels = async (fresh = false) => (await loadChannels(fresh)).filter((c) => c.channel === "ads" && c.active && c.accessToken && c.accountId);
 
 /** Administrators only. Lists connected ad accounts (never the tokens). */
@@ -33,6 +35,7 @@ export async function POST(req: Request) {
     const pageMap: Record<string, string> = {};
     const stalePages: string[] = [];
     const chans = await loadChannels();
+    const pageTokensByFbId = Object.fromEntries(chans.filter((c) => c.channel === "facebook" && c.active && c.accountId && c.accessToken).map((c) => [c.accountId, c.accessToken]));
     if (!ch.forceSheetPage) {
       const known = new Set(g.mapped.dataset.pages.map((p) => p.id));
       // Ads boosted from Instagram carry the IG account id in effective_object_story_id, so Instagram channels map to their own
@@ -82,7 +85,10 @@ export async function POST(req: Request) {
       unnamedPages.push(...named.filter((x) => !x.name).map((x) => `เพจ ${x.id}`));
       return out;
     };
-    const out = await adsStep({ pageNames, knownCampaignPages, knownCreativeUrls, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    // Sheet keywords are optional overrides. With none configured, use the BEQ name rules mapped to unique existing A Pages.
+    const sheetRules = g.mapped.dataset.pages.filter((p) => p.active && p.adKeywords?.length).map((p) => ({ pageId: p.id, keywords: p.adKeywords! }));
+    const pageRules = ch.forceSheetPage ? [] : sheetRules.length ? sheetRules : defaultPageRules(pageMap, new Set(g.mapped.dataset.pages.map((p) => p.id)), undefined, pageNames);
+    const out = await adsStep({ pageRules, pageNames, knownCampaignPages, knownCreativeUrls, pageTokensByFbId, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.

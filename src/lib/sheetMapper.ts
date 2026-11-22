@@ -82,8 +82,9 @@ export function mapSheets(tabs: RawTabs): MapResult {
   for (const r of tab("pages").rows) {
     const id = r.get("page_id"), name = r.get("name"); if (!id || !name) { warn("pages", r.n, "page_id and name are required — row skipped"); continue; }
     if (pages.some((p) => p.id === id)) { warn("pages", r.n, `Duplicate page_id ${id} — skipped`); continue; }
+    const kw = r.get("ad_keywords").split(/[,;，]/).map((x) => x.trim()).filter(Boolean);
     const ag = r.get("agency_id"); if (ag && !agencyIds.has(ag)) warn("pages", r.n, `agency_id ${ag} not found in agencies`);
-    pages.push({ id, name, active: bool(r.get("active"), true), agencyId: ag || null, teamIds: r.get("sales_team").split(/[,;]/).map((x) => x.trim()).filter(Boolean) });
+    pages.push({ id, name, active: bool(r.get("active"), true), agencyId: ag || null, teamIds: r.get("sales_team").split(/[,;]/).map((x) => x.trim()).filter(Boolean), ...(kw.length ? { adKeywords: kw } : {}) });
   }
   const pageIds = new Set(pages.map((p) => p.id));
   // Rows that point at a page the pages tab no longer has (a page row deleted or its id retyped). They used to be dropped,
@@ -160,7 +161,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (spend == null || imp == null) { warn("ad_performance", r.n, "spend and impressions must be numbers — row skipped"); continue; }
     const k = `${adId}|${date}`; if (seen.has(k)) { warn("ad_performance", r.n, `Duplicate ${adId} on ${date} — skipped (no double counting)`); continue; } seen.add(k);
     const n = (c: string) => parseNumber(r.get(c)) ?? 0;
-    perf.push({ adId, date, spend, reach: n("reach"), impressions: imp, clicks: n("clicks"), messages: n("messages"), purchases: n("purchases"), source: "import" });
+    const clicksAll = parseNumber(r.get("clicks_all"));
+    perf.push({ adId, date, spend, reach: n("reach"), impressions: imp, clicks: n("clicks"), ...(clicksAll != null ? { clicksAll } : {}), messages: n("messages"), purchases: n("purchases"), source: "import" });
   }
   for (const c of missingCamps.values()) if (!campaigns.some((x) => x.id === c.id)) campaigns.push(c);
 

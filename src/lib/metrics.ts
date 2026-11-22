@@ -26,11 +26,14 @@ export interface PerfAgg {
   reach: number;
   impressions: number;
   clicks: number;
+  clicksAll: number;
+  /** rows that carried clicks (all): tells "not synced" from a real zero */
+  clicksAllRows: number;
   messages: number;
   purchases: number;
   rows: number;
 }
-export const emptyAgg = (): PerfAgg => ({ spend: 0, reach: 0, impressions: 0, clicks: 0, messages: 0, purchases: 0, rows: 0 });
+export const emptyAgg = (): PerfAgg => ({ spend: 0, reach: 0, impressions: 0, clicks: 0, clicksAll: 0, clicksAllRows: 0, messages: 0, purchases: 0, rows: 0 });
 
 export function aggregate(rows: DailyPerf[]): PerfAgg {
   const a = emptyAgg();
@@ -39,6 +42,7 @@ export function aggregate(rows: DailyPerf[]): PerfAgg {
     a.reach += r.reach; // NOTE: Meta reach is not additive across days; summed here as an approximation.
     a.impressions += r.impressions;
     a.clicks += r.clicks;
+    if (r.clicksAll != null) { a.clicksAll += r.clicksAll; a.clicksAllRows++; }
     a.messages += r.messages;
     a.purchases += r.purchases;
     a.rows++;
@@ -50,6 +54,8 @@ export interface Derived {
   cpm: Num;
   ctr: Num;
   cpc: Num;
+  ctrAll: Num;
+  cpcAll: Num;
   costPerMessage: Num;
   costPerPurchase: Num;
 }
@@ -58,6 +64,8 @@ export function derive(a: PerfAgg): Derived {
     cpm: a.impressions > 0 ? (a.spend / a.impressions) * 1000 : null,
     ctr: safeDiv(a.clicks, a.impressions) == null ? null : (a.clicks / a.impressions) * 100,
     cpc: safeDiv(a.spend, a.clicks),
+    ctrAll: a.clicksAllRows > 0 && a.impressions > 0 ? (a.clicksAll / a.impressions) * 100 : null,
+    cpcAll: a.clicksAllRows > 0 ? safeDiv(a.spend, a.clicksAll) : null,
     costPerMessage: safeDiv(a.spend, a.messages),
     costPerPurchase: safeDiv(a.spend, a.purchases),
   };
