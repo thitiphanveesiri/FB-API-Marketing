@@ -7,7 +7,7 @@ import { localStamp } from "@/lib/fbSync";
 import { invalidateCache } from "@/lib/sheetCache";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { roleCan } from "@/lib/queries";
-import { instagramRecipientOf } from "@/lib/instagramWebhook";
+import { instagramRecipientFor } from "@/lib/instagramWebhook";
 import { metaApiVersion } from "@/lib/metaApi";
 
 export const maxDuration = 30;
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     if (channel === "instagram" && Buffer.byteLength(text, "utf8") >= 1000) return fail(400, "ข้อความ Instagram ต้องสั้นกว่า 1,000 ไบต์");
     const channels = await loadChannels();
     const ch = channel === "instagram"
-      ? channels.find((item) => item.channel === "instagram" && item.active && item.accessToken && (item.sheetPageId === lead.pageId || item.channelId === `instagram:${lead.pageId}`) && instagramRecipientOf(lead.id, item.accountId) !== null)
+      ? channels.find((item) => item.channel === "instagram" && item.active && item.accessToken && (item.sheetPageId === lead.pageId || item.channelId === `instagram:${lead.pageId}`) && instagramRecipientFor(lead, item.accountId) !== null)
       : channels.find((item) => item.channel === "facebook" && item.active && item.accessToken && item.sheetPageId === lead.pageId);
     if (!ch) return fail(400, channel === "instagram" ? "บัญชี Instagram นี้ยังไม่ได้เชื่อมข้อความ (ไปที่หน้า Upload → เชื่อมเพจ Facebook ที่ผูก Instagram ไว้)" : "เพจนี้ยังไม่ได้เชื่อม Messenger (ไปที่หน้า Upload → เชื่อมช่องทางแชท)");
 
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     const since = minutesSinceCustomer(mapped.dataset.messages[lead.id] ?? [], tz);
     if (channel === "instagram" && since == null) return fail(400, "ส่งข้อความ Instagram ได้หลังจากลูกค้าทักมาเท่านั้น");
     if (since != null && since > WINDOW_HOURS * 60) return fail(400, `ส่งไม่ได้: ลูกค้าทักล่าสุดเกิน ${WINDOW_HOURS} ชั่วโมงแล้ว (กฎของ Meta) — ตอบใน Business Suite หรือรอให้ลูกค้าทักมาใหม่`);
-    const instagram = channel === "instagram" ? instagramRecipientOf(lead.id, ch.accountId) : null;
+    const instagram = channel === "instagram" ? instagramRecipientFor(lead, ch.accountId) : null;
     const pageId = channel === "instagram" ? ch.channelId.slice("instagram:".length) : ch.accountId;
     const psid = instagram ?? await psidOf(lead.id, ch.accountId, ch.accessToken, base, lead.fbUserId);
     const mid = await sendText({

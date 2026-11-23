@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { emptyDataset } from "./dataset";
-import { buildInstagramWrites, instagramRecipientOf, parseInstagramEvents } from "./instagramWebhook";
+import { buildInstagramWrites, instagramRecipientFor, instagramRecipientOf, parseInstagramEvents } from "./instagramWebhook";
 
 test("parses Instagram messages separately from Facebook page events", () => {
   const events = parseInstagramEvents({
@@ -39,4 +39,11 @@ test("creates channel-specific leads without storing Instagram IDs as Facebook P
   assert.equal(writes.messages[1].sender_type, "unknown");
   assert.equal(instagramRecipientOf("IG-ig-business-12345", "ig-business"), "12345");
   assert.equal(instagramRecipientOf("FB-12345", "ig-business"), null);
+});
+
+test("replies to Instagram leads made by the history sync through their stored customer id", () => {
+  assert.equal(instagramRecipientFor({ id: "IG-111-222333" }, "111"), "222333");
+  assert.equal(instagramRecipientFor({ id: "aWdfZAG1f", fbUserId: "17841400000" }, "111"), "17841400000");
+  assert.equal(instagramRecipientFor({ id: "aWdfZAG1f" }, "111"), null);
+  assert.equal(instagramRecipientFor({ id: "aWdfZAG1f", fbUserId: "111" }, "111"), null);
 });
