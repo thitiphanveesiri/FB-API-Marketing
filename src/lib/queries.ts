@@ -108,7 +108,7 @@ export const roleCan = {
       Administrator: ["dashboard", "inbox", "board", "upload", "settings", "quality", "sla", "comments", "followup", "account"],
       "Marketing Manager": ["dashboard", "upload", "quality", "comments", "account", "settings"],
       "Sales Manager": ["dashboard", "inbox", "board", "quality", "sla", "comments", "followup", "account"],
-      "Sales Representative": ["dashboard", "inbox", "board", "sla", "followup", "account"],
+      "Sales Representative": ["inbox", "board", "sla", "followup", "account"],
       Agency: ["dashboard", "account"],
       Viewer: ["dashboard", "account"],
     };

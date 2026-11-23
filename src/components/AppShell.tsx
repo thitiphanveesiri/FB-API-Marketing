@@ -10,10 +10,10 @@ import DisplayMenu from "./DisplayMenu";
 import { ANCHOR, fmtShort } from "@/lib/dates";
 
 const NAV = [
-  { key: "dashboard", label: "Dashboard", href: "/dashboard/ads", icon: LayoutDashboard, group: "Workspace" },
-  { key: "inbox", label: "Inbox", href: "/inbox", icon: Inbox, group: "Workspace" },
   { key: "board", label: "Board", href: "/board", icon: KanbanSquare, group: "Workspace" },
+  { key: "inbox", label: "Inbox", href: "/inbox", icon: Inbox, group: "Workspace" },
   { key: "followup", label: "Follow-up", href: "/followup", icon: BellRing, group: "Workspace" },
+  { key: "dashboard", label: "Dashboard", href: "/dashboard/ads", icon: LayoutDashboard, group: "Insights" },
   { key: "quality", label: "Quality", href: "/quality", icon: ClipboardCheck, group: "Insights" },
   { key: "sla", label: "SLA", href: "/sla", icon: Timer, group: "Insights" },
   { key: "comments", label: "Comments", href: "/comments", icon: MessageSquare, group: "Insights" },
@@ -68,11 +68,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const visible = NAV.filter((n) => roleCan.nav(user.role, n.key));
   const current = path.startsWith("/account") ? "account" : NAV.find((n) => path.startsWith("/" + (n.key === "dashboard" ? "dashboard" : n.key)))?.key;
   const currentLabel = current === "account" ? "User account" : NAV.find((n) => n.key === current)?.label ?? "Workspace";
+  const homeHref = roleCan.nav(user.role, "board") ? "/board" : "/dashboard/ads";
 
-  // guard: bounce to dashboard if the current role may not open this page
+  // Guard routes by role and send users to the first page they are permitted to open.
   useEffect(() => {
-    if (source === "sheets" && current && !roleCan.nav(user.role, current)) router.replace("/dashboard/ads");
-  }, [current, user.role, router, source]);
+    if (source === "sheets" && current && !roleCan.nav(user.role, current)) router.replace(homeHref);
+  }, [current, homeHref, user.role, router, source]);
 
   const pagesForUser = data.pages.filter((p) => p.active && (eff.agencyId === "all" || p.agencyId === eff.agencyId));
   const selectedPage = data.pages.find((p) => p.id === filters.pageId);
@@ -161,7 +162,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-bg text-ink">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-line bg-surface px-4 py-5 lg:flex">
-        <Link href="/dashboard/ads" className="mb-8 flex items-center gap-3 px-2">
+        <Link href={homeHref} className="mb-8 flex items-center gap-3 px-2">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white shadow-sm"><ShieldCheck size={20} /></span>
           <span className="min-w-0"><span className="block text-base font-bold leading-tight tracking-tight">BEQ</span><span className="block text-[11px] text-muted">Marketing workspace</span></span>
         </Link>
@@ -176,7 +177,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       {menu && (
         <aside className="fixed inset-y-0 left-0 z-50 flex w-[min(86vw,300px)] flex-col border-r border-line bg-surface px-4 py-5 shadow-pop lg:hidden">
           <div className="mb-6 flex items-center justify-between">
-            <Link href="/dashboard/ads" onClick={() => setMenu(false)} className="flex items-center gap-3 px-1">
+            <Link href={homeHref} onClick={() => setMenu(false)} className="flex items-center gap-3 px-1">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white"><ShieldCheck size={20} /></span>
               <span><span className="block text-base font-bold leading-tight">BEQ</span><span className="block text-[11px] text-muted">Marketing workspace</span></span>
             </Link>
