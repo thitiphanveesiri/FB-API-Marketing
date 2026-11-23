@@ -168,7 +168,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <span className="hidden text-xs font-medium text-muted xl:inline">Page</span>
       <select aria-label="Select page" value={filters.pageId} onChange={(e) => setFilters({ pageId: e.target.value })} className="min-w-0 max-w-[180px] bg-transparent py-0.5 text-sm font-medium text-ink focus:outline-none">
         <option value="all">All Pages</option>
-        {pagesForUser.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        {pagesForUser.filter((p) => !p.id.startsWith("IG-")).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
     </label>
   );
