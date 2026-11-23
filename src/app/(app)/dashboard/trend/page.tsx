@@ -46,14 +46,6 @@ export default function Trend() {
     });
   }, [D, gran]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Agency comparison (bar) — spend vs qualified leads
-  const agencyData = useMemo(() => D.data.agencies.map((a) => {
-    const adIds = new Set(D.ads.filter((ad) => D.data.campaigns.find((c) => c.id === ad.campaignId)?.agencyId === a.id).map((x) => x.id));
-    const p = aggregate(D.perf.filter((x) => adIds.has(x.adId)));
-    const ls = leadStats(D.leads.filter((l) => l.adId && adIds.has(l.adId)));
-    return { name: a.name.replace(" (Demo)", ""), spend: p.spend, qualified: ls.qualified, cpq: ls.qualified ? p.spend / ls.qualified : null, rate: ls.qualifiedRate };
-  }).filter((a) => a.spend > 0), [D]);
-
   if (loading) return <div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-72" /><Skeleton className="h-72" /><Skeleton className="h-72" /><Skeleton className="h-72" /></div>;
   if (D.perf.length === 0) return <p className="py-16 text-center text-sm text-muted">No data in this range. Widen the date range or reset the filters.</p>;
 
@@ -81,14 +73,6 @@ export default function Trend() {
         <ChartCard title="Conversion rate trend" subtitle="Line · Converted ÷ Qualified (leads created in the bucket)"><TimeChart data={mk("conv")} fmt={(n) => fmtPct(n, 0)} series={[{ key: "cur", name: "Conversion rate", color: "#e0a431" }, ...(toggle ? [prevSeries] : [])]} /></ChartCard>
         <ChartCard title="Sales performance trend" subtitle="Bars · qualified leads per salesperson">
           {sales.length === 0 ? <p className="py-10 text-center text-sm text-muted">No qualified leads in range.</p> : <TimeChart data={salesData} stacked series={sales.map((r, i) => ({ key: r.id, name: r.name.split(" ")[0], type: "bar" as const, color: colors[i % colors.length] }))} />}
-        </ChartCard>
-        <ChartCard title="Agency performance" subtitle="Bars · spend vs qualified leads (selected range)">
-          {agencyData.length === 0 ? <p className="py-10 text-center text-sm text-muted">No agency data.</p> : (
-            <>
-              <TimeChart data={agencyData} xKey="name" series={[{ key: "spend", name: "Spend", type: "bar", color: "#a7d9c6" }, { key: "qualified", name: "Qualified leads", type: "bar", yAxisId: "right", color: "#087a58" }]} fmt={(n) => fmtMoney(n)} fmtRight={(n) => String(n)} />
-              <table className="mt-2 w-full text-xs"><tbody>{agencyData.map((a) => <tr key={a.name} className="border-t border-line"><td className="py-1">{a.name}</td><td className="text-right tabnum">Cost/qualified {fmtMoney(a.cpq, 0)}</td><td className="text-right tabnum">Qualified rate {fmtPct(a.rate)}</td></tr>)}</tbody></table>
-            </>
-          )}
         </ChartCard>
       </div>
       <Btn variant="ghost" size="sm" onClick={() => setGran("day")}>Reset to daily</Btn>

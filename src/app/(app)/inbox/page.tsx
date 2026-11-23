@@ -90,7 +90,7 @@ export default function InboxPage() {
         <button onClick={() => setLive((v) => !v)} aria-pressed={live} title="Re-read the sheet every 30 seconds while this tab is open" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", live ? "border-brand-2 bg-brand-faint text-brand" : "border-line text-muted")}><span className={cn("h-1.5 w-1.5 rounded-full", live ? "animate-pulse bg-brand" : "bg-gray-300")} />{live ? "Live · refreshes every 30 s" : "Live off"}</button>
         <span className="text-xs text-muted">ข้อความ Facebook และ Instagram ใหม่เข้าผ่าน Webhook; ตอบจาก Inbox ได้ภายในช่วงเวลาที่ Meta อนุญาต (ระบบจำกัดไว้ 24 ชั่วโมง) และบันทึกชื่อผู้ตอบเพื่อคำนวณ SLA</span>
       </div>
-      <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_1fr_300px]">
+      <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_minmax(0,1fr)_300px]">
         {/* LEFT */}
         <div className={cn("flex min-h-0 flex-col border-r border-line", mobileView === "chat" && "hidden lg:flex")}>
           <div className="space-y-2 border-b border-line p-3">
@@ -120,7 +120,7 @@ export default function InboxPage() {
         </div>
 
         {/* CENTER */}
-        <div className={cn("flex min-h-0 flex-col", mobileView === "list" && "hidden lg:flex")}>
+        <div className={cn("flex min-h-0 min-w-0 flex-col", mobileView === "list" && "hidden lg:flex")}>
           {!lead ? <div className="flex flex-1 items-center justify-center"><EmptyState title="Select a conversation" hint="Pick a customer on the left to view the chat." /></div> : (
             <>
               <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
@@ -129,11 +129,11 @@ export default function InboxPage() {
                 <div className="min-w-0 flex-1"><p className="truncate font-semibold">{lead.name}</p><p className="flex items-center gap-1 text-xs text-muted"><ChannelIcon id={channelOf(lead)} size={12} />{pageName(lead.pageId)}</p></div>
                 <Select value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-44" />
               </div>
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-gray-50 p-4">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden bg-gray-50 p-4">
                 <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">Conversation loaded from your sheet — new messages arrive by webhook</p>
                 {msgs.map((m) => (
                   <div key={m.id} className={m.direction === "out" ? "flex justify-end" : m.direction === "note" ? "flex justify-center" : "flex"}>
-                    <div className={cn("max-w-[78%] rounded-2xl px-3.5 py-2 text-sm", m.direction === "out" ? "bg-brand text-white" : m.direction === "note" ? "w-full max-w-[90%] border border-dashed border-amber-300 bg-amber-50 text-amber-900" : "border border-line bg-surface")}>
+                    <div className={cn("min-w-0 max-w-[78%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm [overflow-wrap:anywhere]", m.direction === "out" ? "bg-brand text-white" : m.direction === "note" ? "w-full max-w-[90%] border border-dashed border-amber-300 bg-amber-50 text-amber-900" : "border border-line bg-surface")}>
                       {m.direction === "note" && <p className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase"><StickyNote size={11} /> Internal note · only your team sees this</p>}
                       {m.text}
                       {m.attachment && <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-xs">{m.attachment.kind === "image" ? "🖼" : "📎"} {m.attachment.name}</div>}

@@ -52,8 +52,6 @@ export default function FilterBar({ hide = [] }: { hide?: ("rep" | "adStatus")[]
           options={[{ value: "all", label: "All Pages" }, ...data.pages.map((p) => ({ value: p.id, label: p.name }))]} />
         <Select label="Campaign" value={filters.campaignId} onChange={(v) => setFilters({ campaignId: v })} className="w-full"
           options={[{ value: "all", label: "All Campaigns" }, ...camps.map((c) => ({ value: c.id, label: c.name }))]} />
-        <Select label="Agency" value={scope.agencyId ?? filters.agencyId} disabled={!!scope.agencyId} onChange={(v) => setFilters({ agencyId: v })} className="w-full"
-          options={[{ value: "all", label: "All Agencies" }, ...data.agencies.map((a) => ({ value: a.id, label: a.name }))]} />
         {!hide.includes("rep") && (
           <Select label="Sales Rep" value={scope.repId ?? filters.repId} disabled={!!scope.repId} onChange={(v) => setFilters({ repId: v })} className="w-full"
             options={[{ value: "all", label: "All Reps" }, ...reps.map((a) => ({ value: a.id, label: a.name }))]} />

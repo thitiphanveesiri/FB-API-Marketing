@@ -4,7 +4,7 @@ import { readTabs } from "@/lib/googleSheets";
 import { mapSheets } from "@/lib/sheetMapper";
 import { chatEvents, SLA_RULES } from "@/lib/sla";
 import { localStamp } from "@/lib/fbSync";
-import { isQuiet, managersOf, notifyUsers, pushConfigured, recipientsFor } from "@/lib/push";
+import { isQuiet, managersOf, notifyConfigured, notifyUsers, recipientsFor } from "@/lib/push";
 
 // PUBLIC endpoint for an external timer (cron-job.org etc.): protected by CRON_SECRET, so it is excluded from the login gate like /api/*.
 // Every call looks at the chats still waiting for a reply and warns about the ones that CROSSED a threshold during the last `interval` minutes,
@@ -18,7 +18,7 @@ async function run(req: Request) {
   const secret = process.env.CRON_SECRET?.trim(); if (!secret) return json({ ok: false, message: "CRON_SECRET not set" }, 503);
   const url = new URL(req.url), given = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "") || url.searchParams.get("key") || "";
   if (!given || !safeEq(given, secret)) return json({ ok: false, message: "forbidden" }, 403);
-  if (!pushConfigured()) return json({ ok: false, message: "VAPID keys not set" }, 503);
+  if (!notifyConfigured()) return json({ ok: false, message: "no notification channel configured" }, 503);
   const win = Math.min(30, Math.max(1, Number(url.searchParams.get("interval")) || 5));
   const ds = mapSheets(await readTabs()).dataset;
   const now = localStamp(new Date().toISOString(), process.env.APP_TZ || "Asia/Bangkok");
