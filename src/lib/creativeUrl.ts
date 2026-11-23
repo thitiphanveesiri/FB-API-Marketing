@@ -42,7 +42,8 @@ export function linkLooksExpired(url?: string, now: number = Date.now()): boolea
 export function needsFreshLink(ad: { id?: string; creative?: { url?: string; ref?: string } }, now: number = Date.now()): boolean {
   const url = ad.creative?.url;
   const ref = ad.creative?.ref;
-  if (ref) return !url || (isMetaCdnLink(url) && linkLooksExpired(url, now));
+  const videoFile = !!url && /\.(mp4|webm|mov)(\?|#|$)/i.test(url); // a video stored as the picture: ask for its cover
+  if (ref) return !url || videoFile || (isMetaCdnLink(url) && linkLooksExpired(url, now));
   // No ref: only worth asking when the saved link is a Meta link that has already aged out.
   return !!url && isMetaCdnLink(url) && linkLooksExpired(url, now);
 }

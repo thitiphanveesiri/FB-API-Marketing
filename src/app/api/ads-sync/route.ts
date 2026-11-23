@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const b = (await req.json()) as { channelId?: string; days?: number; state?: AdsState };
     const ch = (await adsChannels(false)).find((c) => c.channelId === b.channelId); if (!ch) return fail(400, "ไม่พบบัญชีโฆษณานี้ (เชื่อมบัญชีโฆษณาในหน้า Upload ก่อน)");
     if (!g.mapped.dataset.pages.some((p) => p.id === ch.sheetPageId)) return fail(400, "เพจในระบบที่ผูกไว้ไม่มีแล้ว — แก้การเชื่อมต่อบัญชีโฆษณาใหม่");
-    const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
+    const days = Math.min(730, Math.max(1, Math.floor(Number(b.days) || 7)));
     const phase = b.state?.phase === "insights" || b.state?.phase === "done" ? b.state.phase : "ads";
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const pageMap: Record<string, string> = {};
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
     // Sheet keywords are optional overrides. With none configured, use the BEQ name rules mapped to unique existing A Pages.
     const sheetRules = g.mapped.dataset.pages.filter((p) => p.active && p.adKeywords?.length).map((p) => ({ pageId: p.id, keywords: p.adKeywords! }));
     const pageRules = ch.forceSheetPage ? [] : sheetRules.length ? sheetRules : defaultPageRules(pageMap, new Set(g.mapped.dataset.pages.map((p) => p.id)), undefined, pageNames);
-    const out = await adsStep({ pageRules, pageNames, knownCampaignPages, knownCreativeUrls, pageTokensByFbId, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(12, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    const out = await adsStep({ pageRules, pageNames, knownCampaignPages, knownCreativeUrls, pageTokensByFbId, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(24, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.

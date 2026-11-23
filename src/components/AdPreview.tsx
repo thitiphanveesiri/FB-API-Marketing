@@ -12,9 +12,10 @@ export default function AdPreview({ ad, summary }: { ad: Ad; summary?: ReactNode
   const media = resolveCreativeMedia(ad.creative);
   const videoFile = isVideoFileUrl(ad.creative.video) ? ad.creative.video : (media.videoInImageField ? ad.creative.url : undefined);
   const refreshed = useCreativeUrl(ad.id, ad.creative.url);
-  const live = media.imageUrl ? refreshed : undefined;
+  // A video filed as the picture has no usable image of its own, but a refreshed cover (a real picture) is welcome.
+  const live = media.imageUrl ? refreshed : (refreshed && !isVideoFileUrl(refreshed) ? refreshed : undefined);
   const [failed, setFailed] = useState<string | undefined>();
-  useEffect(() => { if (media.imageUrl && linkLooksExpired(live)) askForFreshLink(ad.id); }, [ad.id, live, media.imageUrl]);
+  useEffect(() => { if (media.imageUrl ? linkLooksExpired(live) : !live) askForFreshLink(ad.id); }, [ad.id, live, media.imageUrl]);
   const src = live === failed ? undefined : imageSrc(live);
   const tone = ad.status === "Active" ? "green" : ad.status === "Paused" ? "amber" : "gray";
   return (

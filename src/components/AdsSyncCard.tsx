@@ -65,7 +65,7 @@ export default function AdsSyncCard() {
       <div className="space-y-3">
         <div className="flex flex-wrap items-end gap-2">
           {accts.length > 1 && <Select label="บัญชีโฆษณา" value={ch} onChange={setCh} options={accts.map((a) => ({ value: a.channelId, label: a.name || a.accountId }))} />}
-          <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }]} />
+          <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }, { value: "180", label: "180 วัน (6 เดือน)" }, { value: "365", label: "365 วัน (1 ปี)" }, { value: "730", label: "730 วัน (2 ปี)" }]} />
           <Btn variant="primary" onClick={run} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : "ดึงข้อมูลโฆษณาตอนนี้"}</Btn>
           {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
           <Btn onClick={refreshPics} disabled={busy || picBusy} title="ดึงลิงก์รูปโฆษณาใหม่จาก Meta สำหรับโฆษณาที่ลิงก์เดิมหมดอายุ"><Images size={14} /> {picBusy ? "กำลังรีเฟรช…" : "รีเฟรชรูปโฆษณา"}</Btn>
