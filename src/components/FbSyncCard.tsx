@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { MessageCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
@@ -61,8 +61,9 @@ export default function FbSyncCard() {
     return { fb: p.fbPageId, instagram: !!p.instagram, sheet, label: p.name || (sheet ? sysName(sheet) : "") || `เพจ ${p.fbPageId}` };
   });
   const chosen = which === "all" ? resolved : resolved.filter((r) => r.fb === which);
+  const igCount = chosen.filter((r) => r.instagram).length;
   /** Chats + comments of the chosen pages (one after another, each in its own small batches so one page cannot time out another), then the ad accounts. */
-  const run = async () => {
+  const run = async (igOnly = false) => {
     if (!chosen.length) return;
     stop.current = false; setBusy(true); setDone(null); setAdsDone(null); setNotes([]);
     // The list was read when this page opened; a page can be disconnected since then and the server would answer "not configured".
@@ -79,20 +80,24 @@ export default function FbSyncCard() {
       });
     }
     if (!targets.length) { setBusy(false); setLog("เพจที่เลือกถูกยกเลิกการเชื่อมต่อแล้ว — เชื่อมเพจใหม่ที่การ์ดด้านบน หรือรีเฟรชหน้านี้ก่อนดึงข้อมูล"); return; }
+    if (igOnly) {
+      targets = targets.filter((t) => t.instagram);
+      if (!targets.length) { setBusy(false); setLog("ไม่มีเพจที่เชื่อม Instagram ในรายการที่เลือก — เชื่อมเพจที่ผูกบัญชี Instagram Business ด้วยโทเคนผู้ใช้ในการ์ด “เชื่อมช่องทางแชท” ก่อน แล้วกดตรวจสอบการเชื่อมต่อ"); return; }
+    }
     const tot: Totals = { chats: 0, newLeads: 0, messages: 0, comments: 0, posts: 0, postsWithReportedComments: 0, postsWithoutCommentSummary: 0, commentPagesRead: 0, commentItemsReceived: 0, commentsOutsideRange: 0, pageCommentsSkipped: 0 }, adsTot: AdsTotals = { ads: 0, campaigns: 0, rows: 0, warnings: [], byPage: {} };
     const failed: string[] = [];
     try {
       for (const [n, t] of targets.entries()) {
         if (stop.current) break;
         const tag = targets.length > 1 ? `[${n + 1}/${targets.length}] ${t.label} · ` : `${t.label} · `;
-        try { await pull(t.fb, t.sheet, tot, tag); } catch (e) { failed.push(`${t.label}: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
+        if (!igOnly) try { await pull(t.fb, t.sheet, tot, tag); } catch (e) { failed.push(`${t.label}: ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
         // the Instagram account linked to this page: its direct messages are pulled right after the page, into the same page in the system
         if (t.instagram && !stop.current) {
           try { await pull(t.fb, t.sheet, tot, `${tag}Instagram · `, "instagram"); } catch (e) { failed.push(`${t.label} (Instagram): ${e instanceof Error ? e.message : "ไม่ทราบสาเหตุ"}`); }
         }
       }
       // ads: once per ad account (an account can serve several pages; each ad is filed under the page it posts as)
-      if (withAds && ads.length && !stop.current) {
+      if (!igOnly && withAds && ads.length && !stop.current) {
         for (const [n, a] of ads.entries()) {
           if (stop.current) break;
           try { await pullAds(a.channelId, Number(days) || 30, { stop, log: setLog }, adsTot, ads.length > 1 ? `[โฆษณา ${n + 1}/${ads.length}] ${a.name || a.accountId} · ` : "โฆษณา · "); }
@@ -158,6 +163,7 @@ export default function FbSyncCard() {
             {pages.length > 1 && <Select label="เพจ Facebook" value={which} onChange={setWhich} options={[{ value: "all", label: `ทุกเพจ (${pages.length})` }, ...resolved.map((r) => ({ value: r.fb, label: r.label }))]} disabled={busy} />}
             <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "3", label: "3 วัน" }, { value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }]} disabled={busy} />
             <Btn variant="primary" onClick={() => void run()} disabled={busy || checking}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : which === "all" && pages.length > 1 ? "ดึงข้อมูลทั้งหมด" : "ดึงข้อมูลตอนนี้"}</Btn>
+            <Btn onClick={() => void run(true)} disabled={busy || checking || igCount === 0}><MessageCircle size={14} /> {igCount === 0 ? "ดึงเฉพาะ Instagram (ยังไม่มีเพจที่เชื่อม IG)" : "ดึงเฉพาะ Instagram (แชท + คอมเมนต์)"}</Btn>
             <Btn onClick={() => void checkConnections()} disabled={busy || checking}><ShieldCheck size={14} className={checking ? "animate-pulse" : ""} /> {checking ? "กำลังตรวจสอบ…" : "ตรวจสอบการเชื่อมต่อ"}</Btn>
             {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
           </div>
