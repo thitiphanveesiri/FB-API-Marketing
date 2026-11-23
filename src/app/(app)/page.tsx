@@ -1,5 +1,7 @@
-import { redirect } from "next/navigation";
-
 export default function Home() {
-  redirect("/board");
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted" role="status">
+      Opening your workspace…
+    </div>
+  );
 }

@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing, MessageSquare, Layers } from "lucide-react";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { roleCan } from "@/lib/queries";
+import { landingPathForRole, roleCan } from "@/lib/queries";
 import { ChannelIcon, Avatar, Badge, FeedbackHost, cn, type ChannelMark } from "./ui";
 import DisplayMenu from "./DisplayMenu";
 import { ANCHOR, fmtShort, nowStamp } from "@/lib/dates";
@@ -69,12 +69,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const visible = NAV.filter((n) => roleCan.nav(user.role, n.key));
   const current = path.startsWith("/account") ? "account" : NAV.find((n) => path.startsWith("/" + (n.key === "dashboard" ? "dashboard" : n.key)))?.key;
   const currentLabel = current === "account" ? "User account" : NAV.find((n) => n.key === current)?.label ?? "Workspace";
-  const homeHref = roleCan.nav(user.role, "board") ? "/board" : "/dashboard/ads";
+  const homeHref = landingPathForRole(user.role);
 
-  // Guard routes by role and send users to the first page they are permitted to open.
+  // Resolve the role-aware home only after the authenticated dataset has loaded.
   useEffect(() => {
-    if (source === "sheets" && current && !roleCan.nav(user.role, current)) router.replace(homeHref);
-  }, [current, homeHref, user.role, router, source]);
+    if (source !== "sheets") return;
+    if (path === "/") {
+      router.replace(homeHref);
+      return;
+    }
+    if (current && !roleCan.nav(user.role, current)) router.replace(homeHref);
+  }, [path, current, homeHref, user.role, router, source]);
 
   const pagesForUser = data.pages.filter((p) => p.active && (eff.agencyId === "all" || p.agencyId === eff.agencyId));
   const selectedPage = data.pages.find((p) => p.id === filters.pageId);

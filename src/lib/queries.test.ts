@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { aggregate } from "./metrics";
-import { groupPerfByAdInRange, roleCan } from "./queries";
+import { groupPerfByAdInRange, landingPathForRole, roleCan } from "./queries";
 import type { DailyPerf } from "./types";
 
 test("page-split performance totals include only rows inside the selected date range", () => {
@@ -28,4 +28,12 @@ test("Sales Representatives land on CRM Board and cannot open Dashboard; Admin r
   assert.equal(roleCan.nav("Sales Representative", "board"), true);
   assert.equal(roleCan.nav("Administrator", "dashboard"), true);
   assert.equal(roleCan.nav("Administrator", "board"), true);
+});
+
+test("Administrator lands on Dashboard while other roles keep their current home", () => {
+  assert.equal(landingPathForRole("Administrator"), "/dashboard/ads");
+  assert.equal(landingPathForRole("Sales Representative"), "/board");
+  assert.equal(landingPathForRole("Sales Manager"), "/board");
+  assert.equal(landingPathForRole("Marketing Manager"), "/dashboard/ads");
+  assert.equal(landingPathForRole("Viewer"), "/dashboard/ads");
 });
