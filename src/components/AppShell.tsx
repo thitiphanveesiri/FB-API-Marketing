@@ -124,6 +124,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
+  if (source === "sheets" && current && !roleCan.nav(user.role, current)) {
+    return <div className="flex min-h-screen items-center justify-center bg-bg text-sm text-muted" role="status">กำลังนำคุณไปยังหน้า Board…</div>;
+  }
+
   const renderNavigation = () => NAV_GROUPS.map((group) => {
     const items = visible.filter((n) => n.group === group);
     if (!items.length) return null;
