@@ -63,6 +63,8 @@ export const BOARD_COLUMNS: LeadQuality[] = ["Not Responded", "Very Poor", "Aver
 const STATUS_ALIAS: Record<string, LeadStatus> = {
   "new customer": "New", "new lead": "New", "ลูกค้าใหม่": "New", "new": "New",
   "in process": "In-Process", "in progress": "In-Process", "กำลังดำเนินการ": "In-Process",
+  "แย่": "Very Poor", "very poor": "Very Poor", "poor": "Very Poor", "แย่มาก": "Very Poor",
+  "นัดปรึกษา": "Appointment Booked", "นัดหมาย": "Appointment Booked", "นัดแล้ว": "Appointment Booked",
   "closed won": "Converted", "won": "Converted", "customer": "Converted", "ปิดการขาย": "Converted",
 };
 /** Accepts English or Thai status text (from a sheet or a file). */
