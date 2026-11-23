@@ -36,3 +36,31 @@ Vercel แผนฟรีตั้ง Cron ได้วันละครั้�
 - วันอังคาร (วันหยุด) ไม่เตือนเรื่องใกล้เกิน 15 นาที
 - ต้องเปิดแจ้งเตือนในแต่ละเครื่อง/เบราว์เซอร์แยกกัน
 - iPhone/iPad ต้อง iOS/iPadOS 16.4+ และเพิ่มเว็บไปยังหน้าจอโฮมก่อนเปิด Web Push; ต้องใช้ HTTPS และอนุญาตแจ้งเตือนในเบราว์เซอร์/ระบบปฏิบัติการ
+
+## LINE และ WhatsApp (ไม่บังคับ — ปิดอยู่จนกว่าจะตั้งค่า)
+
+แจ้งเตือนชุดเดียวกับ Web Push (ตอบภายใน 5 นาที / เกิน 15 นาที / ค้างนาน / ข้อความใหม่) จะส่งไปทาง LINE และ WhatsApp ด้วยเมื่อผู้รับมีรหัสในชีต
+
+### 1) ชีต `notify_contacts` (สร้างแท็บใหม่)
+| user_id | line_user_id | whatsapp |
+|---|---|---|
+| U-R1 | Uxxxxxxxx… | 66812345678 |
+
+`user_id` ต้องตรงกับแท็บ `users` · `whatsapp` ใส่เบอร์รหัสประเทศ ไม่มี + หรือ 0 นำหน้า · เว้นว่างได้ถ้าไม่ใช้ช่องทางนั้น
+
+### 2) LINE (Messaging API)
+1. สร้าง LINE Official Account + เปิด Messaging API ที่ LINE Developers
+2. Vercel env: `LINE_CHANNEL_ACCESS_TOKEN` (long-lived) และ `LINE_CHANNEL_SECRET`
+3. ตั้ง Webhook URL เป็น `https://<โดเมน>/api/webhook/line` แล้วกด Verify
+4. ให้เซลล์เพิ่ม OA เป็นเพื่อน แล้วพิมพ์อะไรก็ได้ — บอทจะตอบ userId กลับ → แอดมินวางลงช่อง `line_user_id`
+5. LINE Notify ปิดบริการแล้ว ต้องใช้ Messaging API · โควตาข้อความฟรีมีจำกัด ตรวจแพ็กเกจของ OA
+
+### 3) WhatsApp (Cloud API)
+1. WhatsApp Business Platform: เบอร์ผู้ส่ง + token ถาวร (System User)
+2. สร้างและรออนุมัติ **message template** ที่มีตัวแปรเดียว `{{1}}` (ธุรกิจเริ่มแชทก่อนต้องใช้เทมเพลต)
+3. Vercel env: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE_NAME`, `WHATSAPP_TEMPLATE_LANG` (ค่าเริ่มต้น `th`)
+4. ข้อความธุรกิจเริ่มแชทมีค่าใช้จ่ายตามเรทของ Meta — ไม่ฟรีทั้งหมด
+
+### 4) ทดสอบ
+ล็อกอินแล้วเรียก `POST /api/push/test` (ปุ่มทดสอบในหน้า Account) — ส่งถึงตัวเองทุกช่องทางที่ตั้งค่าไว้
+`APP_URL` (ไม่บังคับ) = โดเมนที่ใช้ในลิงก์ของข้อความ

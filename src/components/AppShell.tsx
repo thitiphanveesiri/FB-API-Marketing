@@ -7,7 +7,8 @@ import { useStore } from "@/lib/store";
 import { roleCan } from "@/lib/queries";
 import { ChannelIcon, Avatar, Badge, FeedbackHost, cn, type ChannelMark } from "./ui";
 import DisplayMenu from "./DisplayMenu";
-import { ANCHOR, fmtShort } from "@/lib/dates";
+import { ANCHOR, fmtShort, nowStamp } from "@/lib/dates";
+import { SLA_RULES, chatEvents } from "@/lib/sla";
 
 const NAV = [
   { key: "dashboard", label: "Dashboard", href: "/dashboard/ads", icon: LayoutDashboard },
@@ -78,6 +79,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const myLeads = data.leads.filter((l) => !l.dropped && (user.role !== "Sales Representative" || l.repId === user.id));
   const unread = myLeads.filter((l) => l.unread).length;
   const unassigned = data.leads.filter((l) => !l.repId && !l.dropped).length;
+  // Customers still waiting for a reply (only chats whose last message is the customer's), longest wait first.
+  const [nowIso, setNowIso] = useState(""); // set after mount (a clock must not be read while the page is prerendered) and every minute
+  useEffect(() => { const tick = () => setNowIso(nowStamp().slice(0, 16)); const first = setTimeout(tick, 0), every = setInterval(tick, 60_000); return () => { clearTimeout(first); clearInterval(every); }; }, []);
+  const waiting = !nowIso ? [] : myLeads.filter((l) => l.valid && l.unread).flatMap((l) => chatEvents(l, data.messages[l.id] ?? [], nowIso, (id) => data.users.some((u) => u.id === id && u.role === "Sales Representative")).filter((e) => e.open && !e.holiday && e.minutes >= 5)).sort((a, b) => b.minutes - a.minutes).slice(0, 5);
   const dueFollow = myLeads.filter((l) => l.followUpDate && l.followUpDate <= ANCHOR).slice(0, 5);
 
   if (source === "loading") {
@@ -160,13 +165,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <div className="relative" ref={bellRef}>
               <button onClick={() => setBell((b) => !b)} aria-label="Notifications" className="relative rounded-lg p-2 text-muted hover:bg-gray-100">
                 <Bell size={18} />
-                {(unread > 0 || dueFollow.length > 0) && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-400 ring-2 ring-surface" />}
+                {(waiting.length > 0 || unread > 0 || dueFollow.length > 0) && <span className={cn("absolute right-1.5 top-1.5 h-2 w-2 rounded-full ring-2 ring-surface", waiting.some((e) => e.minutes >= SLA_RULES.chatMinutes) ? "bg-red-500" : "bg-red-400")} />}
               </button>
               {bell && (
                 <div className="absolute right-0 mt-2 w-80 rounded-xl border border-line bg-surface p-2 shadow-pop">
                   <p className="px-2 py-1 text-xs font-semibold text-muted">Notifications</p>
                   <Link href="/inbox" className="flex justify-between rounded-lg px-2 py-2 text-sm hover:bg-gray-50"><span>Unread conversations</span><b>{unread}</b></Link>
                   {roleCan.reassign(user.role) && <Link href="/board" className="flex justify-between rounded-lg px-2 py-2 text-sm hover:bg-gray-50"><span>Unassigned leads</span><b>{unassigned}</b></Link>}
+                  <p className="px-2 pt-2 text-xs font-semibold text-muted">ลูกค้ารอตอบ</p>
+                  {waiting.length === 0 && <p className="px-2 py-2 text-sm text-muted">ไม่มีแชทที่รอตอบ</p>}
+                  {waiting.map((e) => <Link key={e.leadId + e.inAt} href="/inbox" className="flex justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-gray-50"><span className="truncate">{e.leadName}</span><span className={cn("shrink-0 text-xs font-semibold", e.minutes >= SLA_RULES.chatMinutes ? "text-red-600" : "text-amber-600")}>{e.minutes >= 120 ? `${Math.floor(e.minutes / 60)} ชม.` : `${e.minutes} นาที`}</span></Link>)}
                   <p className="px-2 pt-2 text-xs font-semibold text-muted">Follow-ups due</p>
                   {dueFollow.length === 0 && <p className="px-2 py-2 text-sm text-muted">Nothing due.</p>}
                   {dueFollow.map((l) => <Link key={l.id} href="/inbox" className="block rounded-lg px-2 py-1.5 text-sm hover:bg-gray-50">{l.name} <span className="text-xs text-muted">· {fmtShort(l.followUpDate!)}</span></Link>)}
