@@ -1,28 +1,28 @@
 @import "tailwindcss";
 
 @theme {
-  /* Default = "Soft": warm, low-glare greens. Light and Dark override these below. */
-  --color-bg: #eef3ef;
-  --color-surface: #f9fbf9;
-  --color-ink: #25312b;
-  --color-muted: #5d6a63;
-  --color-line: #dbe3dd;
+  /* Soft theme: cool, low-glare surfaces with the existing BEQ green as the brand accent. */
+  --color-bg: #f4f7fb;
+  --color-surface: #ffffff;
+  --color-ink: #1e293b;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
   --color-brand: #087a58;
   --color-brand-2: #10b981;
-  --color-brand-soft: #d1fae5;
-  --color-brand-faint: #ecfdf5;
+  --color-brand-soft: #dff5eb;
+  --color-brand-faint: #effaf5;
   --color-ok: #059669;
   --color-warn: #d97706;
   --color-danger: #dc6b6b;
   --color-info: #2563eb;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", "Helvetica Neue", Arial, sans-serif;
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-pop: 0 10px 30px rgba(16, 24, 40, 0.12);
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 4px 14px rgba(15, 23, 42, 0.045);
+  --shadow-pop: 0 14px 36px rgba(15, 23, 42, 0.16);
 }
 
 html, body { background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans); }
 body { -webkit-font-smoothing: antialiased; }
-* { scrollbar-width: thin; scrollbar-color: #cbd5d1 transparent; }
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--color-brand-2); outline-offset: 2px; }
@@ -30,7 +30,7 @@ button:disabled { cursor: not-allowed; }
 
 /* ---------- Themes ---------- */
 html[data-theme="light"] {
-  --color-bg: #f7faf8; --color-surface: #ffffff; --color-ink: #1f2937; --color-muted: #6b7280; --color-line: #e5e7eb;
+  --color-bg: #f7f9fc; --color-surface: #ffffff; --color-ink: #1e293b; --color-muted: #64748b; --color-line: #e2e8f0;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
