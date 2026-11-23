@@ -14,9 +14,9 @@ export function Card({ title, subtitle, right, children, className, bodyClass, t
   title?: ReactNode; subtitle?: ReactNode; right?: ReactNode; children?: ReactNode; className?: string; bodyClass?: string; tip?: string;
 }) {
   return (
-    <section className={cn("rounded-2xl border border-line bg-surface shadow-card", className)}>
+    <section className={cn("rounded-2xl border border-line bg-surface shadow-card transition-shadow", className)}>
       {(title || right) && (
-        <header className="flex flex-wrap items-start justify-between gap-2 px-5 pt-4">
+        <header className="flex flex-wrap items-start justify-between gap-2 px-5 pt-5">
           <div>
             <h3 className="flex items-center gap-1.5 text-[15px] font-semibold text-ink">{title}{tip && <InfoTip text={tip} />}</h3>
             {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
@@ -310,7 +310,7 @@ export function KpiCard({ label, value, delta, lowerIsBetter, spark, tip, onClic
       </div>
     </>
   );
-  const cls = cn("rounded-xl border bg-surface p-3.5 text-left", active ? "border-brand-2 ring-2 ring-brand-soft" : "border-line", onClick && "transition hover:border-brand-2 hover:shadow-card");
+  const cls = cn("relative rounded-xl border bg-surface p-4 text-left transition-all", active ? "border-brand-2 bg-brand-faint/50 shadow-sm ring-1 ring-brand-soft" : "border-line", onClick && !active && "hover:-translate-y-0.5 hover:border-brand-2 hover:shadow-card");
   return onClick ? <button onClick={onClick} className={cls}>{body}</button> : <div className={cls}>{body}</div>;
 }
 

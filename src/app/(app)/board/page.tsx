@@ -8,7 +8,7 @@ import { roleCan } from "@/lib/queries";
 import { Avatar, Badge, Select, SearchBox, STATUS_COLOR, cn, ChannelIcon } from "@/components/ui";
 import LeadDrawer from "@/components/LeadDrawer";
 import ChannelFilter, { countByChannel } from "@/components/ChannelFilter";
-import { BOARD_COLUMNS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, statusTh } from "@/lib/types";
+import { BOARD_COLUMNS, ChatChannel, channelOf, Lead, LeadQuality, LeadStatus, SALES_STAGES, statusTh } from "@/lib/types";
 import { ANCHOR, fmtShort, NOW_ISO, relTime } from "@/lib/dates";
 
 const COLUMN_HELP: Record<LeadQuality, string> = {
@@ -118,6 +118,15 @@ export default function Board() {
     return m;
   }, [leads]);
 
+  const pipeline = useMemo(() => ({
+    stages: SALES_STAGES.map((stage) => ({ stage, count: scoped.filter((lead) => lead.status === stage).length })),
+    active: scoped.length,
+    unassigned: scoped.filter((lead) => !lead.repId).length,
+    overdue: scoped.filter((lead) => lead.followUpDate && lead.followUpDate < ANCHOR).length,
+    withoutSalesStage: scoped.filter((lead) => !SALES_STAGES.includes(lead.status)).length,
+  }), [scoped]);
+  const pageLabel = filters.pageId === "all" ? "ทุกเพจ" : data.pages.find((page) => page.id === filters.pageId)?.name ?? "เพจที่เลือก";
+
   const onStart = (e: DragStartEvent) => setActive(data.leads.find((l) => l.id === e.active.id) ?? null);
   const onEnd = async (e: DragEndEvent) => {
     setActive(null);
@@ -128,8 +137,30 @@ export default function Board() {
 
   return (
     <div className="space-y-3">
+      <section className="rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5" aria-labelledby="pipeline-heading">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand">CRM · Customer overview</p>
+            <h2 id="pipeline-heading" className="mt-1 text-lg font-semibold text-ink">สรุป Pipeline ลูกค้า</h2>
+            <p className="mt-1 text-xs text-muted">{pipeline.active.toLocaleString()} ราย · {pageLabel} · สถานะปัจจุบัน ไม่รวมข้อมูล invalid และ dropped</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="gray">ยังไม่มีผู้ดูแล <b className="tabnum">{pipeline.unassigned.toLocaleString()}</b></Badge>
+            <Badge tone={pipeline.overdue > 0 ? "red" : "green"}>เลยกำหนดติดตาม <b className="tabnum">{pipeline.overdue.toLocaleString()}</b></Badge>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {pipeline.stages.map(({ stage, count }) => (
+            <div key={stage} className="rounded-xl border border-line bg-bg/60 p-3 sm:p-3.5">
+              <p className="flex items-center gap-2 text-xs font-medium text-muted"><span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[stage] }} />{statusTh(stage)}</p>
+              <p className="mt-2 text-2xl font-semibold leading-none text-ink tabnum">{count.toLocaleString()}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-[11px] leading-relaxed text-muted">Pipeline นับเฉพาะขั้นการขาย New → In-Process → Intake → Converted เท่านั้น · อีก {pipeline.withoutSalesStage.toLocaleString()} รายยังมีสถานะด้านการสนทนา/คุณภาพ ซึ่งแสดงแยกในบอร์ดด้านล่าง</p>
+      </section>
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold">บอร์ดแชท</h1>
+        <h1 className="text-xl font-semibold">สถานะการสนทนา</h1>
         <div className="ml-auto flex flex-wrap items-end gap-2">
           <SearchBox className="w-56" value={q} onChange={setQ} placeholder="ค้นหาชื่อ, Lead ID, Ad ID…" />
           {user.role !== "Sales Representative" && <Select value={rep} onChange={setRep} options={[{ value: "all", label: "เซลล์ทุกคน" }, { value: "none", label: "ยังไม่มีผู้ดูแล" }, ...data.users.filter((u) => u.role === "Sales Representative").map((u) => ({ value: u.id, label: u.name }))]} />}

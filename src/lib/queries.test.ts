@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { aggregate } from "./metrics";
-import { groupPerfByAdInRange } from "./queries";
+import { groupPerfByAdInRange, roleCan } from "./queries";
 import type { DailyPerf } from "./types";
 
 test("page-split performance totals include only rows inside the selected date range", () => {
@@ -21,4 +21,11 @@ test("page-split performance totals include only rows inside the selected date r
   assert.equal(totals.spend, 15);
   assert.equal(totals.messages, 7);
   assert.equal(selectedRows.some((row) => row.date < "2026-11-01" || row.date > "2026-11-30"), false);
+});
+
+test("Sales Representatives land on CRM Board and cannot open Dashboard; Admin retains both", () => {
+  assert.equal(roleCan.nav("Sales Representative", "dashboard"), false);
+  assert.equal(roleCan.nav("Sales Representative", "board"), true);
+  assert.equal(roleCan.nav("Administrator", "dashboard"), true);
+  assert.equal(roleCan.nav("Administrator", "board"), true);
 });
