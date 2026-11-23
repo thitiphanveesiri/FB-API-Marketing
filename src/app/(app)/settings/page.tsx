@@ -8,7 +8,7 @@ import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, 
 import { Agency, FbPage, ROLES, Role, User } from "@/lib/types";
 
 type Tab = "pages" | "agencies" | "users" | "roles";
-const TABS: { id: Tab; label: string }[] = [{ id: "pages", label: "Pages" }, { id: "agencies", label: "Agencies" }, { id: "users", label: "Users" }, { id: "roles", label: "Roles & Permissions" }];
+const TABS: { id: Tab; label: string }[] = [{ id: "pages", label: "Pages" }, { id: "users", label: "Users" }, { id: "roles", label: "Roles & Permissions" }];
 const emailOk = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
 export default function SettingsPage() {
@@ -87,7 +87,6 @@ function PagesTab({ canManage }: { canManage: boolean }) {
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add page" : "Edit page"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3">
           <TextInput label="Page name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} />
-          <Select label="Agency" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v || null })} options={[{ value: "", label: "No agency" }, ...data.agencies.filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]} />
           <fieldset><legend className="mb-1 text-xs font-medium text-muted">Sales team</legend><div className="grid gap-1 sm:grid-cols-2">{reps.map((r) => (
             <label key={r.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-[#087a58]" checked={edit.teamIds.includes(r.id)} onChange={(e) => setEdit({ ...edit, teamIds: e.target.checked ? [...edit.teamIds, r.id] : edit.teamIds.filter((x) => x !== r.id) })} />{r.name}</label>))}</div></fieldset>
         </div>}
@@ -170,7 +169,7 @@ function UsersTab({ canManage }: { canManage: boolean }) {
       <DataTable columns={cols} rows={data.users} rowKey={(u) => u.id} searchText={(u) => `${u.name} ${u.email} ${u.role}`} searchPlaceholder="Search users…" caption="Users" />
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add user" : "Edit user"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label={edit.role === "Sales Representative" ? "Email (optional — only needed to sign in)" : "Email *"} value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} />
-          <Select label="Role" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as Role })} options={ROLES.map((r) => ({ value: r, label: r }))} />
+          <Select label="Role" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as Role })} options={ROLES.filter((r) => r !== "Agency" || edit.role === "Agency").map((r) => ({ value: r, label: r }))} />
           {edit.role === "Agency" && <><Select label="Agency *" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v })} options={[{ value: "", label: "— select —" }, ...data.agencies.map((a) => ({ value: a.id, label: a.name }))]} />{err.agency && <p className="text-xs text-red-500">{err.agency}</p>}</>}</div>}
       </Modal>
     </Card>
@@ -179,7 +178,6 @@ function UsersTab({ canManage }: { canManage: boolean }) {
 
 const PERMS: { label: string; check: (r: Role) => boolean }[] = [
   { label: "Dashboard (all views)", check: (r) => r !== "Agency" },
-  { label: "Dashboard — own campaigns only", check: (r) => r === "Agency" },
   { label: "Inbox", check: (r) => roleCan.nav(r, "inbox") },
   { label: "Board", check: (r) => roleCan.nav(r, "board") },
   { label: "Edit leads / move stages", check: (r) => roleCan.editLeads(r) },
@@ -195,8 +193,8 @@ function RolesTab() {
   const rows = useMemo(() => PERMS, []);
   return (
     <Card title="Role-based access control" subtitle="Enforced on the server: each role only receives, and can only change, what is allowed below.">
-      <div className="overflow-x-auto rounded-xl border border-line"><table className="w-full text-sm"><thead className="bg-gray-50 text-xs"><tr><th className="px-3 py-2 text-left">Permission</th>{ROLES.map((r) => <th key={r} className="px-3 py-2 text-center font-semibold">{r}</th>)}</tr></thead>
-        <tbody>{rows.map((p) => <tr key={p.label} className="border-t border-line"><td className="px-3 py-2">{p.label}</td>{ROLES.map((r) => <td key={r} className="px-3 py-2 text-center">{p.check(r) ? <Check size={16} className="mx-auto text-emerald-600" aria-label="Allowed" /> : <Minus size={16} className="mx-auto text-gray-300" aria-label="Not allowed" />}</td>)}</tr>)}</tbody></table></div>
+      <div className="overflow-x-auto rounded-xl border border-line"><table className="w-full text-sm"><thead className="bg-gray-50 text-xs"><tr><th className="px-3 py-2 text-left">Permission</th>{ROLES.filter((r) => r !== "Agency").map((r) => <th key={r} className="px-3 py-2 text-center font-semibold">{r}</th>)}</tr></thead>
+        <tbody>{rows.map((p) => <tr key={p.label} className="border-t border-line"><td className="px-3 py-2">{p.label}</td>{ROLES.filter((r) => r !== "Agency").map((r) => <td key={r} className="px-3 py-2 text-center">{p.check(r) ? <Check size={16} className="mx-auto text-emerald-600" aria-label="Allowed" /> : <Minus size={16} className="mx-auto text-gray-300" aria-label="Not allowed" />}</td>)}</tr>)}</tbody></table></div>
       <p className="mt-3 text-xs text-muted">Sales Representatives see only their own assigned leads; Agency users only see campaigns assigned to their agency. To change a user&apos;s role, edit the user on the Users tab.</p>
     </Card>
   );
