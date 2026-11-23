@@ -123,3 +123,9 @@ export const roleCan = {
   viewAgenciesSettings: (r: Role) => r === "Administrator" || r === "Marketing Manager",
   salesTabs: (r: Role) => r !== "Agency",
 };
+
+/** Admin opens the ads dashboard first; other roles keep their current default landing. */
+export function landingPathForRole(role: Role): "/dashboard/ads" | "/board" {
+  if (role === "Administrator") return "/dashboard/ads";
+  return roleCan.nav(role, "board") ? "/board" : "/dashboard/ads";
+}
