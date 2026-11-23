@@ -246,7 +246,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         <main className="mx-auto max-w-[1600px] px-4 pb-8 pt-5 sm:px-6 sm:pt-6">
           {source === "sheets" && (
-            <div className="mb-5 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-950 shadow-sm">
+            <div className="mb-5 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50 text-ink shadow-sm">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs">
                 <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /><b>Google Sheet connected</b></span>
                 <span className="text-emerald-800">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>

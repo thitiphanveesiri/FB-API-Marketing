@@ -16,13 +16,12 @@ const COLUMN_HELP: Record<LeadQuality, string> = {
   Qualified: "ตรงกลุ่ม มีความตั้งใจจริง", "Appointment Booked": "นัดวันเข้าใช้บริการได้แล้ว", "Connection Created": "ได้ข้อมูลติดต่อ สร้างคอนเนกชันใหม่แล้ว",
 };
 /** Which column a chat sits in: its stage if that is a chat type, otherwise (sales-stage leads) its quality grade. */
-// Column background: red = lost / no answer, green = the chat is going well. "Connection Created" keeps the neutral grey.
-const COLUMN_TONE: Record<LeadQuality, string> = {
-  "Not Responded": "border-red-200 bg-red-50", "Very Poor": "border-red-200 bg-red-50",
-  "Average": "border-emerald-200 bg-emerald-50", "Qualified": "border-emerald-200 bg-emerald-50", "Appointment Booked": "border-emerald-200 bg-emerald-50",
-  "Connection Created": "border-line bg-gray-50/70",
-};
 const columnOf = (l: Lead): LeadQuality => ((BOARD_COLUMNS as readonly string[]).includes(l.status) ? (l.status as LeadQuality) : l.quality);
+
+/** A badge that never grows past its card: long Page / ad names are cut with "…" (full text on hover). */
+function Chip({ tone, icon, children }: { tone: "blue" | "gray" | "green" | "violet"; icon?: React.ReactNode; children: string }) {
+  return <Badge tone={tone} className="max-w-full min-w-0"><span title={children} className="inline-flex min-w-0 items-center gap-1">{icon && <span className="shrink-0">{icon}</span>}<span className="truncate">{children}</span></span></Badge>;
+}
 
 function Card({ lead, dragging, onOpen, fbHref }: { lead: Lead; dragging?: boolean; onOpen?: () => void; fbHref?: string }) {
   const { data } = useStore();
@@ -31,18 +30,23 @@ function Card({ lead, dragging, onOpen, fbHref }: { lead: Lead; dragging?: boole
   const page = data.pages.find((p) => p.id === lead.pageId)?.name ?? "";
   const overdue = lead.followUpDate && lead.followUpDate < ANCHOR;
   return (
-    <div className={cn("rounded-xl border border-line bg-surface p-3 text-left shadow-card", dragging && "rotate-1 shadow-pop ring-2 ring-brand-2")}>
-      <button type="button" onClick={onOpen} className="block w-full text-left" aria-label={`เปิด ${lead.name}`}>
-        <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 text-[10px] text-muted">{lead.id}</span></div>
-        <p className="mt-0.5 line-clamp-2 text-xs text-muted">{lead.lastMessage}</p>
-        <div className="mt-2 flex flex-wrap gap-1"><Badge tone="blue">{ad}</Badge><Badge tone="gray"><ChannelIcon id={channelOf(lead)} size={11} /> {page}</Badge>{lead.unread && <Badge tone="green">ยังไม่ได้อ่าน</Badge>}{columnOf(lead) !== lead.status && <Badge tone="violet">{statusTh(lead.status)}</Badge>}</div>
-        {(lead.phone || lead.email || lead.whatsapp) && <p className="mt-1 truncate text-[11px] text-muted">{lead.phone}{lead.whatsapp ? ` · WhatsApp ${lead.whatsapp}` : ""}{lead.email ? ` · ${lead.email}` : ""}</p>}
+    <div className={cn("min-w-0 overflow-hidden rounded-xl border border-line bg-surface p-3 text-left shadow-card transition duration-150 hover:-translate-y-0.5 hover:border-brand-2/60 hover:shadow-pop", dragging && "rotate-1 shadow-pop ring-2 ring-brand-2")}>
+      <button type="button" onClick={onOpen} className="block w-full min-w-0 text-left" aria-label={`เปิด ${lead.name}`}>
+        <div className="flex items-start justify-between gap-2"><p className="min-w-0 truncate text-sm font-semibold">{lead.name}</p><span className="shrink-0 rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-muted">{lead.id}</span></div>
+        <p className="mt-1 line-clamp-2 break-words text-xs leading-relaxed text-muted [overflow-wrap:anywhere]">{lead.lastMessage}</p>
+        <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+          <Chip tone="blue">{ad}</Chip>
+          <Chip tone="gray" icon={<ChannelIcon id={channelOf(lead)} size={11} />}>{page}</Chip>
+          {lead.unread && <Chip tone="green">ยังไม่ได้อ่าน</Chip>}
+          {columnOf(lead) !== lead.status && <Chip tone="violet">{statusTh(lead.status)}</Chip>}
+        </div>
+        {(lead.phone || lead.email || lead.whatsapp) && <p className="mt-1.5 truncate text-[11px] text-muted">{lead.phone}{lead.whatsapp ? ` · WhatsApp ${lead.whatsapp}` : ""}{lead.email ? ` · ${lead.email}` : ""}</p>}
       </button>
-      <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
-        <span className="flex items-center gap-1">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] rounded-full border border-dashed border-gray-300" />}{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span>
-        <span className="flex items-center gap-1">{relTime(lead.lastContactAt, NOW_ISO)}{fbHref && <a href={fbHref} target="_blank" rel="noopener noreferrer" title="เปิด Inbox ของเพจนี้ใน Facebook" aria-label="เปิด Inbox ของเพจนี้ใน Facebook" className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-[#1877F2]"><ExternalLink size={12} /></a>}</span>
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line pt-2 text-[11px] text-muted">
+        <span className="flex min-w-0 items-center gap-1.5">{rep ? <Avatar name={rep.name} hue={rep.hue} size={18} /> : <span className="h-[18px] w-[18px] shrink-0 rounded-full border border-dashed border-gray-300" />}<span className="truncate">{rep?.name.split(" ")[0] ?? "ยังไม่มีผู้ดูแล"}</span></span>
+        <span className="flex shrink-0 items-center gap-1">{relTime(lead.lastContactAt, NOW_ISO)}{fbHref && <a href={fbHref} target="_blank" rel="noopener noreferrer" title="เปิด Inbox ของเพจนี้ใน Facebook" aria-label="เปิด Inbox ของเพจนี้ใน Facebook" className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-[#1877F2]"><ExternalLink size={12} /></a>}</span>
       </div>
-      {lead.followUpDate && <p className={cn("mt-1.5 flex items-center gap-1 text-[11px]", overdue ? "font-semibold text-red-500" : "text-muted")}><CalendarClock size={11} /> นัดติดตาม {fmtShort(lead.followUpDate)}{overdue && " (เลยกำหนด)"}</p>}
+      {lead.followUpDate && <p className={cn("mt-1.5 flex items-center gap-1 text-[11px]", overdue ? "font-semibold text-red-500" : "text-muted")}><CalendarClock size={11} className="shrink-0" /> <span className="truncate">นัดติดตาม {fmtShort(lead.followUpDate)}{overdue && " (เลยกำหนด)"}</span></p>}
     </div>
   );
 }
@@ -69,13 +73,13 @@ function Column({ status, leads, onOpen, enabled }: { status: LeadQuality; leads
   const unassigned = leads.filter((l) => !l.repId).length;
   const more = leads.length > shown;
   return (
-    <section ref={setNodeRef} className={cn("flex w-[272px] shrink-0 flex-col rounded-2xl border transition-colors", isOver ? "border-brand-2 bg-brand-faint" : COLUMN_TONE[status])} aria-label={statusTh(status)}>
-      <header className="border-b border-line px-3 py-2.5">
-        <div className="flex items-center justify-between"><h3 className="flex items-center gap-1.5 text-sm font-semibold"><span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[status] }} />{statusTh(status)}</h3><span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold tabnum ring-1 ring-line">{leads.length}</span></div>
-        <p className="mt-0.5 text-[11px] text-muted">{COLUMN_HELP[status]}</p>
+    <section ref={setNodeRef} style={{ borderTopColor: STATUS_COLOR[status] }} className={cn("flex w-[288px] shrink-0 flex-col overflow-hidden rounded-2xl border border-t-[3px] shadow-card transition-colors", isOver ? "border-brand-2 bg-brand-faint" : "border-line bg-gray-50")} aria-label={statusTh(status)}>
+      <header className="border-b border-line bg-surface/70 px-3.5 py-3">
+        <div className="flex items-center justify-between"><h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold tracking-tight"><span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[status] }} />{statusTh(status)}</h3><span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold tabnum ring-1 ring-line">{leads.length}</span></div>
+        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted">{COLUMN_HELP[status]}</p>
         <p className="mt-1 text-[11px] text-muted">{overdue > 0 && <span className="mr-2 text-red-500">{overdue} เลยกำหนด</span>}{unassigned > 0 && <span>{unassigned} ยังไม่มีผู้ดูแล</span>}{overdue === 0 && unassigned === 0 && "เรียบร้อยดี"}</p>
       </header>
-      <div className="max-h-[calc(100vh-320px)] min-h-[120px] space-y-2 overflow-y-auto p-2"
+      <div className="max-h-[calc(100vh-320px)] min-h-[120px] space-y-2.5 overflow-y-auto overflow-x-hidden p-2.5"
         onScroll={(e) => {
           if (!more) return;
           const el = e.currentTarget;
