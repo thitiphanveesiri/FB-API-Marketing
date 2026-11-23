@@ -98,6 +98,7 @@ export default function Board() {
   const act = useLeadActions();
   const [q, setQ] = useState("");
   const [rep, setRep] = useState("all");
+  const [stage, setStage] = useState("all");
   const [ch, setCh] = useState<ChatChannel | "all">("all");
   const [active, setActive] = useState<Lead | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -112,8 +113,9 @@ export default function Board() {
     const needle = q.trim().toLowerCase();
     return scoped.filter((l) => (ch === "all" || channelOf(l) === ch)
       && (rep === "all" || (rep === "none" ? !l.repId : l.repId === rep))
+      && (stage === "all" || (stage === "none" ? !SALES_STAGES.includes(l.status) : l.status === stage))
       && (!needle || `${l.name} ${l.id} ${l.adId ?? ""}`.toLowerCase().includes(needle)));
-  }, [scoped, q, rep, ch]);
+  }, [scoped, q, rep, ch, stage]);
 
   const grouped = useMemo(() => {
     const m = Object.fromEntries(BOARD_COLUMNS.map((s) => [s, [] as Lead[]])) as Record<LeadQuality, Lead[]>;
@@ -167,6 +169,7 @@ export default function Board() {
         <h1 className="text-xl font-semibold">สถานะการสนทนา</h1>
         <div className="ml-auto flex flex-wrap items-end gap-2">
           <SearchBox className="w-56" value={q} onChange={setQ} placeholder="ค้นหาชื่อ, Lead ID, Ad ID…" />
+          <Select value={stage} onChange={setStage} options={[{ value: "all", label: "ขั้นการขายทั้งหมด" }, ...SALES_STAGES.map((x) => ({ value: x, label: statusTh(x) })), { value: "none", label: "ยังไม่เข้าขั้นการขาย" }]} />
           {user.role !== "Sales Representative" && <Select value={rep} onChange={setRep} options={[{ value: "all", label: "เซลล์ทุกคน" }, { value: "none", label: "ยังไม่มีผู้ดูแล" }, ...data.users.filter((u) => u.role === "Sales Representative").map((u) => ({ value: u.id, label: u.name }))]} />}
         </div>
       </div>
