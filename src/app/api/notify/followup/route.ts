@@ -2,14 +2,14 @@ import { connection, NextResponse } from "next/server";
 import { fail, noStore, userGate } from "@/lib/adminGate";
 import { computeFollowup, SILENT_OPTIONS } from "@/lib/followup";
 import { localStamp } from "@/lib/fbSync";
-import { notifyAudited, stableNotificationId, pushConfigured } from "@/lib/push";
+import { notifyAudited, stableNotificationId, notifyConfigured } from "@/lib/push";
 
 export async function POST(req: Request) {
   await connection();
   const gate = await userGate(req);
   if ("err" in gate) return gate.err;
   if (gate.me.role !== "Administrator") return fail(403, "เฉพาะผู้ดูแลระบบเท่านั้น");
-  if (!pushConfigured()) return fail(503, "ยังไม่ได้ตั้งค่า VAPID และ PUSH_SUBSCRIPTION_SECRET");
+  if (!notifyConfigured()) return fail(503, "ยังไม่ได้ตั้งค่าช่องทางแจ้งเตือน (Web Push / LINE / WhatsApp)");
 
   try {
     const body = await req.json() as { leadId?: unknown; silentHours?: unknown };

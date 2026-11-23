@@ -4,6 +4,7 @@ import * as webpush from "web-push";
 import { readTabs } from "./googleSheets";
 import { rewriteRow, upsertRows } from "./sheetsWrite";
 import type { Obj } from "./sheetOps";
+import { extConfigured, notifyExternal } from "./extNotify";
 import { isClosingMessage } from "./sla";
 import type { Dataset } from "./dataset";
 import type { Lead } from "./types";
@@ -15,6 +16,8 @@ export const pushConfigured = () => !!(
   process.env.PUSH_SUBSCRIPTION_SECRET &&
   process.env.PUSH_SUBSCRIPTION_SECRET.length >= 32
 );
+/** Any delivery channel at all (Web Push, LINE or WhatsApp). */
+export const notifyConfigured = () => pushConfigured() || extConfigured();
 export const vapidPublicKey = () => process.env.VAPID_PUBLIC_KEY ?? "";
 export interface Note { title: string; body: string; url?: string; tag?: string }
 export interface SubInput { endpoint: string; keys: { p256dh: string; auth: string } }
@@ -122,6 +125,11 @@ export async function removeSub(userId: string, endpoint: string): Promise<void>
 
 /** Send to every active device registered to these users. Dead endpoints are disabled in the sheet. */
 export async function notifyUsers(userIds: string[], n: Note): Promise<{ sent: number; failed: number }> {
+  const [web, ext] = await Promise.all([notifyWebPush(userIds, n), notifyExternal(userIds, n)]);
+  return { sent: web.sent + ext.sent, failed: web.failed + ext.failed };
+}
+
+async function notifyWebPush(userIds: string[], n: Note): Promise<{ sent: number; failed: number }> {
   if (!pushConfigured() || !userIds.length) return { sent: 0, failed: 0 };
   webpush.setVapidDetails(process.env.VAPID_SUBJECT!, process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
   const want = new Set(userIds), subs = (await loadSubs()).filter((s) => want.has(s.userId));
@@ -197,7 +205,7 @@ export function isQuiet(date = new Date(), tz = process.env.APP_TZ || "Asia/Bang
 
 /** One audited push per assigned Sales Rep for the inbound messages in a webhook batch. */
 export async function notifyInbound(ds: Dataset, msgs: { message_id: string; lead_id: string; direction: string; text: string }[]): Promise<void> {
-  if (!pushConfigured() || isQuiet()) return;
+  if (!notifyConfigured() || isQuiet()) return;
   const grouped = new Map<string, { text: string; ids: string[] }>();
   for (const m of msgs) {
     if (m.direction !== "in" || !m.message_id || isClosingMessage(m.text)) continue;
