@@ -143,8 +143,6 @@ export default function ChannelsCard() {
           <div className="rounded-xl border border-brand-2 bg-brand-faint p-3 text-sm"><b className="inline-flex items-center gap-1"><ChannelIcon id="facebook" size={14} /> Facebook Messenger</b><div className="mt-1 text-xs text-muted">{fb.length ? `เชื่อมแล้ว ${fb.length} เพจ` : "ยังไม่ได้เชื่อม"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${instagram.length ? "border-pink-300 bg-pink-50" : "border-line"}`}><b className="inline-flex items-center gap-1"><ChannelIcon id="instagram" size={14} /> Instagram Messaging</b><div className="mt-1 text-xs text-muted">{instagram.length ? `เชื่อมแล้ว ${instagram.length} บัญชี` : "เชื่อมผ่านเพจ Facebook"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${ads.length ? "border-brand-2 bg-brand-faint" : "border-line"}`}><b>โฆษณา (Marketing API)</b><div className="mt-1 text-xs text-muted">{ads.length ? `เชื่อมแล้ว ${ads.length} บัญชี` : "ยังไม่ได้เชื่อม"}</div></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="line" size={14} /> LINE</b> <Badge>เร็วๆ นี้</Badge></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="whatsapp" size={14} /> WhatsApp</b> <Badge>เร็วๆ นี้</Badge></div>
         </div>
 
         {fb.map((c) => (
