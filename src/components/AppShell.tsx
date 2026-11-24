@@ -44,8 +44,10 @@ function useServiceWorker() {
 function useOutside(ref: React.RefObject<HTMLElement | null>, close: () => void) {
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", esc); };
   }, [ref, close]);
 }
 
@@ -65,6 +67,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const bellRef = useRef<HTMLDivElement>(null);
   useOutside(acctRef, () => setAcct(false));
   useOutside(bellRef, () => setBell(false));
+  useEffect(() => {
+    if (!menu) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuAt(null); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [menu]);
 
   const visible = NAV.filter((n) => roleCan.nav(user.role, n.key));
   const current = path.startsWith("/account") ? "account" : NAV.find((n) => path.startsWith("/" + (n.key === "dashboard" ? "dashboard" : n.key)))?.key;
@@ -104,7 +112,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <p className="mt-2 text-sm text-muted">No data source is connected yet, so there is nothing to show. Set these in Vercel (Settings → Environment Variables), then redeploy:</p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm"><li><code>GOOGLE_SHEET_ID</code></li><li><code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code> (share the sheet with it as <b>Editor</b>)</li><li><code>GOOGLE_PRIVATE_KEY</code></li></ul>
           <p className="mt-3 text-sm text-muted">Step-by-step guide: <code>docs/DEPLOY.md</code>. Template sheet: <a className="font-medium text-brand underline" href="/google-sheet-template.xlsx">google-sheet-template.xlsx</a>.</p>
-          <div className="mt-4 flex gap-2"><button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Check again</button>{authed && <button onClick={() => { void signOut(); }} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium hover:bg-gray-50">Sign out</button>}</div>
+          <div className="mt-4 flex gap-2"><button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Check again</button>{authed && <button onClick={() => { void signOut(); }} className="rounded-lg border border-line px-3.5 py-2 text-sm font-medium hover:bg-gray-50">Sign out</button>}</div>
         </div>
       </div>
     );
@@ -115,7 +123,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
           <p className="text-base font-semibold">This account has no access</p>
           <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> is not on the allow-list (or is switched off). Ask an Administrator to add the email to the <code>users</code> tab of the Google Sheet.</p>
-          <div className="mt-4 flex justify-center"><button onClick={() => { void signOut(); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Sign out and use another account</button></div>
+          <div className="mt-4 flex justify-center"><button onClick={() => { void signOut(); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Sign out and use another account</button></div>
         </div>
       </div>
     );
@@ -127,7 +135,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <p className="text-base font-semibold">Couldn&apos;t load your Google Sheet</p>
           <p className="mt-2 text-sm text-muted">{sourceMeta?.message}</p>
           <div className="mt-4 flex justify-center gap-2">
-            <button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-[#066a4d]">Try again</button>
+            <button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Try again</button>
           </div>
         </div>
       </div>
@@ -143,7 +151,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (!items.length) return null;
     return (
       <div key={group} className="mb-5">
-        <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted/75">{group}</p>
+        <p className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[0.14em] text-muted">{group}</p>
         <div className="space-y-1">
           {items.map((n) => {
             const Icon = n.icon;

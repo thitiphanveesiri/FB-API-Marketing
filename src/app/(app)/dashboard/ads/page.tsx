@@ -26,6 +26,12 @@ interface PageRow {
   ctr: Num; cpc: Num; purchases: number; valid: number; qrate: Num; quality: ReturnType<typeof chatQuality>; cqc: Num;
 }
 
+/** Upper median of the values that exist (null = no data), so one missing cost never counts as 0. */
+function medianOf(values: Num[]): number | null {
+  const v = values.filter((x): x is number => x != null).sort((a, b) => a - b);
+  return v.length ? v[Math.floor(v.length / 2)] : null;
+}
+
 export default function AdsPerformance() {
   const D = useDash();
   const loading = useBrief();
@@ -37,11 +43,11 @@ export default function AdsPerformance() {
   // Ads that had no spend and no impressions in the range (pages that stopped advertising): hidden unless this switch is on.
   const [showIdle, setShowIdle] = useState(false);
 
-  const series = (fn: (day: ReturnType<typeof aggregate>) => Num) =>
-    D.days.map((d) => fn(aggregate(D.perf.filter((p) => p.date === d))) ?? 0);
-
   const kpis = useMemo(() => {
     const c = D.agg, p = D.aggPrev, dc = D.d, dp = D.dPrev;
+    // Aggregate each day once; the 12 sparklines below all read from this instead of re-filtering the whole range per metric.
+    const perDay = D.days.map((d) => aggregate(D.perf.filter((x) => x.date === d)));
+    const series = (fn: (day: ReturnType<typeof aggregate>) => Num) => perDay.map((a) => fn(a) ?? 0);
     const convRate = (ls: typeof D.ls) => ls.conversionRate;
     return {
       spend: { v: fmtMoney(c.spend), d: pctChange(c.spend, p.spend), s: series((a) => a.spend) },
@@ -58,7 +64,6 @@ export default function AdsPerformance() {
       conv: { v: fmtPct(convRate(D.ls)), d: pctChange(convRate(D.ls), convRate(D.lsPrev)), s: [] as number[] },
       cpp: { v: fmtMoney(dc.costPerPurchase, 0), d: pctChange(dc.costPerPurchase, dp.costPerPurchase), s: series((a) => derive(a).costPerPurchase) },
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [D]);
 
   const allRows: Row[] = useMemo(() => {
@@ -125,16 +130,10 @@ export default function AdsPerformance() {
   }, [D, showIdle]);
 
   // Outlier thresholds: > 1.5× median cost per message flags "high cost"
-  const median = useMemo(() => {
-    const v = rows.map((r) => r.costPerMsg).filter((x): x is number => x != null).sort((a, b) => a - b);
-    return v.length ? v[Math.floor(v.length / 2)] : null;
-  }, [rows]);
+  const median = useMemo(() => medianOf(rows.map((r) => r.costPerMsg)), [rows]);
   const highCost = (r: Row) => median != null && r.costPerMsg != null && r.costPerMsg > median * 1.5;
   const lowPerf = (r: Row) => r.quality === "Poor";
-  const pageMedian = useMemo(() => {
-    const v = pageRows.map((r) => r.costPerMsg).filter((x): x is number => x != null).sort((a, b) => a - b);
-    return v.length ? v[Math.floor(v.length / 2)] : null;
-  }, [pageRows]);
+  const pageMedian = useMemo(() => medianOf(pageRows.map((r) => r.costPerMsg)), [pageRows]);
   const pageHighCost = (r: PageRow) => pageMedian != null && r.costPerMsg != null && r.costPerMsg > pageMedian * 1.5;
 
   const attention = useMemo(() => {
