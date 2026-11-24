@@ -4,7 +4,7 @@ import { isAutoReply, parseAutoRules } from "./autoReply";
 import { parseDate, parseNumber } from "./importer";
 import { SHEET_TABS } from "./sheetSchema";
 import {
-  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User, parseChannel } from "./types";
+  Ad, AdStatus, Agency, Campaign, DailyPerf, DROP_REASONS, Evaluation, ImportRecord, PageInsight, PagePost, PostComment, parseStatus, LeadNote, StatusChange, ImportDataType, DropReason, FbPage, Lead, LeadQuality, LeadStatus, Message, QUALITIES, RecoveryStatus, ROLES, Role, User, parseChannel } from "./types";
 
 export type RawTabs = Record<string, string[][]>;
 export interface SheetWarning { tab: string; row: number; message: string }
@@ -264,6 +264,13 @@ export function mapSheets(tabs: RawTabs): MapResult {
     comments.push({ id, pageId: pid, postId: r.get("post_id"), commenter: r.get("commenter"), text: r.get("text"), at, repliedAt: rep, repliedBy: r.get("replied_by") });
   }
   comments.sort((a, b) => a.at.localeCompare(b.at));
+  const posts: PagePost[] = []; const seenPost = new Set<string>();
+  for (const r of tab("posts").rows) {
+    const id = r.get("post_id"), pid = r.get("page_id");
+    if (!id || !pid) { warn("posts", r.n, "post_id and page_id are required — row skipped"); continue; }
+    if (seenPost.has(id)) { warn("posts", r.n, `Duplicate post_id ${id} — skipped`); continue; } seenPost.add(id);
+    posts.push({ id, pageId: pid, channel: parseChannel(r.get("channel")) === "instagram" ? "instagram" : "facebook", text: r.get("text"), at: dateTime(r.get("posted_at")) ?? "" });
+  }
   // Give every orphaned page id a placeholder page so its rows are usable (and visible) instead of silently dropped.
   for (const [id, o] of orphans) {
     if (pageIds.has(id)) continue;
@@ -283,7 +290,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
   if (!users.some((u) => u.role === "Administrator")) users.unshift({ id: "U-SHEET-ADMIN", name: "Admin (no users tab)", email: "", role: "Administrator", active: true, hue: 160 });
 
   return {
-    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights, comments },
+    dataset: { users, pages, agencies, campaigns, ads, perf, leads, messages, evaluations, imports, insights, comments, posts },
     warnings, missingTabs,
     counts: { pages: pages.length, agencies: agencies.length, users: users.length, campaigns: campaigns.length, ads: ads.length, ad_performance: perf.length, leads: leads.length, messages: Object.values(messages).reduce((s, m) => s + m.length, 0), page_insights: insights.length, post_comments: comments.length, lead_log: logged.size },
   };

@@ -99,9 +99,9 @@ interface FbPerson { id?: string; name?: string }
 interface FbMsg { id: string; message?: string; from?: FbPerson; created_time: string; attachments?: unknown }
 interface FbConv { id: string; updated_time: string; participants?: { data?: FbPerson[] } }
 interface FbComment { id: string; from?: FbPerson; message?: string; created_time: string; comments?: { data?: { from?: FbPerson; created_time: string }[] } }
-interface FbPost { id: string; permalink_url?: string; comments?: { summary?: { total_count?: number } } }
+interface FbPost { id: string; permalink_url?: string; created_time?: string; message?: string; comments?: { summary?: { total_count?: number } } }
 /** Instagram uses its own field names: username/text/timestamp, and the business's replies sit in `replies` (not `comments`). */
-interface IgMedia { id: string; permalink?: string; comments_count?: number; timestamp?: string }
+interface IgMedia { id: string; permalink?: string; comments_count?: number; timestamp?: string; caption?: string }
 interface IgComment { id: string; username?: string; text?: string; timestamp?: string; replies?: { data?: { username?: string; text?: string; timestamp?: string }[] } }
 
 export interface SyncInput { channel?: "instagram"; igId?: string; legacyPageId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
@@ -169,6 +169,9 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   };
   const writes: SyncWrite[] = [];
   const ms = (iso: string) => new Date(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).getTime();
+  /** One `posts` row per feed item, keyed exactly like the comments' post_id (permalink, else id), so a post is listed even when nobody commented on it. */
+  const postWrite = (list: { id: string; url?: string; text?: string; at?: string }[], channel: "facebook" | "instagram"): SyncWrite => ({ tab: "posts", keyCols: ["post_id"], mode: "upsert",
+    rows: list.map((p) => ({ post_id: p.url || p.id, page_id: i.sheetPageId, channel, text: (p.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300), posted_at: p.at ? localStamp(p.at, i.tz) : "" })) });
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
@@ -322,7 +325,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         if (feedDone) return { next: { phase: "done" }, writes, counts };
         let feed: Graph;
         try {
-          feed = await graph(`${ig}/media`, { fields: "id,permalink,comments_count,timestamp", limit: String(IG_MEDIA_PER_BATCH), ...(feedAfter ? { after: feedAfter } : {}) }, tok, f, base, 900, 0);
+          feed = await graph(`${ig}/media`, { fields: "id,permalink,comments_count,timestamp,caption", limit: String(IG_MEDIA_PER_BATCH), ...(feedAfter ? { after: feedAfter } : {}) }, tok, f, base, 900, 0);
         } catch (e) {
           if (noPerm(e)) return skip("ข้ามคอมเมนต์ Instagram: โทเคนของเพจยังไม่มีสิทธิ์ instagram_basic / instagram_manage_comments — สร้างโทเคนใหม่โดยติ๊กสิทธิ์เหล่านี้ แล้วเชื่อมเพจใหม่");
           throw e;
@@ -330,6 +333,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
         const media = ((feed.data ?? []) as IgMedia[]).filter((m) => !!m.id);
         const cutoff = since - 14 * 86400000, inRange = media.filter((m) => !m.timestamp || ms(m.timestamp) >= cutoff);
         counts.posts = inRange.length;
+        if (inRange.length) writes.push(postWrite(inRange.map((m) => ({ id: m.id, url: m.permalink, text: m.caption, at: m.timestamp })), "instagram"));
         counts.postsWithReportedComments = inRange.filter((m) => (m.comments_count ?? 0) > 0).length;
         counts.postsWithoutCommentSummary = inRange.filter((m) => m.comments_count == null).length;
         batch = inRange.filter((m) => (m.comments_count ?? 1) > 0).map((m) => ({ id: m.id, url: m.permalink || m.id }));
@@ -412,20 +416,21 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       let feed: Graph;
       try {
         try {
-          feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,comments.filter(toplevel).limit(0).summary(true)" }, tok, f, base, 900, 0);
+          feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,created_time,message,comments.filter(toplevel).limit(0).summary(true)" }, tok, f, base, 900, 0);
         } catch (e) {
           if (!transientOrUnsupported(e)) throw e;
           try {
-            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,comments.limit(0).summary(true)" }, tok, f, base, 900, 0);
+            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,created_time,message,comments.limit(0).summary(true)" }, tok, f, base, 900, 0);
           } catch (e2) {
             if (!transientOrUnsupported(e2)) throw e2;
-            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url" }, tok, f, base, 900, 0);
+            feed = await graph(`${fb}/feed`, { ...feedParams, fields: "id,permalink_url,created_time,message" }, tok, f, base, 900, 0);
           }
         }
       } catch (e) { if (noPerm(e)) return skip(); throw e; }
 
       const posts = ((feed.data ?? []) as FbPost[]).filter((post) => !!post.id);
       counts.posts = posts.length;
+      if (posts.length) writes.push(postWrite(posts.map((post) => ({ id: post.id, url: post.permalink_url, text: post.message, at: post.created_time })), "facebook"));
       counts.postsWithReportedComments = posts.filter((post) => (post.comments?.summary?.total_count ?? 0) > 0).length;
       counts.postsWithoutCommentSummary = posts.filter((post) => post.comments?.summary?.total_count == null).length;
       batch = posts

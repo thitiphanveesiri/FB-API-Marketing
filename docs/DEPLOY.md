@@ -66,7 +66,7 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 - ผู้ดูแลของแชท = คอลัมน์ `assigned_to` ของ lead; แชทที่ยังไม่มีผู้ดูแลไม่ถูกนับให้ใคร
 
 ## 6c. ดึงแชท/คอมเมนต์จากเพจ Facebook โดยตรง (ปุ่มในหน้า Upload)
-ปุ่ม **"ดึงข้อมูลตอนนี้"** (เฉพาะ Administrator) เรียก Graph API ของ Meta จากเซิร์ฟเวอร์ แล้วเขียนแชททีละข้อความลง `messages`, ลีดใหม่ลง `leads`, คอมเมนต์ลง `post_comments`
+ปุ่ม **"ดึงข้อมูลตอนนี้"** (เฉพาะ Administrator) เรียก Graph API ของ Meta จากเซิร์ฟเวอร์ แล้วเขียนแชททีละข้อความลง `messages`, ลีดใหม่ลง `leads`, คอมเมนต์ลง `post_comments` และ **ทุกโพสต์** ของ Facebook / Instagram (รวมโพสต์ที่ยังไม่มีคอมเมนต์) ลงแท็บ `posts` ซึ่งระบบสร้างให้เองตอนซิงก์ครั้งแรก — หน้า Comments ใช้แท็บนี้แสดงรายการโพสต์ทั้งหมดและกรอง "ไม่มีคอมเมนต์" (โพสต์ย้อนหลังตามจำนวนวันที่เลือก + 14 วัน; โพสต์ที่ซิงก์ก่อนอัปเดตนี้จะปรากฏเมื่อกดดึงข้อมูลอีกครั้ง)
 
 ตัวแปรใน Vercel (Settings → Environment Variables แล้ว Redeploy):
 - `FB_PAGE_ID` — id ของเพจ Facebook
