@@ -9,6 +9,7 @@
   --color-line: #e2e8f0;
   --color-brand: #087a58;
   --color-brand-2: #10b981;
+  --color-brand-hover: #066a4d;
   --color-brand-soft: #dff5eb;
   --color-brand-faint: #effaf5;
   --color-ok: #059669;
@@ -24,6 +25,8 @@ html, body { background: var(--color-bg); color: var(--color-ink); font-family: 
 body { -webkit-font-smoothing: antialiased; }
 * { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
 button { cursor: pointer; }
+/* Fingers need ~44px: small icon buttons get an invisible hit area instead of a bigger look. */
+.hit::after { content: ""; position: absolute; inset: -8px; }
 button:disabled { cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--color-brand-2); outline-offset: 2px; }
 .tabnum { font-variant-numeric: tabular-nums; }

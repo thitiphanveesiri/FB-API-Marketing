@@ -99,6 +99,8 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
       if (ads.length) writes.push({ tab: "ads", keyCols: ["ad_id"], rows: ads, mode: "updateOnly" });
       const comments = ds.comments.filter((c) => c.pageId === from).map((c) => ({ comment_id: c.id, page_id: to }));
       if (comments.length) writes.push({ tab: "post_comments", keyCols: ["comment_id"], rows: comments, mode: "updateOnly" });
+      const posts = ds.posts.filter((x) => x.pageId === from).map((x) => ({ post_id: x.id, page_id: to }));
+      if (posts.length) writes.push({ tab: "posts", keyCols: ["post_id"], rows: posts, mode: "updateOnly" });
       // insert (not upsert) keeps the target page's own figures when both pages have a row for the same day
       const insights = ds.insights.filter((x) => x.pageId === from).map((x) => ({ page_id: to, date: x.date, reach: x.reach, views: x.views, engagements: x.engagements, followers: x.followers, new_followers: x.newFollowers, link_clicks: x.linkClicks }));
       if (insights.length) writes.push({ tab: "page_insights", keyCols: ["page_id", "date"], rows: insights, mode: "insert" });

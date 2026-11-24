@@ -76,6 +76,9 @@ export function parseStatus(v: string): LeadStatus | undefined {
 /** A customer comment under a page post. repliedAt = when the page first replied (null = not yet). */
 export interface PostComment { id: string; pageId: string; postId: string; commenter: string; text: string; at: string; repliedAt: string | null; repliedBy: string }
 
+/** A page post (Facebook feed item or Instagram media) saved by the sync, so posts nobody commented on can be listed too. `id` matches PostComment.postId; `at` is "" when unknown. */
+export interface PagePost { id: string; pageId: string; channel: "facebook" | "instagram"; text: string; at: string }
+
 export interface PageInsight { pageId: string; date: string; reach: number; views: number; engagements: number; followers: number; newFollowers: number; linkClicks: number }
 
 export type DropReason = (typeof DROP_REASONS)[number];
