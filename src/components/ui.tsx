@@ -3,9 +3,13 @@ import clsx from "clsx";
 import {
   ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Download, ChevronLeft, ChevronRight, Info, Search, X, XCircle, Inbox as InboxIcon,
 } from "lucide-react";
-import { ButtonHTMLAttributes, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ButtonHTMLAttributes, ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useStore, ConfirmState } from "@/lib/store";
+import { LeadQuality, LeadStatus, statusTh } from "@/lib/types";
+import { ChatQuality } from "@/lib/metrics";
+import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
+import { linkLooksExpired } from "@/lib/creativeUrl";
 
 export const cn = clsx;
 
@@ -43,14 +47,15 @@ export function Badge({ tone = "gray", children, className }: { tone?: Tone; chi
 }
 
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger"; size?: "sm" | "md" };
-export function Btn({ variant = "secondary", size = "md", className, ...p }: BtnProps) {
+export function Btn({ variant = "secondary", size = "md", className, type = "button", ...p }: BtnProps) {
   return (
     <button
+      type={type}
       {...p}
       className={cn(
         "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:opacity-50",
         size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2 text-sm",
-        variant === "primary" && "bg-brand text-white shadow-sm hover:bg-[#066a4d]",
+        variant === "primary" && "bg-brand text-white shadow-sm hover:bg-brand-hover",
         variant === "secondary" && "border border-line bg-surface text-ink hover:bg-gray-50",
         variant === "ghost" && "text-muted hover:bg-gray-100 hover:text-ink",
         variant === "danger" && "bg-red-500 text-white hover:bg-red-600",
@@ -77,8 +82,8 @@ export const hueOf = (s: string) => [...s].reduce((a, c) => (a * 31 + c.charCode
 export function InfoTip({ text }: { text: string }) {
   return (
     <span className="group relative inline-flex">
-      <Info size={13} className="text-gray-400 hover:text-brand" aria-label={text} />
-      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-40 mt-1.5 hidden w-60 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs font-normal leading-snug text-white shadow-pop ring-1 ring-white/10 group-hover:block">
+      <span tabIndex={0} role="img" aria-label={text} className="inline-flex rounded text-muted hover:text-brand focus-visible:text-brand"><Info size={13} aria-hidden /></span>
+      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-40 mt-1.5 hidden w-60 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs font-normal leading-snug text-white shadow-pop ring-1 ring-white/10 group-focus-within:block group-hover:block">
         {text}
       </span>
     </span>
@@ -129,7 +134,7 @@ export function TextInput({ label, error, className, ...p }: React.InputHTMLAttr
   return (
     <label className={cn("flex flex-col gap-1 text-xs font-medium text-muted", className)}>
       {label}
-      <input {...p} className={cn("h-9 rounded-lg border bg-surface px-2.5 text-sm font-normal text-ink placeholder:text-gray-400 focus:border-brand-2", error ? "border-red-300" : "border-line")} />
+      <input {...p} className={cn("h-9 rounded-lg border bg-surface px-2.5 text-sm font-normal text-ink placeholder:text-muted focus:border-brand-2", error ? "border-red-300" : "border-line")} />
       {error && <span className="text-xs font-normal text-red-500">{error}</span>}
     </label>
   );
@@ -138,7 +143,7 @@ export function TextArea({ label, error, className, ...p }: React.TextareaHTMLAt
   return (
     <label className={cn("flex flex-col gap-1 text-xs font-medium text-muted", className)}>
       {label}
-      <textarea {...p} className={cn("rounded-lg border bg-surface px-2.5 py-2 text-sm font-normal text-ink placeholder:text-gray-400 focus:border-brand-2", error ? "border-red-300" : "border-line")} />
+      <textarea {...p} className={cn("rounded-lg border bg-surface px-2.5 py-2 text-sm font-normal text-ink placeholder:text-muted focus:border-brand-2", error ? "border-red-300" : "border-line")} />
       {error && <span className="text-xs font-normal text-red-500">{error}</span>}
     </label>
   );
@@ -146,31 +151,56 @@ export function TextArea({ label, error, className, ...p }: React.TextareaHTMLAt
 export function SearchBox({ value, onChange, placeholder = "Search…", className }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string }) {
   return (
     <div className={cn("relative", className)}>
-      <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+      <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder}
-        className="h-9 w-full rounded-lg border border-line bg-surface pl-8 pr-2.5 text-sm placeholder:text-gray-400 focus:border-brand-2" />
+        className="h-9 w-full rounded-lg border border-line bg-surface pl-8 pr-2.5 text-sm placeholder:text-muted focus:border-brand-2" />
     </div>
   );
 }
 
 /* ---------- overlays ---------- */
+/** Escape closes, focus moves into the dialog and Tab stays inside it, then goes back to whatever opened it. */
+function useDialog(open: boolean, onClose: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Callers pass a fresh onClose every render; keeping it in a ref stops the effect (and the focus move) re-running on each keystroke.
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; });
+  useEffect(() => {
+    if (!open) return;
+    const from = document.activeElement as HTMLElement | null;
+    const box = ref.current;
+    const items = () => Array.from(box?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') ?? []);
+    (items()[0] ?? box)?.focus();
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { close.current(); return; }
+      if (e.key !== "Tab") return;
+      const f = items();
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    window.addEventListener("keydown", h);
+    return () => { window.removeEventListener("keydown", h); from?.focus?.(); };
+  }, [open]);
+  return ref;
+}
+
+const closeBtn = "hit relative rounded-md p-1.5 text-muted hover:bg-gray-100 hover:text-ink";
+
 export function Modal({ open, onClose, title, children, footer, width = 520 }: {
   open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; width?: number;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+  const ref = useDialog(open, onClose);
+  const titleId = useId();
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-gray-900/40" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full flex-col rounded-2xl bg-surface shadow-pop" style={{ maxWidth: width }}>
+      <div ref={ref} tabIndex={-1} className="relative flex max-h-[90vh] w-full flex-col rounded-2xl bg-surface shadow-pop outline-none" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="rounded-md p-1 text-muted hover:bg-gray-100"><X size={18} /></button>
+          <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className={closeBtn}><X size={18} /></button>
         </div>
         <div className="overflow-y-auto px-5 py-4">{children}</div>
         {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
@@ -179,20 +209,16 @@ export function Modal({ open, onClose, title, children, footer, width = 520 }: {
   );
 }
 export function Drawer({ open, onClose, title, children, width = 560 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; width?: number }) {
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+  const ref = useDialog(open, onClose);
+  const titleId = useId();
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-gray-900/30" onClick={onClose} />
-      <aside className="absolute right-0 top-0 flex h-full w-full flex-col bg-surface shadow-pop" style={{ maxWidth: width }}>
+      <aside ref={ref} tabIndex={-1} className="absolute right-0 top-0 flex h-full w-full flex-col bg-surface shadow-pop outline-none" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="rounded-md p-1 text-muted hover:bg-gray-100"><X size={18} /></button>
+          <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className={closeBtn}><X size={18} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">{children}</div>
       </aside>
@@ -247,7 +273,7 @@ export function FeedbackHost() {
           <div key={t.id} className="pointer-events-auto flex items-start gap-2 rounded-xl border border-line bg-surface p-3 text-sm shadow-pop">
             {t.tone === "error" ? <XCircle size={18} className="mt-0.5 text-red-500" /> : t.tone === "info" ? <Info size={18} className="mt-0.5 text-blue-600" /> : <CheckCircle2 size={18} className="mt-0.5 text-emerald-600" />}
             <p className="flex-1">{t.text}</p>
-            <button onClick={() => dismissToast(t.id)} aria-label="Dismiss" className="text-gray-400 hover:text-gray-600"><X size={15} /></button>
+            <button type="button" onClick={() => dismissToast(t.id)} aria-label="Dismiss" className="hit relative rounded p-0.5 text-muted hover:text-ink"><X size={15} /></button>
           </div>
         ))}
       </div>
@@ -275,7 +301,7 @@ function ConfirmDialog({ state, onDone }: { state: ConfirmState; onDone: () => v
 
 /* ---------- KPI ---------- */
 export function Delta({ value, lowerIsBetter = false }: { value: number | null; lowerIsBetter?: boolean }) {
-  if (value == null) return <span className="text-xs text-gray-400" title="No comparable data in the previous period">n/a</span>;
+  if (value == null) return <span className="text-xs text-muted" title="No comparable data in the previous period">n/a</span>;
   const up = value >= 0;
   const good = Math.abs(value) < 0.05 ? null : lowerIsBetter ? !up : up;
   return (
@@ -311,7 +337,7 @@ export function KpiCard({ label, value, delta, lowerIsBetter, spark, tip, onClic
     </>
   );
   const cls = cn("relative rounded-xl border bg-surface p-4 text-left transition-all", active ? "border-brand-2 bg-brand-faint/50 shadow-sm ring-1 ring-brand-soft" : "border-line", onClick && !active && "hover:-translate-y-0.5 hover:border-brand-2 hover:shadow-card");
-  return onClick ? <button onClick={onClick} className={cls}>{body}</button> : <div className={cls}>{body}</div>;
+  return onClick ? <button type="button" onClick={onClick} aria-pressed={!!active} className={cls}>{body}</button> : <div className={cls}>{body}</div>;
 }
 
 /* ---------- data table ---------- */
@@ -419,7 +445,10 @@ export function DataTable<T>({
                   <tr
                     key={rowKey(r)}
                     onClick={onRowClick ? () => onRowClick(r) : undefined}
-                    className={cn("border-t border-line transition-colors", onRowClick && "cursor-pointer hover:bg-brand-faint/60", rowClass?.(r))}
+                    // Clickable rows must be reachable by keyboard too; ignore keys that bubble up from buttons/links inside the row.
+                    tabIndex={onRowClick ? 0 : undefined}
+                    onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onRowClick(r); } } : undefined}
+                    className={cn("border-t border-line transition-colors", onRowClick && "cursor-pointer hover:bg-brand-faint/60 focus-visible:bg-brand-faint/60", rowClass?.(r))}
                   >
                     {columns.map((c) => (
                       <td key={c.key} className={cn("px-3 py-2.5 align-middle", c.align === "right" ? "text-right tabnum" : c.align === "center" ? "text-center" : "", c.sticky && "sticky left-0 z-[1] bg-inherit")}>{c.render(r)}</td>
@@ -449,8 +478,6 @@ export function DataTable<T>({
 }
 
 /* ---------- shared status colouring ---------- */
-import { LeadQuality, LeadStatus, statusTh } from "@/lib/types";
-import { ChatQuality } from "@/lib/metrics";
 export const STATUS_TONE: Record<LeadStatus, Tone> = {
   "Not Responded": "red", "Very Poor": "red", Average: "green", Qualified: "green",
   "Appointment Booked": "green", "Connection Created": "violet", New: "blue", "In-Process": "amber", Intake: "violet", Converted: "green",
@@ -528,5 +555,3 @@ export function ChannelIcon({ id, size = 14, color, className }: { id: ChannelMa
   const Mark = id === "instagram" ? Instagram : id === "line" ? Line : id === "whatsapp" ? WhatsApp : Facebook;
   return <span className={cn("inline-flex shrink-0 items-center justify-center", className)} style={{ color: color ?? CHANNEL_MARK_COLOR[id] }}><Mark size={size} /></span>;
 }
-import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
-import { linkLooksExpired } from "@/lib/creativeUrl";
