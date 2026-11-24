@@ -7,6 +7,7 @@ import { mapSheets } from "@/lib/sheetMapper";
 import { Denied, Op, planOp } from "@/lib/mutations";
 import { upsertRows } from "@/lib/sheetsWrite";
 import { loadChannels, saveChannel } from "@/lib/channels";
+import { isSameOrigin } from "@/lib/requestOrigin";
 
 const noStore = { headers: { "Cache-Control": "no-store" } };
 const stamp = () => { // "YYYY-MM-DD HH:MM" in the business time zone, not the server's
@@ -17,8 +18,7 @@ const stamp = () => { // "YYYY-MM-DD HH:MM" in the business time zone, not the s
 export async function POST(req: Request) {
   await connection();
   if (!sheetsConfigured()) return NextResponse.json({ ok: false, message: "No Google Sheet is connected." }, { status: 503, ...noStore });
-  const origin = req.headers.get("origin");
-  if (origin && origin !== new URL(req.url).origin) return NextResponse.json({ ok: false, message: "Bad origin" }, { status: 403, ...noStore });
+  if (!isSameOrigin(req)) return NextResponse.json({ ok: false, message: "Bad origin" }, { status: 403, ...noStore });
   let session = null as { email: string; name: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401, ...noStore }); }
   else if (process.env.ALLOW_PUBLIC !== "1") return NextResponse.json({ ok: false, message: "Sign-in is not configured." }, { status: 503, ...noStore });

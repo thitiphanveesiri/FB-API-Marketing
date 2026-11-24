@@ -6,6 +6,7 @@ import { getCached, setCached } from "@/lib/sheetCache";
 import { readTabs, sheetsConfigured } from "@/lib/googleSheets";
 import { mapSheets, type MapResult } from "@/lib/sheetMapper";
 import type { User } from "@/lib/types";
+import { isSameOrigin } from "@/lib/requestOrigin";
 
 export const noStore = { headers: { "Cache-Control": "no-store" } };
 export const fail = (status: number, message: string, extra: object = {}) => NextResponse.json({ ok: false, message, ...extra }, { status, ...noStore });
@@ -19,7 +20,7 @@ async function readMapped(): Promise<{ mapped: MapResult } | { err: NextResponse
 
 export async function adminOnly(req: Request, write: boolean): Promise<{ err: NextResponse } | { mapped: MapResult }> {
   if (!sheetsConfigured()) return { err: fail(503, "ยังไม่ได้เชื่อม Google Sheet") };
-  if (write) { const origin = req.headers.get("origin"); if (origin && origin !== new URL(req.url).origin) return { err: fail(403, "Bad origin") }; }
+  if (write && !isSameOrigin(req)) return { err: fail(403, "Bad origin") };
   let session = null as { email: string; name: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return { err: fail(401, "กรุณาล็อกอินใหม่") }; }
   else if (process.env.ALLOW_PUBLIC !== "1") return { err: fail(503, "ยังไม่ได้ตั้งค่าการล็อกอิน") };
@@ -32,7 +33,7 @@ export async function adminOnly(req: Request, write: boolean): Promise<{ err: Ne
 /** Any signed-in user with a role; returns the full (unscoped) dataset for server-side checks. */
 export async function userGate(req: Request): Promise<{ err: NextResponse } | { mapped: MapResult; me: User }> {
   if (!sheetsConfigured()) return { err: fail(503, "ยังไม่ได้เชื่อม Google Sheet") };
-  const origin = req.headers.get("origin"); if (origin && origin !== new URL(req.url).origin) return { err: fail(403, "Bad origin") };
+  if (!isSameOrigin(req)) return { err: fail(403, "Bad origin") };
   let session = null as { email: string; name: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return { err: fail(401, "กรุณาล็อกอินใหม่") }; }
   else if (process.env.ALLOW_PUBLIC !== "1") return { err: fail(503, "ยังไม่ได้ตั้งค่าการล็อกอิน") };

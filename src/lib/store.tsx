@@ -4,6 +4,7 @@ import { emptyDataset, Dataset } from "./dataset";
 import { defaultFilters, effectiveFilters, Filters, applyPreset, Preset } from "./queries";
 import { localToday, nowStamp, setAnchor } from "./dates";
 import type { SheetWarning } from "./sheetMapper";
+import { apiErrorMessage, readApiBody, readMutationResult, type ApiResult } from "./apiResponse";
 import {
   Ad, Campaign, Agency, DailyPerf, Evaluation, FbPage, ImportRecord, Lead, LeadQuality, LeadStatus, Message,
   QUALIFIED_QUALITIES, QUALITIES, RecoveryStatus, PageInsight, SALES_STAGES, User, DropReason,
@@ -25,7 +26,7 @@ export interface SourceMeta { fetchedAt?: string; warnings: SheetWarning[]; warn
 interface Store {
   source: Source;
   sourceMeta: SourceMeta | null;
-  reloadData: (fresh?: boolean) => Promise<void>;
+  reloadData: (fresh?: boolean) => Promise<boolean>;
   authed: boolean; // a real signed-in session exists
   signOut: () => Promise<void>;
   data: Dataset;
@@ -63,7 +64,7 @@ interface Store {
   saveUser: (u: User) => void;
   assignCampaigns: (agencyId: string, campaignIds: string[]) => void;
   // imports
-  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[], extra?: { messages?: unknown[]; comments?: unknown[]; users?: { user_id: string; name: string }[] }) => Promise<boolean>;
+  commitImport: (rec: ImportRecord, perf: DailyPerf[], leads: Lead[], replaceKeys: Set<string> | null, newAds?: Ad[], newCampaigns?: Campaign[], insights?: PageInsight[], patches?: { lead_id: string; set: Record<string, string | number> }[], extra?: { messages?: unknown[]; comments?: unknown[]; users?: { user_id: string; name: string }[] }) => Promise<ApiResult>;
   setCreative: (adId: string, image: string, video: string) => Promise<boolean>;
 }
 
@@ -131,10 +132,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full reload so no data stays in memory
     finally { window.location.href = "/login"; }
   }, []);
-  const reloadData = useCallback(async (fresh = false) => {
-    try { applyResponse(false, await (await fetch(`/api/data${fresh ? "?fresh=1" : ""}`, { cache: "no-store" })).json()); }
-    catch { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: "Could not reach the server." }); setSource("error"); }
-  }, [applyResponse]);
+  const reloadData = useCallback(async (fresh = false): Promise<boolean> => {
+    const fail = (message: string) => {
+      if (source === "sheets") {
+        setSourceMeta((prev) => prev ? { ...prev, message } : { warnings: [], warningCount: 0, missingTabs: [], message });
+        return false;
+      }
+      setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message });
+      setSource("error");
+      return false;
+    };
+    try {
+      const response = await fetch(`/api/data${fresh ? "?fresh=1" : ""}`, { cache: "no-store" });
+      const body = await readApiBody(response);
+      const j = body as Parameters<typeof applyResponse>[1] | null;
+      if (j && (j.source === "forbidden" || j.source === "unauthenticated")) {
+        applyResponse(false, j);
+        return true;
+      }
+      if (!response.ok || !j || !["sheets", "setup"].includes(j.source))
+        return fail(apiErrorMessage(body, response, "โหลดข้อมูลจาก Google Sheet ไม่สำเร็จ"));
+      applyResponse(false, j);
+      return true;
+    } catch {
+      return fail("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง");
+    }
+  }, [applyResponse, source]);
   useEffect(() => {
     let alive = true;
     fetch("/api/data", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (alive) applyResponse(true, j); }).catch(() => { if (alive) { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: "Could not reach the server." }); setSource("error"); } });
@@ -161,18 +184,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
   const byName = user.name;
 
-  const persist = useCallback(async (op: object, quiet = false): Promise<boolean> => {
+  const persistResult = useCallback(async (op: object, quiet = false): Promise<ApiResult> => {
+    let result: ApiResult;
     try {
-      const r = await fetch("/api/mutate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(op) });
-      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (r.ok && j.ok) return true;
-      if (r.status === 401) { // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- session expired: full reload to sign-in
-        window.location.href = "/login"; return false; }
-      toast(`Not saved: ${j.message ?? "unknown error"}. Reloading from the sheet.`, "error");
-    } catch { if (!quiet) toast("Not saved: could not reach the server. Reloading from the sheet.", "error"); }
+      const response = await fetch("/api/mutate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(op) });
+      result = await readMutationResult(response);
+      if (result.ok) return result;
+      if (response.status === 401) { // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- session expired: full reload to sign-in
+        window.location.href = "/login"; return result; }
+      if (!quiet) toast(`บันทึกไม่สำเร็จ: ${result.message}`, "error");
+    } catch {
+      result = { ok: false, message: "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง" };
+      if (!quiet) toast(`บันทึกไม่สำเร็จ: ${result.message}`, "error");
+    }
     await reloadData(true);
-    return false;
+    return result;
   }, [toast, reloadData]);
+  const persist = useCallback(async (op: object, quiet = false): Promise<boolean> => (await persistResult(op, quiet)).ok, [persistResult]);
 
   const store: Store = {
     source, sourceMeta, reloadData, authed, signOut,
@@ -296,7 +324,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     commitImport: async (rec, perf, leads, replaceKeys, newAds = [], newCampaigns = [], insights = [], patches = [], extra = {}) => {
-      const ok = await persist({
+      const result = await persistResult({
         t: "import.commit", replace: !!replaceKeys,
         record: { import_id: rec.id, page_id: rec.pageId, data_type: rec.dataType, file_name: rec.fileName, mode: rec.mode, total: rec.total, imported: rec.imported, failed: rec.failed, duplicates: rec.duplicates },
         campaigns: newCampaigns.map((c) => ({ campaign_id: c.id, name: c.name, page_id: c.pageId, agency_id: c.agencyId, objective: c.objective })),
@@ -306,9 +334,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         insights: insights.map((i) => ({ page_id: i.pageId, date: i.date, reach: i.reach, views: i.views, engagements: i.engagements, followers: i.followers, new_followers: i.newFollowers, link_clicks: i.linkClicks })),
         messages: extra.messages ?? [], comments: extra.comments ?? [], users: extra.users ?? [],
         patches,
-      });
-      if (ok) await reloadData(true); // show exactly what the sheet now holds
-      return ok;
+      }, true);
+      if (result.ok) await reloadData(true); // show exactly what the sheet now holds
+      return result;
     },
   };
 

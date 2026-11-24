@@ -46,6 +46,7 @@ export default function UploadPage() {
   const [mode, setMode] = useState<"incremental" | "replace">("incremental");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [saveErr, setSaveErr] = useState("");
   const [summary, setSummary] = useState<ImportRecord | null>(null);
   const [viewErr, setViewErr] = useState<ImportRecord | null>(null);
   const [drag, setDrag] = useState(false);
@@ -100,28 +101,33 @@ export default function UploadPage() {
   }, [validation, data]);
   const igMerged = useMemo(() => (validation?.leads ?? []).filter((l) => l.channel === "instagram" && l.pageId === pageId).length, [validation, pageId]);
 
-  const reset = () => { setStep(0); setFileName(""); setHeaders([]); setRows([]); setMapping({}); setErr(""); setSummary(null); setMode("incremental"); setIgChoice("auto"); };
+  const reset = () => { setStep(0); setFileName(""); setHeaders([]); setRows([]); setMapping({}); setErr(""); setSaveErr(""); setSummary(null); setMode("incremental"); setIgChoice("auto"); };
 
   const loadFile = async (file: File) => {
-    setErr(""); setBusy(true);
+    setErr(""); setSaveErr(""); setBusy(true);
     try {
       const ext = file.name.split(".").pop()?.toLowerCase();
-      if (!["csv", "xlsx", "xls"].includes(ext ?? "")) throw new Error("Unsupported file type. Please upload a .csv, .xlsx or .xls file.");
-      if (file.size > MAX_BYTES) throw new Error("File is larger than 8 MB. Split it by date range and import in parts.");
+      if (!["csv", "xlsx", "xls"].includes(ext ?? "")) throw new Error("รองรับเฉพาะไฟล์ .csv, .xlsx หรือ .xls");
+      if (file.size > MAX_BYTES) throw new Error("ไฟล์ใหญ่เกิน 8 MB กรุณาแยกตามช่วงวันที่แล้วอัปโหลดทีละส่วน");
       let hdr: string[] = [], recs: Record<string, string>[] = [];
       if (ext === "csv") {
         const text = await file.text();
         const out = Papa.parse<Record<string, string>>(text.replace(/^﻿/, ""), { header: true, skipEmptyLines: "greedy" });
+        if (out.errors.length > 0) {
+          const e = out.errors[0];
+          throw new Error(`อ่านไฟล์ CSV ไม่สำเร็จที่แถว ${(e.row ?? 0) + 2}: ${e.message}`);
+        }
         hdr = out.meta.fields ?? []; recs = out.data;
       } else {
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
         const ws = wb.Sheets[wb.SheetNames[0]];
+        if (!ws) throw new Error("ไม่พบชีตข้อมูลในไฟล์ Excel");
         const raw = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, raw: false, defval: "", dateNF: "yyyy-mm-dd" });
         hdr = (raw[0] ?? []).map((h) => String(h).trim());
         recs = raw.slice(1).filter((r) => r.some((c) => String(c).trim() !== "")).map((r) => Object.fromEntries(hdr.map((h, i) => [h, String(r[i] ?? "")])));
       }
       hdr = hdr.filter((h) => h && h.trim() !== "");
-      if (hdr.length === 0 || recs.length === 0) throw new Error("The file has no header row or no data rows.");
+      if (hdr.length === 0 || recs.length === 0) throw new Error("ไม่พบหัวตารางหรือข้อมูลในไฟล์ กรุณาตรวจสอบว่าหัวตารางอยู่แถวแรกและมีข้อมูลอย่างน้อย 1 แถว");
       setFileName(file.name); setHeaders(hdr); setRows(recs);
       const det0 = auto ? detectType(hdr) : null;
       const det = det0;
@@ -136,7 +142,7 @@ export default function UploadPage() {
         if (auto) toast("ระบบเดาประเภทไฟล์ไม่ได้ กรุณาเลือกประเภทและจับคู่คอลัมน์เอง", "info");
         setStep(auto ? 4 : 3);
       }
-    } catch (e) { setErr(e instanceof Error ? e.message : "Could not read the file."); }
+    } catch (e) { setErr(e instanceof Error ? e.message : "อ่านไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง"); }
     finally { setBusy(false); }
   };
 
@@ -171,14 +177,20 @@ export default function UploadPage() {
       ...(type === "Sales Performance" ? validation.salesPatches.map((p) => ({ lead_id: p.leadId, set: { assigned_to: p.repName, ...(p.firstResponseMin != null ? { first_response_min: p.firstResponseMin } : {}), ...(p.followUps != null ? { follow_ups: p.followUps } : {}) } })) : []),
       ...validation.leadPatches.map((p) => ({ lead_id: p.leadId, set: p.set })),
     ];
-    setBusy(true);
-    const ok = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches, {
-      users: validation.newReps.map((r) => ({ user_id: r.id, name: r.name })),
-      messages: validation.messages.map((m) => ({ message_id: m.id, lead_id: m.leadId, direction: m.direction, text: m.text, sent_at: m.at.replace("T", " ").slice(0, 16) })),
-      comments: validation.comments.map((c) => ({ comment_id: c.id, page_id: c.pageId, post_id: c.postId, commenter: c.commenter, text: c.text, commented_at: c.at.replace("T", " ").slice(0, 16), replied_at: c.repliedAt ? c.repliedAt.replace("T", " ").slice(0, 16) : "", replied_by: c.repliedBy })),
-    });
-    setBusy(false);
-    if (!ok) return; // the store already showed why it was not saved; stay on this step so nothing is lost
+    setBusy(true); setSaveErr("");
+    let result;
+    try {
+      result = await commitImport(rec, perf, validation.leads, mode === "replace" ? new Set([...validation.replaceKeys, ...validation.replaceInsightKeys]) : null, newAds, newCamps, validation.insights, patches, {
+        users: validation.newReps.map((r) => ({ user_id: r.id, name: r.name })),
+        messages: validation.messages.map((m) => ({ message_id: m.id, lead_id: m.leadId, direction: m.direction, text: m.text, sent_at: m.at.replace("T", " ").slice(0, 16) })),
+        comments: validation.comments.map((c) => ({ comment_id: c.id, page_id: c.pageId, post_id: c.postId, commenter: c.commenter, text: c.text, commented_at: c.at.replace("T", " ").slice(0, 16), replied_at: c.repliedAt ? c.repliedAt.replace("T", " ").slice(0, 16) : "", replied_by: c.repliedBy })),
+      });
+    } catch {
+      result = { ok: false, message: "บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง" };
+    } finally {
+      setBusy(false);
+    }
+    if (!result.ok) { setSaveErr(result.message); return; }
     setSummary(rec); setStep(7);
     toast(`บันทึก ${validation.ok} จาก ${validation.total} แถวลง Google Sheet แล้ว${validation.merged ? ` · อัปเดต ${validation.merged} แชทที่จับคู่ไว้แล้ว` : ""}`);
   };
@@ -292,6 +304,7 @@ export default function UploadPage() {
             {(type === "Lead Data" || type === "Inbox Conversations") && validation.merged === 0 && validation.leads.length > 0 &&
               <li className="text-amber-700">ไม่ตรงกับลีดเดิมเลย — ถ้าควรจะตรง ให้ตรวจ 2 อย่าง: เพจที่เลือกต้องเป็นเพจเดียวกับแชท และชื่อในไฟล์ต้องเขียนเหมือนชื่อที่แสดงบนแชท (หรือมีเบอร์/อีเมลตรงกับลีดเดิม)</li>}
             <li>{validation.failed} failed and {validation.duplicates} duplicate rows will be skipped.</li></ul>
+          {saveErr && <p role="alert" className="flex items-start gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span><b>บันทึกไม่สำเร็จ</b><br />{saveErr} ข้อมูลในหน้าจอยังอยู่ สามารถกดยืนยันอีกครั้งได้</span></p>}
           <div className="flex gap-2"><Btn onClick={() => setStep(5)}>Back</Btn><Btn variant="primary" onClick={commit} disabled={validation.ok === 0 || busy}>{busy ? "กำลังบันทึกลง Google Sheet…" : "ยืนยันและบันทึก"}</Btn></div></div>)}
 
         {step === 7 && summary && (<div className="space-y-4"><h2 className="flex items-center gap-2 font-semibold"><CheckCircle2 className="text-emerald-600" size={20} /> ขั้นที่ 8 · สรุปการนำเข้า</h2>

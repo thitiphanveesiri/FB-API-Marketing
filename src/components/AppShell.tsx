@@ -268,7 +268,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs">
                 <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /><b>Google Sheet connected</b></span>
                 <span className="text-emerald-800">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>
-                <button className="font-semibold underline underline-offset-2" disabled={reloading} onClick={async () => { setReloading(true); await reloadData(true); setReloading(false); }}>{reloading ? "Reloading…" : "Reload data"}</button>
+                <button className="font-semibold underline underline-offset-2" disabled={reloading} onClick={async () => { setReloading(true); try { await reloadData(true); } finally { setReloading(false); } }}>{reloading ? "Reloading…" : "Reload data"}</button>
+                {sourceMeta?.message && <span role="alert" className="rounded-lg bg-red-50 px-2.5 py-1 font-medium text-red-700">{sourceMeta.message}</span>}
                 {(sourceMeta?.warningCount ?? 0) > 0 || (sourceMeta?.missingTabs.length ?? 0) > 0 ? <button className="font-semibold underline underline-offset-2" onClick={() => setShowWarn((v) => !v)}>{sourceMeta?.warningCount} data warning(s) {showWarn ? "▲" : "▼"}</button> : <span>No data warnings</span>}
               </div>
               {showWarn && (
