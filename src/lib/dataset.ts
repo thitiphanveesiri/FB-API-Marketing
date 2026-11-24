@@ -1,4 +1,4 @@
-import type { Ad, Agency, Campaign, DailyPerf, Evaluation, FbPage, ImportRecord, Lead, Message, PageInsight, PostComment, User } from "./types";
+import type { Ad, Agency, Campaign, DailyPerf, Evaluation, FbPage, ImportRecord, Lead, Message, PageInsight, PagePost, PostComment, User } from "./types";
 
 export interface Dataset {
   users: User[];
@@ -13,5 +13,6 @@ export interface Dataset {
   imports: ImportRecord[];
   insights: PageInsight[];
   comments: PostComment[];
+  posts: PagePost[];
 }
-export const emptyDataset = (): Dataset => ({ users: [], pages: [], agencies: [], campaigns: [], ads: [], perf: [], leads: [], messages: {}, evaluations: [], imports: [], insights: [], comments: [] });
+export const emptyDataset = (): Dataset => ({ users: [], pages: [], agencies: [], campaigns: [], ads: [], perf: [], leads: [], messages: {}, evaluations: [], imports: [], insights: [], comments: [], posts: [] });
