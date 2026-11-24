@@ -18,13 +18,14 @@ const postSite = (postId: string) => (/instagram\.com/i.test(postId) ? "Instagra
 export default function CommentsPage() {
   const { data, filters } = useStore();
   const [view, setView] = useState<"all" | "late" | "open">("all");
+  const [site, setSite] = useState<"all" | "Facebook" | "Instagram">("all");
   const now = useMemo(() => nowStamp().slice(0, 16), []);
   const pageName = (id: string) => data.pages.find((p) => p.id === id)?.name ?? id;
 
   const rows = useMemo(() => data.comments
-    .filter((c) => c.at.slice(0, 10) >= filters.start && c.at.slice(0, 10) <= filters.end && (filters.pageId === "all" || c.pageId === filters.pageId))
+    .filter((c) => c.at.slice(0, 10) >= filters.start && c.at.slice(0, 10) <= filters.end && (filters.pageId === "all" || c.pageId === filters.pageId) && (site === "all" || postSite(c.postId) === site))
     .map((c) => commentEvent(c, now))
-    .sort((a, b) => b.comment.at.localeCompare(a.comment.at)), [data.comments, filters.start, filters.end, filters.pageId, now]);
+    .sort((a, b) => b.comment.at.localeCompare(a.comment.at)), [data.comments, filters.start, filters.end, filters.pageId, site, now]);
 
   const shown = view === "late" ? rows.filter((r) => r.late) : view === "open" ? rows.filter((r) => r.open) : rows;
   const repliedMinutes = rows.filter((r) => !r.open).map((r) => r.minutes);
@@ -64,7 +65,9 @@ export default function CommentsPage() {
           </div>
 
           <Card title="รายการคอมเมนต์" subtitle={`${shown.length} จาก ${rows.length} คอมเมนต์ · กด “เปิดโพสต์” เพื่อดูโพสต์ต้นทาง`}
-            right={<div className="flex gap-1">
+            right={<div className="flex flex-wrap gap-1">
+              {(["all", "Facebook", "Instagram"] as const).map((v) => <Btn key={v} size="sm" variant={site === v ? "primary" : "secondary"} onClick={() => setSite(v)}>{v === "all" ? "FB + IG" : v}</Btn>)}
+              <span className="mx-1 w-px self-stretch bg-line" aria-hidden />
               <Btn size="sm" variant={view === "all" ? "primary" : "secondary"} onClick={() => setView("all")}>ทั้งหมด</Btn>
               <Btn size="sm" variant={view === "late" ? "primary" : "secondary"} onClick={() => setView("late")}>ตอบช้า</Btn>
               <Btn size="sm" variant={view === "open" ? "primary" : "secondary"} onClick={() => setView("open")}>ยังไม่ตอบ</Btn>

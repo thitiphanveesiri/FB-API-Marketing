@@ -117,3 +117,12 @@ export function instagramRecipientOf(leadId: string, instagramAccountId: string)
   const id = leadId.slice(prefix.length);
   return /^\d{1,32}$/.test(id) ? id : null;
 }
+
+/** Who to message on Instagram. Webhook leads encode the customer in their id (`IG-<account>-<igsid>`); leads imported by the history sync
+ *  keep the conversation id as lead_id and store the customer's Instagram-scoped id in fb_user_id, so fall back to that. */
+export function instagramRecipientFor(lead: { id: string; fbUserId?: string }, instagramAccountId: string): string | null {
+  const fromId = instagramRecipientOf(lead.id, instagramAccountId);
+  if (fromId) return fromId;
+  const stored = lead.fbUserId?.trim();
+  return stored && /^\d{5,32}$/.test(stored) && stored !== instagramAccountId ? stored : null;
+}

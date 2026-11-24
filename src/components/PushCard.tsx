@@ -25,6 +25,8 @@ export default function PushCard() {
       if (Notification.permission === "denied") { setState("blocked"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js").catch(() => null);
       const sub = await reg?.pushManager.getSubscription();
+      // Re-register this device under the CURRENT account (it may have been enabled by someone else on a shared browser, or its row may be missing).
+      if (sub) await fetch("/api/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) }).catch(() => undefined);
       if (live) setState(sub ? "on" : "off");
     })();
     return () => { live = false; };

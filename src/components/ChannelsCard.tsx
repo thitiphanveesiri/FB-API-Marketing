@@ -84,6 +84,7 @@ export default function ChannelsCard() {
   const fb = list.filter((c) => c.channel === "facebook" && c.active && c.hasToken);
   const instagram = list.filter((c) => c.channel === "instagram" && c.active && c.hasToken);
   const form = editing !== null || fb.length === 0;
+  const base = hook.replace(/\/api\/webhook\/.*$/, "") || "https://<โดเมนของคุณ>";
 
   const save = async () => {
     setBusy(true); setMsg("");
@@ -143,8 +144,22 @@ export default function ChannelsCard() {
           <div className="rounded-xl border border-brand-2 bg-brand-faint p-3 text-sm"><b className="inline-flex items-center gap-1"><ChannelIcon id="facebook" size={14} /> Facebook Messenger</b><div className="mt-1 text-xs text-muted">{fb.length ? `เชื่อมแล้ว ${fb.length} เพจ` : "ยังไม่ได้เชื่อม"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${instagram.length ? "border-pink-300 bg-pink-50" : "border-line"}`}><b className="inline-flex items-center gap-1"><ChannelIcon id="instagram" size={14} /> Instagram Messaging</b><div className="mt-1 text-xs text-muted">{instagram.length ? `เชื่อมแล้ว ${instagram.length} บัญชี` : "เชื่อมผ่านเพจ Facebook"}</div></div>
           <div className={`rounded-xl border p-3 text-sm ${ads.length ? "border-brand-2 bg-brand-faint" : "border-line"}`}><b>โฆษณา (Marketing API)</b><div className="mt-1 text-xs text-muted">{ads.length ? `เชื่อมแล้ว ${ads.length} บัญชี` : "ยังไม่ได้เชื่อม"}</div></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="line" size={14} /> LINE</b> <Badge>เร็วๆ นี้</Badge></div>
-          <div className="rounded-xl border border-line p-3 text-sm text-muted"><b className="inline-flex items-center gap-1"><ChannelIcon id="whatsapp" size={14} /> WhatsApp</b> <Badge>เร็วๆ นี้</Badge></div>
+        </div>
+
+        <div className="rounded-xl border border-dashed border-line p-3">
+          <h3 className="text-sm font-semibold">เตรียม Webhook สำหรับ LINE และ WhatsApp</h3>
+          <p className="mb-2 text-xs text-muted">เตรียมปลายทางรับ Webhook ไว้แล้ว — ยังไม่ได้เชื่อมกับบัญชีจริง ข้อความจาก LINE / WhatsApp จะยังไม่เข้า Inbox จนกว่าจะตั้งค่าและเปิดใช้งาน</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+              <b className="inline-flex items-center gap-1 text-sm"><ChannelIcon id="line" size={14} /> LINE <Badge>พร้อมเชื่อม Webhook · ยังไม่ได้เชื่อม</Badge></b>
+              <CopyBox label="Webhook URL (LINE Developers → Messaging API)" value={`${base}/api/webhook/line`} />
+            </div>
+            <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+              <b className="inline-flex items-center gap-1 text-sm"><ChannelIcon id="whatsapp" size={14} /> WhatsApp <Badge>พร้อมเชื่อม Webhook · ยังไม่ได้เชื่อม</Badge></b>
+              <CopyBox label="Callback URL (Meta → WhatsApp → Configuration)" value={`${base}/api/webhook/whatsapp`} />
+              <p className="text-xs text-muted">Verify Token: ตั้งค่า WHATSAPP_VERIFY_TOKEN บนเซิร์ฟเวอร์</p>
+            </div>
+          </div>
         </div>
 
         {fb.map((c) => (
