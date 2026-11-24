@@ -47,7 +47,7 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 
 ## 6. How it behaves
 - Reads happen only on the server (`/api/data`); the key never reaches the browser. Results are cached ~60 s per server instance; **Reload from sheet** in the banner bypasses the cache.
-- **Saved to the sheet:** moving cards on the Board, quality reviews, assigning reps, internal notes, dropping/recovering leads, Settings (users, pages, agencies, campaign assignment) and every Upload. Each change is checked on the server against the signed-in role. Not saved: replies typed in Inbox (no Messenger API, so they are never sent).
+- **Saved to the sheet:** moving cards on the Board, quality reviews, assigning reps, internal notes, dropping/recovering leads, Settings (users, pages, agencies, campaign assignment) and every Upload. With a connected channel, text replies typed in Inbox are sent to the customer and saved in `messages`; each change is checked on the server against the signed-in role.
 - **Tabs the app creates and writes itself:** `lead_log` (stage changes and notes), `evaluations`, `page_insights`, `import_log`. Do not rename their header row; you can add your own columns.
 - **Upload (Facebook Page data):** Inbox chats/customers → Board cards; Ads Manager exports (per ad or per campaign) → `ads`, `campaigns`, `ad_performance`; Page Insights → `page_insights`; Leads Center / Lead Ads → `leads`. Thai or English column headings and status names are accepted. "Add new rows only" skips rows already imported; "Overwrite" updates rows with the same key.
 - Writes are applied one at a time per server instance; two people saving at the same instant is safe, but edits made directly in the sheet while the app writes the same cell can overwrite each other.
@@ -91,15 +91,30 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 
 ## 6d. Connect chat channels (Access Token + Webhook)
 
-Upload page → **เชื่อมช่องทางแชท** (Administrators only). Facebook Messenger is live; LINE and WhatsApp are planned (the `channels` tab already has a `channel` column).
+Upload page → **เชื่อมช่องทางแชท** (Administrators only). Facebook Messenger, Instagram Messaging, LINE and WhatsApp are supported.
 
 1. Meta App → Messenger → generate a **Page Access Token** (must be a Page token; permissions `pages_messaging`, `pages_read_engagement`, `pages_manage_metadata`).
 2. Paste the token and the **App Secret** (App → Settings → Basic) into the card, pick the page in the dashboard, save. The app checks the token against Meta and subscribes the page to `messages` + `message_echoes`.
 3. In Meta App → Webhooks (Page) paste the **Callback URL** and **Verify Token** shown in the card, then subscribe `messages` and `message_echoes`.
 4. New messages are written to `messages` / `leads` within seconds. History before connecting: use the backfill button below the card.
 
-Security: tokens/secrets are stored in the Google Sheet tab `channels` — **anyone who can open the sheet can read them**; keep sharing "Restricted". The browser only ever receives the last 4 characters. `/api/webhook/facebook` is public and every POST is verified with `X-Hub-Signature-256` (HMAC-SHA256, App Secret).
-Optional: set `APP_URL` if the Callback URL shown is not your public domain.
+### LINE
+
+1. In LINE Developers, open the channel's **Messaging API** settings and copy the **Channel ID**, **Channel Access Token** and **Channel Secret**.
+2. In the dashboard's LINE form, paste those values and choose the Sheet page that will store the chats. Each connected LINE channel must use its own Channel Secret because LINE's webhook payload has no reliable account identifier.
+3. Paste the displayed **Webhook URL** into LINE Developers, enable webhook sending, and allow the bot to receive user messages. Test with a user who has added the bot as a friend.
+
+### WhatsApp Cloud API
+
+1. In Meta → WhatsApp → Configuration, copy the **Phone Number ID** and use a WhatsApp access token for that number. Paste the token, the Meta App's **App Secret**, and the destination Sheet page into the dashboard's WhatsApp form.
+2. The app generates a **Verify Token** if you leave it blank; copy it from the connected row.
+3. Paste the displayed **Callback URL** and Verify Token into Meta, then subscribe the `messages` webhook field. Incoming status callbacks are acknowledged but are not stored as chat messages.
+4. WhatsApp permits free-form replies only within 24 hours after the customer's latest inbound message; outside that window the app blocks the reply and explains the error.
+
+LINE and WhatsApp create channel-scoped leads (`LINE-<channelId>-<userId>` and `WA-<phoneNumberId>-<waId>`) and provider-prefixed message IDs. Repeated webhook deliveries do not create duplicate messages. Non-text incoming items are stored with a short Thai placeholder and the original filename when available.
+
+Security: tokens/secrets are stored in the Google Sheet tab `channels` — **anyone who can open the sheet can read them**; keep sharing "Restricted". The browser only ever receives whether a credential exists and the last 4 token characters. Webhook POSTs are verified with HMAC-SHA256: `X-Hub-Signature-256` for Meta and `x-line-signature` for LINE.
+Optional: set `APP_URL` if the Callback URL shown is not your public domain. `WHATSAPP_VERIFY_TOKEN` is optional and only provides a preconfigured handshake token; per-channel tokens saved in the Sheet also work.
 
 ## 6e. Follow-up page ("ติดตาม")
 
@@ -107,5 +122,5 @@ Built from the chat messages already in the sheet (no extra setup): median first
 
 ## 6f. Replying from the Inbox + who answered (SLA)
 
-With a Messenger page connected (§6d), the Inbox reply box sends to the customer for real (Send API). Rules: only within 24 h of the customer's last message (Meta's rule); Sales Representatives can reply only to leads assigned to them; text only (no attachments yet). Each reply is saved in `messages` with `sent_by` = the user who sent it, and SLA credits the reply to that salesperson. Replies typed in Business Suite arrive through the webhook with no sender, so SLA credits the lead's assigned rep. A manager/admin replying does not take a rep's chat away: it stays with the assigned rep.
-The page token needs `pages_messaging`. The `messages` tab gets a `sent_by` column automatically.
+With a channel connected (§6d), the Inbox reply box sends to the customer for real on Facebook, Instagram, LINE and WhatsApp. Facebook, Instagram and WhatsApp allow free-form replies only within 24 h of the customer's last inbound message; LINE does not use Meta's 24-hour rule. Sales Representatives can reply only to leads assigned to them; text only (no attachments yet). Each reply is saved in `messages` with `sent_by` = the user who sent it, and SLA credits the reply to that salesperson. A manager/admin replying does not take a rep's chat away: it stays with the assigned rep.
+Facebook/Instagram need `pages_messaging`; LINE and WhatsApp use the credentials saved in their channel rows. If delivery succeeds but saving to the Sheet fails, the UI warns not to press Send again because the customer may already have received the message. The `messages` tab gets a `sent_by` column automatically.

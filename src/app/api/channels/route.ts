@@ -95,18 +95,45 @@ export async function GET(req: Request) {
     const list = (await loadChannels()).map(toPublic);
     const verifyToken = list.find((c) => (c.channel === "facebook" || c.channel === "instagram") && c.active && c.verifyToken)?.verifyToken || defaultVerifyToken();
     const webhookUrl = `${origin(req)}/api/webhook/facebook`;
-    return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: webhookUrl, instagram: webhookUrl } }, noStore);
+    return NextResponse.json({ ok: true, channels: list, verifyToken, webhookUrls: { facebook: webhookUrl, instagram: webhookUrl, line: `${origin(req)}/api/webhook/line`, whatsapp: `${origin(req)}/api/webhook/whatsapp` } }, noStore);
   } catch { return fail(502, "อ่านการตั้งค่าช่องทางจาก Google Sheet ไม่สำเร็จ"); }
 }
 
-interface Body { action?: "save" | "disconnect" | "connectAll" | "listAds"; channel?: string; accountId?: string; channelId?: string; accessToken?: string; appSecret?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
+async function saveExternalChannel(body: Body, all: Channel[], sheetPageId: string) {
+  const kind = body.channel as "line" | "whatsapp";
+  const requestedId = (body.channelId ?? "").trim();
+  const previous = requestedId ? all.find((channel) => channel.channelId === requestedId) : undefined;
+  if (requestedId && (!previous || previous.channel !== kind)) return fail(404, "ไม่พบการเชื่อมต่อนี้");
+  const accountId = (body.accountId ?? previous?.accountId ?? "").trim();
+  if (kind === "line" && !/^\d{5,30}$/.test(accountId)) return fail(400, "ใส่ LINE Channel ID เป็นตัวเลขจาก LINE Developers");
+  if (kind === "whatsapp" && !/^\d{5,25}$/.test(accountId)) return fail(400, "ใส่ WhatsApp Phone Number ID เป็นตัวเลขจาก Meta");
+  if (previous && previous.accountId !== accountId) return fail(400, "เปลี่ยนบัญชีได้โดยยกเลิกการเชื่อมต่อเดิมแล้วเชื่อมใหม่");
+  const channelId = previous?.channelId ?? `${kind}:${accountId}`;
+  const token = (body.accessToken ?? "").trim(), secret = (body.appSecret ?? "").trim();
+  if (token && !/^[\w.-]{20,1000}$/.test(token)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง");
+  if (secret && !/^[\w-]{16,200}$/.test(secret)) return fail(400, "รูปแบบ Secret ไม่ถูกต้อง");
+  const accessToken = token || previous?.accessToken || "";
+  const appSecret = secret || previous?.appSecret || "";
+  if (!accessToken) return fail(400, `วาง${kind === "line" ? " LINE Channel Access Token" : " WhatsApp Access Token"} ก่อน`);
+  if (!appSecret) return fail(400, kind === "line" ? "วาง LINE Channel Secret เพื่อตรวจลายเซ็น Webhook ก่อน" : "วาง Meta App Secret เพื่อตรวจลายเซ็น Webhook ก่อน");
+  if (kind === "line" && all.some((channel) => channel.channelId !== channelId && channel.channel === "line" && channel.active && channel.appSecret === appSecret)) return fail(400, "Channel Secret นี้ถูกใช้กับ LINE อีกช่องทางแล้ว — ต้องใช้ Secret เฉพาะของแต่ละ Channel");
+  const verifyToken = kind === "whatsapp" ? (body.verifyToken ?? previous?.verifyToken ?? "").trim() || newVerifyToken() : "";
+  if (verifyToken && !/^[\w.-]{8,200}$/.test(verifyToken)) return fail(400, "Verify Token ต้องยาว 8–200 ตัวอักษรและไม่มีช่องว่าง");
+  const label = kind === "line" ? "LINE" : "WhatsApp";
+  const name = (body.name ?? previous?.name ?? "").trim().slice(0, 120) || `${label} ${accountId}`;
+  await saveChannel({ channelId, channel: kind, accountId, name, accessToken, appSecret, verifyToken, sheetPageId, forceSheetPage: false, active: true });
+  invalidateCache();
+  return NextResponse.json({ ok: true, channelId, name, verifyToken }, noStore);
+}
+
+interface Body { action?: "save" | "disconnect" | "connectAll" | "listAds"; channel?: string; accountId?: string; channelId?: string; name?: string; accessToken?: string; appSecret?: string; verifyToken?: string; sheetPageId?: string; forceSheetPage?: boolean; fbPageId?: string }
 
 export async function POST(req: Request) {
   await connection();
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
   try {
     const b = (await req.json()) as Body;
-    if (b.channel && b.channel !== "facebook" && b.channel !== "ads") return fail(400, "ช่องทางนี้ยังไม่เปิดให้ใช้ (ตอนนี้รองรับเฉพาะ Facebook Messenger)");
+    if (b.channel && b.channel !== "facebook" && b.channel !== "ads" && b.channel !== "line" && b.channel !== "whatsapp") return fail(400, "ช่องทางนี้ยังไม่เปิดให้ใช้");
     const all = await loadChannels(true);
 
     if (b.action === "disconnect") {
@@ -124,6 +151,8 @@ export async function POST(req: Request) {
     let sheetPageId = (b.sheetPageId ?? "").trim();
     if (sheetPageId && !g.mapped.dataset.pages.some((p) => p.id === sheetPageId)) return fail(400, "ไม่พบเพจนี้ในระบบ");
     if (b.channel === "ads" && !sheetPageId) return fail(400, "เลือกเพจในระบบที่จะเป็นค่าเริ่มต้นของบัญชีโฆษณานี้ก่อน");
+    if ((b.channel === "line" || b.channel === "whatsapp") && !sheetPageId) return fail(400, "เลือกเพจในระบบที่จะเก็บแชทของช่องทางนี้ก่อน");
+    if (b.channel === "line" || b.channel === "whatsapp") return saveExternalChannel(b, all, sheetPageId);
     const token = (b.accessToken ?? "").trim(), secret = (b.appSecret ?? "").trim();
     if (token && !/^[\w-]{20,400}$/.test(token)) return fail(400, "รูปแบบ Access Token ไม่ถูกต้อง (คัดลอกมาทั้งสตริง ไม่มีช่องว่าง)");
     if (secret && !/^[\w-]{8,100}$/.test(secret)) return fail(400, "รูปแบบ App Secret ไม่ถูกต้อง");

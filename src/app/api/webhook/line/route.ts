@@ -1,19 +1,54 @@
-import { connection, NextResponse } from "next/server";
+import { after, connection, NextResponse } from "next/server";
+import { loadChannels } from "@/lib/channels";
 import { lineSignatureOk } from "@/lib/extNotify";
+import { buildExternalWrites, dedupeExternalEvents, writeExternalWrites } from "@/lib/externalWebhook";
+import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
+import { readTabs } from "@/lib/googleSheets";
+import { mapSheets } from "@/lib/sheetMapper";
+import { notifyInbound } from "@/lib/push";
+import { parseLineEvents } from "@/lib/lineWebhook";
 
-// LINE webhook: when someone adds the Official Account or sends any message, reply with THEIR userId so the admin can paste it into
-// the `notify_contacts` sheet tab. Nothing is stored here. Set the webhook URL to https://<your-domain>/api/webhook/line.
+export const maxDuration = 30;
+const text = (body: string, status: number) => new NextResponse(body, { status, headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" } });
+
 export async function POST(req: Request) {
   await connection();
   const raw = await req.text();
-  if (!lineSignatureOk(raw, req.headers.get("x-line-signature"))) return NextResponse.json({ ok: false }, { status: 403 });
-  let events: { type?: string; replyToken?: string; source?: { userId?: string } }[] = [];
-  try { events = JSON.parse(raw).events ?? []; } catch { /* ignore */ }
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (token) await Promise.all(events.filter((e) => e.replyToken && e.source?.userId && (e.type === "message" || e.type === "follow")).map((e) =>
-    fetch("https://api.line.me/v2/bot/message/reply", {
-      method: "POST", signal: AbortSignal.timeout(8000), headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ replyToken: e.replyToken, messages: [{ type: "text", text: `LINE userId ของคุณ:\n${e.source!.userId}\n\nส่งรหัสนี้ให้แอดมินเพื่อเปิดการแจ้งเตือนผ่าน LINE` }] }),
-    }).catch(() => undefined)));
-  return NextResponse.json({ ok: true });
+  if (raw.length > 1_000_000) return text("too large", 413);
+  let channels;
+  try { channels = await loadChannels(); }
+  catch { return text("error", 500); }
+  const signed = channels.filter((channel) => channel.channel === "line" && channel.active && channel.accessToken && channel.appSecret && channel.sheetPageId && lineSignatureOk(raw, req.headers.get("x-line-signature"), channel.appSecret));
+  if (signed.length !== 1) return text("invalid signature", 401);
+
+  let payload: Parameters<typeof parseLineEvents>[0];
+  try { payload = JSON.parse(raw); } catch { return text("bad json", 400); }
+  const channel = signed[0];
+  const events = parseLineEvents(payload, channel.accountId);
+  if (!events.length) return text("ok", 200);
+
+  try {
+    const mapped = getCached() ?? mapSheets(await readTabs());
+    setCached(mapped);
+    const knownMessageIds = new Set(Object.values(mapped.dataset.messages).flat().map((message) => message.id));
+    const freshEvents = dedupeExternalEvents(events, knownMessageIds);
+    if (!freshEvents.length) return text("ok", 200);
+    const writes = buildExternalWrites(freshEvents, {
+      channel: "line",
+      sheetPageId: channel.sheetPageId,
+      dataset: mapped.dataset,
+      timezone: process.env.APP_TZ || "Asia/Bangkok",
+    });
+    const newMessages = await writeExternalWrites(writes, knownMessageIds);
+    if (!newMessages.length) return text("ok", 200);
+    invalidateCache();
+    after(() => notifyInbound(mapped.dataset, newMessages).catch((error) => {
+      console.error("[webhook/line] push delivery failed", error instanceof Error ? error.name : "UnknownError");
+    }));
+    return text("ok", 200);
+  } catch (error) {
+    console.error("[webhook/line]", error instanceof Error ? error.name : "UnknownError");
+    invalidateCache();
+    return text("error", 500);
+  }
 }

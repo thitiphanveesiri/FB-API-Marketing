@@ -66,7 +66,7 @@ export default function InboxPage() {
   const ad = lead?.adId ? data.ads.find((a) => a.id === lead.adId) : null;
 
   const [sending, setSending] = useState(false);
-  const real = source === "sheets" && !!lead && (channelOf(lead) === "facebook" || channelOf(lead) === "instagram");
+  const real = source === "sheets" && !!lead && ["facebook", "instagram", "line", "whatsapp"].includes(channelOf(lead));
   const realInstagram = !!lead && channelOf(lead) === "instagram";
   const send = async () => {
     if (!lead || (!text.trim() && !attach) || sending) return;
@@ -75,7 +75,7 @@ export default function InboxPage() {
       if (realInstagram && new TextEncoder().encode(text.trim()).length >= 1000) { toast("ข้อความ Instagram ต้องสั้นกว่า 1,000 ไบต์", "error"); return; }
       setSending(true); const r = await sendReply(lead.id, text.trim()); setSending(false);
       if (!r.ok) { toast(r.message, "error"); return; }
-      setText(""); toast(r.saved ? "ส่งข้อความถึงลูกค้าแล้ว" : "ส่งข้อความถึงลูกค้าแล้ว (บันทึกลงชีตไม่สำเร็จ — จะเข้าชีตเองผ่าน Webhook ห้ามกดส่งซ้ำ)", r.saved ? "success" : "info"); return;
+      setText(""); toast(r.saved ? "ส่งข้อความถึงลูกค้าแล้ว" : "ส่งข้อความถึงลูกค้าแล้ว แต่บันทึกลงชีตไม่สำเร็จ — ห้ามกดส่งซ้ำ", r.saved ? "success" : "info"); return;
     }
     sendMessage(lead.id, text.trim(), mode, attach ?? undefined);
     setText(""); setAttach(null);
@@ -88,7 +88,7 @@ export default function InboxPage() {
         <h1 className="text-xl font-semibold">Inbox</h1>
         <Badge tone="green">From Google Sheet</Badge>
         <button onClick={() => setLive((v) => !v)} aria-pressed={live} title="Re-read the sheet every 30 seconds while this tab is open" className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", live ? "border-brand-2 bg-brand-faint text-brand" : "border-line text-muted")}><span className={cn("h-1.5 w-1.5 rounded-full", live ? "animate-pulse bg-brand" : "bg-gray-300")} />{live ? "Live · refreshes every 30 s" : "Live off"}</button>
-        <span className="text-xs text-muted">ข้อความ Facebook และ Instagram ใหม่เข้าผ่าน Webhook; ตอบจาก Inbox ได้ภายในช่วงเวลาที่ Meta อนุญาต (ระบบจำกัดไว้ 24 ชั่วโมง) และบันทึกชื่อผู้ตอบเพื่อคำนวณ SLA</span>
+        <span className="text-xs text-muted">ข้อความ Facebook, Instagram, LINE และ WhatsApp ใหม่เข้าผ่าน Webhook; ตอบจาก Inbox ได้จริง และบันทึกชื่อผู้ตอบเพื่อคำนวณ SLA (WhatsApp ต้องตอบภายใน 24 ชั่วโมง)</span>
       </div>
       <div className="grid h-[calc(100vh-170px)] min-h-[560px] overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:grid-cols-[320px_minmax(0,1fr)_300px]">
         {/* LEFT */}
@@ -130,7 +130,7 @@ export default function InboxPage() {
                 <Select value={lead.status} disabled={!canEdit} onChange={(v) => act.move(lead, v as LeadStatus)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-44" />
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden bg-gray-50 p-4">
-                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">Conversation loaded from your sheet — new messages arrive by webhook</p>
+                <p className="mx-auto w-fit rounded-full bg-amber-50 px-3 py-1 text-[11px] text-amber-700">แชทย้อนหลังมาจาก Google Sheet — ข้อความใหม่เข้าผ่าน Webhook หรือรีเฟรชทุก 30 วินาที</p>
                 {msgs.map((m) => (
                   <div key={m.id} className={m.direction === "out" ? "flex justify-end" : m.direction === "note" ? "flex justify-center" : "flex"}>
                     <div className={cn("min-w-0 max-w-[78%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm [overflow-wrap:anywhere]", m.direction === "out" ? "bg-brand text-white" : m.direction === "note" ? "w-full max-w-[90%] border border-dashed border-amber-300 bg-amber-50 text-amber-900" : "border border-line bg-surface")}>
