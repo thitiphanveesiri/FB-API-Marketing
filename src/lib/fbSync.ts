@@ -6,6 +6,7 @@ import { metaApiVersion } from "./metaApi";
 
 export interface FbPageCfg { fbPageId: string; token: string; sheetPageId?: string; name?: string }
 export type Phase = "chats" | "comments" | "done";
+export type SyncScope = "all" | "chats" | "comments";
 export interface CommentPostState { id: string; url?: string; after?: string; basic?: boolean }
 export interface SyncState {
   phase: Phase;
@@ -104,7 +105,7 @@ interface FbPost { id: string; permalink_url?: string; created_time?: string; me
 interface IgMedia { id: string; permalink?: string; comments_count?: number; timestamp?: string; caption?: string }
 interface IgComment { id: string; username?: string; text?: string; timestamp?: string; replies?: { data?: { username?: string; text?: string; timestamp?: string }[] } }
 
-export interface SyncInput { channel?: "instagram"; igId?: string; legacyPageId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
+export interface SyncInput { channel?: "instagram"; igId?: string; legacyPageId?: string; cfg: FbPageCfg; sheetPageId: string; days: number; state: SyncState; scope?: SyncScope; ds: Dataset; tz: string; now?: Date; fetchFn?: FetchFn; base?: string }
 export interface SyncOutput { next: SyncState; writes: SyncWrite[]; counts: SyncCounts; warning?: string }
 
 export const MAX_COMMENT_POSTS_PER_BATCH = 50;
@@ -169,6 +170,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   };
   const writes: SyncWrite[] = [];
   const ms = (iso: string) => new Date(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).getTime();
+  const nextPhaseAfterChats: Phase = i.scope === "chats" ? "done" : "comments";
   /** One `posts` row per feed item, keyed exactly like the comments' post_id (permalink, else id), so a post is listed even when nobody commented on it. */
   const postWrite = (list: { id: string; url?: string; text?: string; at?: string }[], channel: "facebook" | "instagram"): SyncWrite => ({ tab: "posts", keyCols: ["post_id"], mode: "upsert",
     rows: list.map((p) => ({ post_id: p.url || p.id, page_id: i.sheetPageId, channel, text: (p.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300), posted_at: p.at ? localStamp(p.at, i.tz) : "" })) });
@@ -207,7 +209,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       const cutoff = fresh.length < all.length; // list is newest-first: an old one means the rest is older still
       more = !cutoff && !!j.paging?.next && !!j.paging.cursors?.after;
       const igNext: SyncState = { phase: "chats", ...(more ? { after: j.paging!.cursors!.after } : {}), ...(chatList === "ig-node" ? { chatList } : {}) };
-      if (!fresh.length) return { next: more ? igNext : { phase: "comments" }, writes, counts };
+      if (!fresh.length) return { next: more ? igNext : { phase: nextPhaseAfterChats }, writes, counts };
       // Listing can eat most of the 60 s step: read these messages on the next step so the Sheet writes still finish.
       if (Date.now() - t0 > IG_LIST_DEFER_MS) return { next: { ...igNext, igChats: fresh.map((c) => ({ id: c.id, updated_time: c.updated_time })) }, writes, counts };
     } else {
@@ -299,11 +301,11 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
       // Pending conversations were listed by the previous step: continue with its cursor, otherwise list the next page.
       // Instagram comments are pulled after the inbox, in the same run (media, then each post's comments).
       const next: SyncState = pending.length
-        ? (i.state.after ? { phase: "chats", after: i.state.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" })
-        : more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" };
+        ? (i.state.after ? { phase: "chats", after: i.state.after, ...(chatList ? { chatList } : {}) } : { phase: nextPhaseAfterChats })
+        : more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: nextPhaseAfterChats };
       return { next, writes, counts, ...(warning ? { warning } : {}) };
     }
-    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: "comments" }, writes, counts, ...(warning ? { warning } : {}) };
+    return { next: more ? { phase: "chats", after: j.paging!.cursors!.after, ...(chatList ? { chatList } : {}) } : { phase: nextPhaseAfterChats }, writes, counts, ...(warning ? { warning } : {}) };
   }
 
   if (i.state.phase === "comments") {
