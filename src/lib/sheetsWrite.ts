@@ -2,6 +2,7 @@
 import { readFile, writeFile, rename } from "fs/promises";
 import { applyPlan, norm, Obj, planUpsert, UpsertMode } from "./sheetOps";
 import { SHEET_TABS } from "./sheetSchema";
+import { dbConfigured, dbRewrite, dbUpsert } from "./db";
 import { accessToken, forgetSheetTitles, getCachedTabs, patchCachedTab, sheetTitles, sheetsFetch } from "./googleSheets";
 
 export interface WriteResult { updated: number; appended: number; skipped: number }
@@ -15,6 +16,7 @@ const colLetter = (i: number) => { let s = ""; for (let n = i + 1; n > 0; n = Ma
 export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mode: UpsertMode): Promise<WriteResult> {
   if (!SHEET_TABS.some((t) => t.tab === tab)) throw new Error(`Unknown tab ${tab}`);
   if (objs.length === 0) return { updated: 0, appended: 0, skipped: 0 };
+  if (dbConfigured()) return dbUpsert(tab, keyCols, objs, mode);
   return serialized(async () => {
     if (process.env.SHEETS_LOCAL_JSON) { // dev/testing backend
       const file = process.env.SHEETS_LOCAL_JSON;
@@ -79,6 +81,7 @@ export async function upsertRows(tab: string, keyCols: string[], objs: Obj[], mo
 /** Rewrite a row and its key in place, used to remove legacy plaintext push credentials. */
 export async function rewriteRow(tab: string, keyCol: string, oldKey: string, obj: Obj): Promise<void> {
   if (!SHEET_TABS.some((t) => t.tab === tab)) throw new Error(`Unknown tab ${tab}`);
+  if (dbConfigured()) return dbRewrite(tab, keyCol, oldKey, obj);
   return serialized(async () => {
     if (process.env.SHEETS_LOCAL_JSON) {
       const file = process.env.SHEETS_LOCAL_JSON;

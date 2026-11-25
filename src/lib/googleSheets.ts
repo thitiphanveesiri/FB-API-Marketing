@@ -3,6 +3,7 @@ import { createPrivateKey, createSign } from "crypto";
 import { readFile } from "fs/promises";
 import { TAB_NAMES } from "./sheetSchema";
 import { RawTabs } from "./sheetMapper";
+import { dbConfigured, dbRead } from "./db";
 
 const SCOPE_RO = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const SCOPE_RW = "https://www.googleapis.com/auth/spreadsheets";
@@ -29,7 +30,7 @@ export function normalizePrivateKey(raw: string): string {
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 
 export function sheetsConfigured(): boolean {
-  return !!process.env.SHEETS_LOCAL_JSON || !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
+  return dbConfigured() || !!process.env.SHEETS_LOCAL_JSON || !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
 }
 
 const tokenCache: Record<string, { token: string; exp: number } | undefined> = {};
@@ -84,6 +85,7 @@ export const patchCachedTab = (tab: string, grid: string[][]) => { if (tabCache)
 
 /** Reads every known tab that exists in the spreadsheet. Missing optional tabs are simply absent from the result. */
 export async function readTabs(fresh = false): Promise<RawTabs> {
+  if (dbConfigured()) return dbRead(); // the database is the source; no read cache needed
   if (process.env.SHEETS_LOCAL_JSON) return JSON.parse(await readFile(process.env.SHEETS_LOCAL_JSON, "utf8")) as RawTabs; // dev/testing only
   if (!fresh) { const hit = getCachedTabs(); if (hit) return hit; if (tabInflight) return tabInflight; }
   const run = readTabsRemote();
