@@ -27,8 +27,9 @@ export async function POST(req: Request) {
   const g = await adminOnly(req, true); if ("err" in g) return g.err;
   let ig = false;
   try {
-    const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState; channel?: string };
+    const b = (await req.json()) as { fbPageId?: string; sheetPageId?: string; days?: number; state?: SyncState; channel?: string; scope?: "all" | "chats" | "comments" };
     ig = b.channel === "instagram";
+    const scope = b.scope === "chats" || b.scope === "comments" ? b.scope : "all";
     const cfg = (await fbSyncConfigs()).find((c) => c.fbPageId === b.fbPageId);
     if (!cfg) return fail(400, "ไม่พบเพจนี้ในการตั้งค่าแล้ว — เชื่อมเพจในหน้า Upload ก่อน หรือรีเฟรชหน้า Upload ถ้าเพิ่งเชื่อมหรือยกเลิกการเชื่อมต่อ");
     const ds = g.mapped.dataset;
@@ -60,7 +61,8 @@ export async function POST(req: Request) {
       if (igPage.created) invalidateCache();
     }
     const days = Math.min(90, Math.max(1, Math.floor(Number(b.days) || 7)));
-    const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : "chats";
+    const defaultPhase = scope === "comments" ? "comments" : "chats";
+    const phase = b.state?.phase === "comments" || b.state?.phase === "done" ? b.state.phase : (b.state?.phase === "chats" ? "chats" : defaultPhase);
     const after = typeof b.state?.after === "string" && /^[\w=+/.-]{1,400}$/.test(b.state.after) ? b.state.after : undefined;
     const chatList = b.state?.chatList === "light" || b.state?.chatList === "no-platform" || b.state?.chatList === "ig-node" ? b.state.chatList : undefined;
     const commentCursor = (value: unknown) => typeof value === "string" && /^[\w=+/.-]{1,400}$/.test(value) ? value : undefined;
@@ -96,6 +98,7 @@ export async function POST(req: Request) {
       sheetPageId,
       days,
       state: { phase, after, chatList, igChats, commentBatch, commentPostId, commentPostUrl, commentAfter, commentsFeedDone, commentBasic },
+      scope,
       ds,
       tz: process.env.APP_TZ || "Asia/Bangkok",
       base: process.env.FB_GRAPH_BASE,
