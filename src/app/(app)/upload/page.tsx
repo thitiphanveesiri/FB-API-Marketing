@@ -221,33 +221,18 @@ export default function UploadPage() {
         <Btn size="sm" className="ml-auto" onClick={() => download(`sample-${type.toLowerCase().replace(/[^a-z]+/g, "-")}.csv`, SAMPLES[type])}><Download size={14} /> ดาวน์โหลดไฟล์ตัวอย่าง</Btn></div>
 
       <ChannelsCard />
-      <FbSyncCard
-        onStartUploadAuto={() => {
-          if (!pageId && data.pages.find((p) => p.active)?.id) setPageId(data.pages.find((p) => p.active)!.id);
-          setAuto(true);
-          setStep(2);
-          const el = document.getElementById("manual-upload-section");
-          if (el) el.scrollIntoView({ behavior: "smooth" });
-        }}
-        onStartUploadManual={() => {
-          if (!pageId && data.pages.find((p) => p.active)?.id) setPageId(data.pages.find((p) => p.active)!.id);
-          setStep(1);
-          const el = document.getElementById("manual-upload-section");
-          if (el) el.scrollIntoView({ behavior: "smooth" });
-        }}
-      />
+      <FbSyncCard />
       <RepairPagesCard />
       <AdsSyncCard />
 
-      <div id="manual-upload-section" className="space-y-4">
-        <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>
-        <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
-          {STEPS.map((s, i) => (
-            <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>
-              {i < step ? <Check size={12} /> : <span>{i + 1}</span>}{s}</li>))}
-        </ol>
+      <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>
+      <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
+        {STEPS.map((s, i) => (
+          <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>
+            {i < step ? <Check size={12} /> : <span>{i + 1}</span>}{s}</li>))}
+      </ol>
 
-        <Card>
+      <Card>
           {step === 0 && (<div className="max-w-lg space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ</h2>
             <Select label="เพจหลักของไฟล์" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
             <Select label="เพจ Instagram (สำหรับแถวที่ช่องทางเป็น IG)" value={igChoice} onChange={setIgChoice}
@@ -327,7 +312,6 @@ export default function UploadPage() {
           <p className="text-sm text-muted">{summary.id} · {summary.fileName} · {summary.mode} · บันทึกลง Google Sheet แล้ว และแสดงในแดชบอร์ด/บอร์ดทันที</p>
           <div className="flex flex-wrap gap-2">{summary.errors.length > 0 && <Btn onClick={() => download(`error-report-${summary.id}.csv`, ["Row,Description", ...summary.errors.map((e) => `${e.row},"${e.message.replace(/"/g, '""')}"`)].join("\n"))}><Download size={14} /> Download error report</Btn>}<Btn variant="primary" onClick={reset}>อัปโหลดไฟล์อื่น</Btn></div></div>)}
       </Card>
-      </div>
 
       <Card title="ประวัติการอัปโหลด" subtitle="บันทึกในแท็บ import_log ของ Google Sheet ทุกครั้งที่อัปโหลด">
         <DataTable columns={histCols} rows={data.imports} rowKey={(r) => r.id} emptyTitle="ยังไม่มีการอัปโหลด" emptyHint="เลือกประเภทไฟล์แล้วอัปโหลดได้เลย หรือดาวน์โหลดไฟล์ตัวอย่างด้านบนเพื่อลองก่อน" caption="Import history" />

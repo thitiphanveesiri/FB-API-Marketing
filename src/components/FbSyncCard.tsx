@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { FileSpreadsheet, MessageCircle, MessageSquare, RefreshCw, Share2, ShieldCheck } from "lucide-react";
+import { Images, MessageCircle, MessageSquare, RefreshCw, Share2, ShieldCheck } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
+import { refreshCreativeLinks } from "@/lib/creativeClient";
 
 interface Cfg { fbPageId: string; sheetPageId: string; name?: string; instagram?: boolean }
 const norm = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
@@ -26,13 +27,8 @@ interface Acct { channelId: string; name: string; accountId: string }
 type SyncTarget = "all" | "ads" | "chats" | "comments";
 type PlatformFilter = "all" | "facebook" | "instagram";
 
-interface FbSyncCardProps {
-  onStartUploadAuto?: () => void;
-  onStartUploadManual?: () => void;
-}
-
 /** Administrators only: pull chats + comments (with their times) straight from the Facebook Page into the Google Sheet. */
-export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: FbSyncCardProps = {}) {
+export default function FbSyncCard() {
   const { data, user, reloadData, toast } = useStore();
   const [pages, setPages] = useState<Cfg[] | null>(null);
   const [which, setWhich] = useState("all"); const [days, setDays] = useState("7");
@@ -41,6 +37,7 @@ export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: F
   const [notes, setNotes] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
   const [ads, setAds] = useState<Acct[]>([]); const [withAds, setWithAds] = useState(true); const [adsDone, setAdsDone] = useState<AdsTotals | null>(null);
+  const [picBusy, setPicBusy] = useState(false); const [picNote, setPicNote] = useState("");
   const [cfgError, setCfgError] = useState(""); const [acctError, setAcctError] = useState("");
   const stop = useRef(false);
 
@@ -140,6 +137,16 @@ export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: F
       setLog(`ตรวจสอบไม่สำเร็จ: ${e instanceof Error ? e.message : "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้"}`);
     } finally { setChecking(false); }
   };
+
+  // Re-read ad image links from Meta for ads whose temporary links have expired
+  const refreshPics = async () => {
+    setPicBusy(true); setPicNote("");
+    try {
+      const r = await refreshCreativeLinks();
+      setPicNote(r.fixed ? `ต่อลิงก์รูปใหม่ให้ ${r.fixed} โฆษณา จาก ${r.checked} โฆษณาที่ลิงก์หมดอายุ (บันทึกใส่ Google Sheet แล้ว)` : (r.message ?? "ไม่พบลิงก์ที่หมดอายุ — ถ้ารูปยังไม่ขึ้น ให้ดึงข้อมูลโฆษณาซ้ำ"));
+      if (r.fixed) await reloadData(true);
+    } finally { setPicBusy(false); }
+  };
   const pull = async (fbId: string, sheetId: string, tot: Totals, tag: string, channel?: "instagram", scope: "all" | "chats" | "comments" = "all") => {
     // Instagram listing can burn both node timeouts per attempt, so it gets one retry instead of three.
     const maxFailures = channel ? 2 : 4;
@@ -210,6 +217,9 @@ export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: F
             <Btn onClick={() => void checkConnections()} disabled={busy || checking} className="ml-auto">
               <ShieldCheck size={14} className={checking ? "animate-pulse" : ""} /> {checking ? "กำลังตรวจสอบ…" : "ตรวจสอบการเชื่อมต่อ"}
             </Btn>
+            <Btn onClick={refreshPics} disabled={busy || picBusy} title="ดึงลิงก์รูปโฆษณาใหม่จาก Meta สำหรับโฆษณาที่ลิงก์เดิมหมดอายุ">
+              <Images size={14} className={picBusy ? "animate-spin" : ""} /> {picBusy ? "กำลังรีเฟรช…" : "รีเฟรชรูปโฆษณา"}
+            </Btn>
             {busy && <Btn variant="danger" onClick={() => { stop.current = true; }}>หยุดการทำงาน</Btn>}
           </div>
 
@@ -279,28 +289,7 @@ export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: F
             </div>
           </div>
 
-          {(onStartUploadAuto || onStartUploadManual) && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-line bg-gray-50/80 p-3">
-              <div>
-                <p className="flex items-center gap-1.5 text-xs font-medium text-muted">
-                  <FileSpreadsheet size={14} /> หรือนำเข้าข้อมูลด้วยไฟล์สำรอง (CSV / XLSX)
-                </p>
-                <p className="text-[11px] text-muted">ใช้เมื่อดึงจาก Meta API โดยตรงไม่ได้ หรือมีไฟล์ส่งออกจาก Meta Business Suite / เครื่องมืออื่น</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {onStartUploadAuto && (
-                  <Btn variant="primary" size="sm" onClick={onStartUploadAuto}>
-                    เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)
-                  </Btn>
-                )}
-                {onStartUploadManual && (
-                  <Btn size="sm" onClick={onStartUploadManual}>
-                    เลือกประเภทไฟล์เอง
-                  </Btn>
-                )}
-              </div>
-            </div>
-          )}
+          {/* Action Buttons: 3 Separated Buttons + Pull All */}
 
           {acctError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">อ่านรายการบัญชีโฆษณาไม่สำเร็จ: {acctError} (แชทและคอมเมนต์ยังดึงได้ตามปกติ)</p>}
           {ads.length > 0 ? (
@@ -315,6 +304,7 @@ export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: F
           )}
 
           {log && <p className="text-sm font-medium text-brand" role="status">{log}</p>}
+          {picNote && <p className="text-xs text-muted" role="status">{picNote}</p>}
           {notes.length > 0 && (
             <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
               <p className="font-medium">หมายเหตุ</p>
