@@ -12,12 +12,12 @@ The app uses Postgres whenever `DATABASE_URL` is set, and Google Sheets when it 
    `postgresql://postgres.xxxx:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres`.
 3. **Try it on your computer first.** In `.env.local` add the `GOOGLE_*` variables you already use on Vercel plus `DATABASE_URL=...`, then run:
    ```
-   npx tsx scripts/sheets-to-db.ts
+   npx tsx --env-file=.env.local scripts/sheets-to-db.ts
    ```
    It creates the table (`sheet_rows`, row level security on), copies every tab, and prints `OK` / `DIFF` with row counts per tab. Re-running is safe (rows that already exist are kept). Fix any `DIFF` before going on.
 4. **Check the app against the copy.** Run `npm run dev` with `DATABASE_URL` set. Open Dashboard, Inbox, Comments, Settings → Pages and compare a few numbers with the live site (which still reads the Sheet).
 5. **Optional, for live Inbox updates later.** SQL editor: `alter publication supabase_realtime add table sheet_rows;`
-6. **Switch.** Do the copy once more right before (`npx tsx scripts/sheets-to-db.ts`), then add `DATABASE_URL` in Vercel → Settings → Environment Variables (Production) and redeploy.
+6. **Switch.** Do the copy once more right before (`npx tsx --env-file=.env.local scripts/sheets-to-db.ts`), then add `DATABASE_URL` in Vercel → Settings → Environment Variables (Production) and redeploy.
 7. **Verify on production.** Send a test message to a connected Page: it should appear in Inbox. Open Dashboard. Check Supabase → Table editor → `sheet_rows`.
 8. **Keep the Sheet read-only** (the backup) for about two weeks. Rows written after the switch are NOT copied back to the Sheet.
 
