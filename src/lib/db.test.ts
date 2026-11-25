@@ -58,3 +58,9 @@ test("import copies sheet rows, keeps the first duplicate, ignores blank rows, a
   assert.deepEqual((await dbImport(t)).pages, { sheet: 2, db: 2 });
   assert.deepEqual((await grid("pages")).slice(1).map((r) => r[1]), ["One", "Two"]);
 });
+
+test("row level security is on, so Supabase's public API cannot read the table", async () => {
+  await dbRead();
+  const r = await pg.query("select relrowsecurity as on from pg_class where relname = 'sheet_rows'");
+  assert.equal((r.rows[0] as { on: boolean }).on, true);
+});

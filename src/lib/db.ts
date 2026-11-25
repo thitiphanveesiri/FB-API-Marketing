@@ -16,6 +16,9 @@ const SCHEMA = [
   "create table if not exists sheet_rows (tab text not null, key text, seq bigint generated always as identity primary key, data jsonb not null default '{}')",
   "create unique index if not exists sheet_rows_tab_key on sheet_rows (tab, key) where key is not null",
   "create index if not exists sheet_rows_tab_seq on sheet_rows (tab, seq)",
+  // Supabase publishes public tables through its REST API: with RLS on and no policy, the public anon key reads nothing (this table holds
+  // channel tokens). The app connects as the database owner, which bypasses RLS.
+  "alter table sheet_rows enable row level security",
 ];
 
 let injected: Q | null = null, pool: Pool | null = null, ready: Promise<unknown> | null = null;
