@@ -8,7 +8,7 @@ interface G { id?: string; name?: string; category?: string; data?: { id?: strin
 
 export type TokenInfo =
   | { kind: "page"; id: string; name: string }
-  | { kind: "user"; id: string; name: string; pages: { id: string; name: string; token: string }[] };
+  | { kind: "user"; id: string; name: string; pages: { id: string; name: string; token: string }[]; why?: string };
 
 export class TokenError extends Error {}
 const scrub = (s: string) => s.replace(/EAA[\w-]{20,}/g, "…").replace(/access_token=[^&\s"']+/gi, "access_token=…");
@@ -27,7 +27,23 @@ export async function inspectToken(token: string, base = "https://graph.facebook
   }
   // user (or system-user) token: look up who it is and which pages it can manage
   const me = await call("me", "id,name");
-  const acc = await call("me/accounts", "id,name,access_token");
-  const pages = acc.r.ok && !acc.j.error ? (acc.j.data ?? []).filter((p) => p.id && p.access_token).map((p) => ({ id: p.id!, name: p.name ?? p.id!, token: p.access_token! })) : [];
-  return { kind: "user", id: me.j.id ?? "", name: me.j.name ?? "", pages };
+  // /me/accounts is empty for Pages that live in a Business portfolio or are only "assigned" to the user (and for system users), so
+  // try those routes too, and keep Meta's own reason when nothing is found instead of saying "no pages" with no explanation.
+  const found = new Map<string, { id: string; name: string; token: string }>(), errs: string[] = [];
+  const list = async (path: string) => {
+    const { r, j } = await call(path, "id,name,access_token");
+    if (!r.ok || j.error) { errs.push(`${path}: ${scrub(j.error?.message ?? `HTTP ${r.status}`)}`); return; }
+    for (const p of j.data ?? []) if (p.id && p.access_token && !found.has(p.id)) found.set(p.id, { id: p.id, name: p.name ?? p.id, token: p.access_token });
+  };
+  await list("me/accounts");
+  if (!found.size) await list("me/assigned_pages");
+  if (!found.size) {
+    const biz = await call("me/businesses", "id");
+    if (biz.r.ok && !biz.j.error) {
+      for (const b of (biz.j.data ?? []).slice(0, 5)) if (b.id) { await list(`${b.id}/owned_pages`); await list(`${b.id}/client_pages`); }
+    } else errs.push(`me/businesses: ${scrub(biz.j.error?.message ?? `HTTP ${biz.r.status}`)}`);
+  }
+  const pages = [...found.values()];
+  const why = pages.length ? undefined : errs.join(" | ") || "Meta ตอบว่าไม่มีเพจ (รายการว่าง) — โทเคนอาจไม่ได้ติ๊กเลือกเพจตอนล็อกอิน";
+  return { kind: "user", id: me.j.id ?? "", name: me.j.name ?? "", pages, ...(why ? { why } : {}) };
 }
