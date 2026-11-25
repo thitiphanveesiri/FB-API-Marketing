@@ -12,22 +12,7 @@ export interface AdsCounts { ads: number; campaigns: number; rows: number }
  *  knownCampaignPages: the page each campaign is filed under in the sheet already — used when this batch cannot tell, so a lighter pull never moves a campaign somewhere else.
  *  knownCreativeUrls: ads whose picture link was pasted by a person (not a Meta link) — the admin's own link wins and is never
  *  overwritten by the sync, which is what makes the Google Drive option in the creative editor actually stick. */
-/** Keywords (from the pages tab, column ad_keywords) that decide which page an ad belongs to by its campaign / ad name. "*" = every ad no keyword matched.
- *  Needed when one ad account runs the same campaigns for several pages and Meta reports only a single page for all of them. */
-export interface PageRule { pageId: string; keywords: string[] }
-const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
-/** The page a name belongs to: the longest matching keyword wins; ties keep the earlier page. Falls back to the "*" page; "" when no rule applies. */
-export function matchPageRule(rules: PageRule[] | undefined, text: string): string {
-  if (!rules?.length) return "";
-  const t = norm(text); let best = "", len = 0, star = "";
-  for (const r of rules) for (const raw of r.keywords) {
-    const k = norm(raw); if (!k) continue;
-    if (k === "*") { if (!star) star = r.pageId; continue; }
-    if (t.includes(k) && k.length > len) { best = r.pageId; len = k.length; }
-  }
-  return best || star;
-}
-export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; knownCampaignPages?: Record<string, string>; knownCreativeUrls?: Record<string, string>; pageTokensByFbId?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>>; pageRules?: PageRule[] }
+export interface AdsInput { accountId: string; token: string; sheetPageId: string; days: number; state: AdsState; now?: Date; fetchFn?: FetchFn; base?: string; pageMap?: Record<string, string>; pageNames?: Record<string, string>; knownCampaignPages?: Record<string, string>; knownCreativeUrls?: Record<string, string>; pageTokensByFbId?: Record<string, string>; resolvePages?: (fbPageIds: string[]) => Promise<Record<string, string>> }
 export interface AdsOutput { next: AdsState; writes: SyncWrite[]; counts: AdsCounts; warnings?: string[]; byPage?: Record<string, number> }
 
 const ADS_PER_CALL = Number(process.env.ADS_PAGE_SIZE) || 40, INSIGHT_LIMITS = [200, 100, 50, 25], WINDOW_DAYS = 30;
@@ -222,7 +207,7 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
     let extra: Record<string, string> = {};
     if (i.resolvePages) {
       const wanted = new Set<string>();
-      for (const a of ads) { const id = pageOf(a); if (id && !i.pageMap?.[id] && !matchPageRule(i.pageRules, `${a.campaign?.name ?? ""} ${a.name ?? ""}`)) wanted.add(id); }
+      for (const a of ads) { const id = pageOf(a); if (id && !i.pageMap?.[id]) wanted.add(id); }
       if (wanted.size) { try { extra = await i.resolvePages([...wanted].slice(0, 12)); } catch { /* keep the account's page */ } }
     }
     for (const a of ads) {
@@ -237,13 +222,10 @@ export async function adsStep(i: AdsInput): Promise<AdsOutput> {
       const pic = bestCreativeUrl(c);
       // A link someone pasted themselves (Google Drive, their own server) stays theirs: no Meta picture, no ref, no media lookups.
       const mine = i.knownCreativeUrls?.[a.id];
-      // Prefer the creative's Page ID; otherwise use a unique Page-name match in the ad/campaign name.
-      const nameHit = Object.entries(i.pageNames ?? {}).filter(([, name]) => name.trim().length >= 3 && `${a.campaign?.name ?? ""} ${a.name ?? ""}`.toLowerCase().includes(name.trim().toLowerCase()));
-      const ruled = matchPageRule(i.pageRules, `${a.campaign?.name ?? ""} ${a.name ?? ""}`);
       const viaMap = fbPage ? (i.pageMap?.[fbPage] ?? extra[fbPage]) : undefined;
       // a freshly created page is not in pageNames yet, so its own id from `extra` is proof that it exists
-      // A keyword rule written by the admin beats whatever page Meta reports (Meta often reports one page for ads shared by several).
-      const mapped = ruled || ((viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap ? viaMap : undefined)) ?? (nameHit.length === 1 ? nameHit[0][0] : undefined));
+      // Pages are matched by Facebook Page ID only, never by words in a campaign or ad name.
+      const mapped = viaMap && (!i.pageNames || i.pageNames[viaMap] || extra[fbPage] === viaMap) ? viaMap : undefined;
       if (fbPage && !mapped) unmapped.add(fbPage); // the mapper would drop a campaign whose page does not exist, so fall back to the account's default page
       else if (!fbPage && !mapped) noPage++;
       if (mapped) mappedAds++;

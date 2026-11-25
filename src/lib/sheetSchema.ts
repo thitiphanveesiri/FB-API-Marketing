@@ -8,8 +8,7 @@ const C = (name: string, note: string, required = false): SheetCol => ({ name, n
 export const SHEET_TABS: SheetTab[] = [
   { tab: "pages", required: true, purpose: "Facebook Pages you run ads / chat on", cols: [
     C("page_id", "Your own short ID, e.g. PG-1", true), C("name", "Page name", true), C("agency_id", "→ agencies.agency_id (blank = no agency)"),
-    C("active", "TRUE / FALSE (blank = TRUE)"), C("sales_team", "Comma-separated user_id of salespeople, e.g. U-R1,U-R2"),
-    C("ad_keywords", "Ad sync: comma-separated words in a campaign/ad name that belong to this page, e.g. danai,ดะนัย. A single * = every ad no other page matched") ] },
+    C("active", "TRUE / FALSE (blank = TRUE)"), C("sales_team", "Comma-separated user_id of salespeople, e.g. U-R1,U-R2") ] },
   { tab: "agencies", required: false, purpose: "Advertising agencies", cols: [
     C("agency_id", "e.g. AG-1", true), C("name", "Agency name", true), C("contact", "Contact person"), C("email", "Email"), C("active", "TRUE / FALSE") ] },
   { tab: "users", required: false, purpose: "People who use the dashboard (roles) and salespeople", cols: [
