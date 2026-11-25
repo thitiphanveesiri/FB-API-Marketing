@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, MessageSquare, RefreshCw, Share2, ShieldCheck } from "lucide-react";
+import { FileSpreadsheet, MessageCircle, MessageSquare, RefreshCw, Share2, ShieldCheck } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { type AdsTotals, MAX_RATE_WAITS, pullAds, readSyncResponse, wait } from "@/lib/syncClient";
@@ -26,8 +26,13 @@ interface Acct { channelId: string; name: string; accountId: string }
 type SyncTarget = "all" | "ads" | "chats" | "comments";
 type PlatformFilter = "all" | "facebook" | "instagram";
 
+interface FbSyncCardProps {
+  onStartUploadAuto?: () => void;
+  onStartUploadManual?: () => void;
+}
+
 /** Administrators only: pull chats + comments (with their times) straight from the Facebook Page into the Google Sheet. */
-export default function FbSyncCard() {
+export default function FbSyncCard({ onStartUploadAuto, onStartUploadManual }: FbSyncCardProps = {}) {
   const { data, user, reloadData, toast } = useStore();
   const [pages, setPages] = useState<Cfg[] | null>(null);
   const [which, setWhich] = useState("all"); const [days, setDays] = useState("7");
@@ -273,6 +278,29 @@ export default function FbSyncCard() {
               </Btn>
             </div>
           </div>
+
+          {(onStartUploadAuto || onStartUploadManual) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-line bg-gray-50/80 p-3">
+              <div>
+                <p className="flex items-center gap-1.5 text-xs font-medium text-muted">
+                  <FileSpreadsheet size={14} /> หรือนำเข้าข้อมูลด้วยไฟล์สำรอง (CSV / XLSX)
+                </p>
+                <p className="text-[11px] text-muted">ใช้เมื่อดึงจาก Meta API โดยตรงไม่ได้ หรือมีไฟล์ส่งออกจาก Meta Business Suite / เครื่องมืออื่น</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {onStartUploadAuto && (
+                  <Btn variant="primary" size="sm" onClick={onStartUploadAuto}>
+                    เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)
+                  </Btn>
+                )}
+                {onStartUploadManual && (
+                  <Btn size="sm" onClick={onStartUploadManual}>
+                    เลือกประเภทไฟล์เอง
+                  </Btn>
+                )}
+              </div>
+            </div>
+          )}
 
           {acctError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">อ่านรายการบัญชีโฆษณาไม่สำเร็จ: {acctError} (แชทและคอมเมนต์ยังดึงได้ตามปกติ)</p>}
           {ads.length > 0 ? (

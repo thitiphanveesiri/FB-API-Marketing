@@ -221,29 +221,44 @@ export default function UploadPage() {
         <Btn size="sm" className="ml-auto" onClick={() => download(`sample-${type.toLowerCase().replace(/[^a-z]+/g, "-")}.csv`, SAMPLES[type])}><Download size={14} /> ดาวน์โหลดไฟล์ตัวอย่าง</Btn></div>
 
       <ChannelsCard />
-      <FbSyncCard />
+      <FbSyncCard
+        onStartUploadAuto={() => {
+          if (!pageId && data.pages.find((p) => p.active)?.id) setPageId(data.pages.find((p) => p.active)!.id);
+          setAuto(true);
+          setStep(2);
+          const el = document.getElementById("manual-upload-section");
+          if (el) el.scrollIntoView({ behavior: "smooth" });
+        }}
+        onStartUploadManual={() => {
+          if (!pageId && data.pages.find((p) => p.active)?.id) setPageId(data.pages.find((p) => p.active)!.id);
+          setStep(1);
+          const el = document.getElementById("manual-upload-section");
+          if (el) el.scrollIntoView({ behavior: "smooth" });
+        }}
+      />
       <RepairPagesCard />
       <AdsSyncCard />
 
-      <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>
-      <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
-        {STEPS.map((s, i) => (
-          <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>
-            {i < step ? <Check size={12} /> : <span>{i + 1}</span>}{s}</li>))}
-      </ol>
+      <div id="manual-upload-section" className="space-y-4">
+        <p className="text-sm text-muted"><b>อัปโหลดข้อมูลเพจ (สำรอง)</b> — รองรับสถิติโฆษณา/Insights, Lead Data, Inbox Conversations, Chat Messages, Post Comments และ Sales Performance; ใช้เมื่อดึงจาก Meta โดยตรงไม่ได้หรือมีไฟล์ส่งออกจากเครื่องมืออื่น</p>
+        <ol className="flex flex-wrap gap-1.5" aria-label="Progress">
+          {STEPS.map((s, i) => (
+            <li key={s} className={cn("flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium", i === step ? "bg-brand text-white" : i < step ? "bg-brand-soft text-brand" : "bg-gray-100 text-muted")}>
+              {i < step ? <Check size={12} /> : <span>{i + 1}</span>}{s}</li>))}
+        </ol>
 
-      <Card>
-        {step === 0 && (<div className="max-w-lg space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ</h2>
-          <Select label="เพจหลักของไฟล์" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
-          <Select label="เพจ Instagram (สำหรับแถวที่ช่องทางเป็น IG)" value={igChoice} onChange={setIgChoice}
-            options={[
-              { value: "auto", label: autoIgPage ? `อัตโนมัติ — ${autoIgPage.name}` : "อัตโนมัติ — ยังไม่พบเพจ Instagram" },
-              { value: "none", label: "ไม่แยก — เก็บรวมกับเพจหลัก" },
-              ...data.pages.filter((p) => p.active && p.id !== pageId).map((p) => ({ value: p.id, label: `แยกไปที่ ${p.name}` })),
-            ]} />
-          <p className="text-xs text-muted">แถวอื่นทั้งหมดจะถูกบันทึกให้เพจหลัก (แคมเปญ/โฆษณาใหม่สร้างภายใต้เพจหลัก) · ถ้าไฟล์มีคอลัมน์ <b>Channel</b> แถวที่ระบุ Instagram จะไปเพจ Instagram ที่เลือกไว้ ไม่ปนกับแชท Facebook · เพจ Instagram ในระบบมักชื่อ “ชื่อเพจ (Instagram)” สร้างได้ที่ Setting → Pages</p>
-          {igTargetId && igTargetId !== pageId && <p className="text-xs text-emerald-700">แถว Instagram จะถูกเก็บแยกในเพจ “{data.pages.find((p) => p.id === igTargetId)?.name}” — ชื่อ/เบอร์ที่ตรงกับแชท Instagram เดิมจะอัปเดตการ์ดเดิม</p>}
-          {data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
+        <Card>
+          {step === 0 && (<div className="max-w-lg space-y-4"><h2 className="font-semibold">ขั้นที่ 1 · เลือกเพจ</h2>
+            <Select label="เพจหลักของไฟล์" value={pageId} onChange={setPageId} options={data.pages.filter((p) => p.active).map((p) => ({ value: p.id, label: p.name }))} />
+            <Select label="เพจ Instagram (สำหรับแถวที่ช่องทางเป็น IG)" value={igChoice} onChange={setIgChoice}
+              options={[
+                { value: "auto", label: autoIgPage ? `อัตโนมัติ — ${autoIgPage.name}` : "อัตโนมัติ — ยังไม่พบเพจ Instagram" },
+                { value: "none", label: "ไม่แยก — เก็บรวมกับเพจหลัก" },
+                ...data.pages.filter((p) => p.active && p.id !== pageId).map((p) => ({ value: p.id, label: `แยกไปที่ ${p.name}` })),
+              ]} />
+            <p className="text-xs text-muted">แถวอื่นทั้งหมดจะถูกบันทึกให้เพจหลัก (แคมเปญ/โฆษณาใหม่สร้างภายใต้เพจหลัก) · ถ้าไฟล์มีคอลัมน์ <b>Channel</b> แถวที่ระบุ Instagram จะไปเพจ Instagram ที่เลือกไว้ ไม่ปนกับแชท Facebook · เพจ Instagram ในระบบมักชื่อ “ชื่อเพจ (Instagram)” สร้างได้ที่ Setting → Pages</p>
+            {igTargetId && igTargetId !== pageId && <p className="text-xs text-emerald-700">แถว Instagram จะถูกเก็บแยกในเพจ “{data.pages.find((p) => p.id === igTargetId)?.name}” — ชื่อ/เบอร์ที่ตรงกับแชท Instagram เดิมจะอัปเดตการ์ดเดิม</p>}
+            {data.pages.length === 0 && <p className="text-sm text-amber-700">ยังไม่มีเพจในระบบ — เพิ่มที่หน้า Setting → Pages หรือในแท็บ pages ของ Google Sheet ก่อน</p>}<div className="flex flex-wrap gap-2"><Btn variant="primary" disabled={!pageId} onClick={() => { setAuto(true); setStep(2); }}>เลือกไฟล์เลย (ให้ระบบตรวจประเภทให้)</Btn><Btn disabled={!pageId} onClick={() => setStep(1)}>เลือกประเภทไฟล์เอง</Btn></div></div>)}
 
         {step === 1 && (<div className="max-w-3xl space-y-4"><h2 className="font-semibold">ขั้นที่ 2 · เลือกประเภทไฟล์ที่จะอัปโหลด</h2>
           <div className="grid gap-2 sm:grid-cols-2">{TYPE_INFO.filter((t) => PICKER_TYPES.includes(t.type)).map((t) => (
@@ -312,6 +327,7 @@ export default function UploadPage() {
           <p className="text-sm text-muted">{summary.id} · {summary.fileName} · {summary.mode} · บันทึกลง Google Sheet แล้ว และแสดงในแดชบอร์ด/บอร์ดทันที</p>
           <div className="flex flex-wrap gap-2">{summary.errors.length > 0 && <Btn onClick={() => download(`error-report-${summary.id}.csv`, ["Row,Description", ...summary.errors.map((e) => `${e.row},"${e.message.replace(/"/g, '""')}"`)].join("\n"))}><Download size={14} /> Download error report</Btn>}<Btn variant="primary" onClick={reset}>อัปโหลดไฟล์อื่น</Btn></div></div>)}
       </Card>
+      </div>
 
       <Card title="ประวัติการอัปโหลด" subtitle="บันทึกในแท็บ import_log ของ Google Sheet ทุกครั้งที่อัปโหลด">
         <DataTable columns={histCols} rows={data.imports} rowKey={(r) => r.id} emptyTitle="ยังไม่มีการอัปโหลด" emptyHint="เลือกประเภทไฟล์แล้วอัปโหลดได้เลย หรือดาวน์โหลดไฟล์ตัวอย่างด้านบนเพื่อลองก่อน" caption="Import history" />
