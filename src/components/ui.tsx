@@ -55,8 +55,8 @@ export function Btn({ variant = "secondary", size = "md", className, type = "but
       className={cn(
         "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:opacity-50",
         size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2 text-sm",
-        variant === "primary" && "bg-brand text-white shadow-sm hover:bg-brand-hover",
-        variant === "secondary" && "border border-line bg-surface text-ink hover:bg-gray-50",
+        variant === "primary" && "bg-gradient-to-b from-brand-2 to-brand text-white shadow-sm hover:from-brand hover:to-brand-hover",
+        variant === "secondary" && "border border-line bg-surface text-ink hover:border-brand-2 hover:bg-brand-faint",
         variant === "ghost" && "text-muted hover:bg-gray-100 hover:text-ink",
         variant === "danger" && "bg-red-500 text-white hover:bg-red-600",
         className,

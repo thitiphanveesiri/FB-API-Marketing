@@ -67,6 +67,7 @@ const INSIGHT_FIELDS: FieldDef[] = [
   F("linkClicks", "Link clicks", false, "int", ["link clicks", "clicks", "link_clicks", "การคลิกลิงก์"]),
 ];
 const MESSAGE_FIELDS: FieldDef[] = [
+  F("channel", "Channel (fb / ig / line / whatsapp)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
   F("leadId", "Lead / Conversation ID", false, "text", ["lead id", "lead_id", "conversation id", "thread id", "id"]),
   F("name", "Customer name", false, "text", ["customer name", "customer", "name", "contact", "ชื่อลูกค้า", "ชื่อ"]),
   F("direction", "Who sent (customer / staff)", true, "text", ["direction", "sender type", "from", "sender", "type", "ผู้ส่ง", "ทิศทาง"]),
@@ -440,10 +441,11 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       const at = pdt(vals.sentAt); const dir = parseDirection(vals.direction);
       if (!at) { res.failed++; res.issues.push({ row: n, message: `Invalid date & time "${vals.sentAt}" — the time of day is required (e.g. 2026-11-01 14:05)`, level: "error" }); return; }
       if (!dir) { res.failed++; res.issues.push({ row: n, message: `Cannot tell who sent "${vals.direction}" — use customer/staff (ลูกค้า/เพจ)`, level: "error" }); return; }
-      // Messages carry no channel: find the chat by ID first, then by name on the chosen page, then anywhere (a unique name).
+      // Find the chat by ID first, then by name on the page its Channel points to (Instagram chats live on the "… (Instagram)" page), then anywhere (a unique name).
+      const msgPage = ctx.channelPageIds?.[parseChannel(vals.channel)] ?? ctx.pageId;
       const leadId = vals.leadId && ctx.existingLeadIds.has(vals.leadId)
         ? vals.leadId
-        : (ctx.leadIdByName?.get(leadNameKey(vals.name)) ?? "") || anyPageLead(vals.name);
+        : (namesOf(msgPage)?.get(leadNameKey(vals.name)) ?? "") || anyPageLead(vals.name);
       if (!leadId) { res.failed++; res.issues.push({ row: n, message: `Chat not found for "${vals.leadId || vals.name || "—"}" — upload the Inbox conversations first, or fix the ID/name`, level: "error" }); return; }
       const id = `MSG-${leadId}-${at.replace(/\D/g, "")}-${dir}`;
       if (seen.has(id) || ctx.existingMessageIds?.has(id)) { res.duplicates++; res.issues.push({ row: n, message: `Already have this ${dir === "in" ? "customer" : "staff"} message at ${at.replace("T", " ").slice(0, 16)}`, level: "duplicate" }); return; }

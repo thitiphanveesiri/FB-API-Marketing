@@ -20,6 +20,7 @@ export function pickSystemPage(
   const exists = (id: string) => !!id && pages.some((page) => page.id === id);
   const mapped = channels.find((channel) => channel.channelId === `facebook:${fbPageId}`)?.sheetPageId ?? "";
   if (exists(mapped)) return { id: mapped, create: false };
+  if (exists(fbPageId)) return { id: fbPageId, create: false }; // the admin's own row keyed by the plain Facebook Page ID
   const own = systemPageIdFor(fbPageId);
   if (exists(own)) return { id: own, create: false };
   const same = fbName ? pages.filter((page) => norm(page.name) === norm(fbName)) : [];

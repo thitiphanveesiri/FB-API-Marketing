@@ -101,7 +101,6 @@ export interface FbPage {
   active: boolean;
   agencyId: string | null;
   teamIds: string[]; // sales rep user ids
-  adKeywords?: string[]; // ad sync: words in a campaign/ad name that belong to this page ("*" = the rest)
 }
 export interface Agency {
   id: string;

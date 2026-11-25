@@ -82,9 +82,8 @@ export function mapSheets(tabs: RawTabs): MapResult {
   for (const r of tab("pages").rows) {
     const id = r.get("page_id"), name = r.get("name"); if (!id || !name) { warn("pages", r.n, "page_id and name are required — row skipped"); continue; }
     if (pages.some((p) => p.id === id)) { warn("pages", r.n, `Duplicate page_id ${id} — skipped`); continue; }
-    const kw = r.get("ad_keywords").split(/[,;，]/).map((x) => x.trim()).filter(Boolean);
     const ag = r.get("agency_id"); if (ag && !agencyIds.has(ag)) warn("pages", r.n, `agency_id ${ag} not found in agencies`);
-    pages.push({ id, name, active: bool(r.get("active"), true), agencyId: ag || null, teamIds: r.get("sales_team").split(/[,;]/).map((x) => x.trim()).filter(Boolean), ...(kw.length ? { adKeywords: kw } : {}) });
+    pages.push({ id, name, active: bool(r.get("active"), true), agencyId: ag || null, teamIds: r.get("sales_team").split(/[,;]/).map((x) => x.trim()).filter(Boolean) });
   }
   const pageIds = new Set(pages.map((p) => p.id));
   // Rows that point at a page the pages tab no longer has (a page row deleted or its id retyped). They used to be dropped,

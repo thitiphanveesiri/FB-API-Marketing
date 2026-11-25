@@ -3,7 +3,6 @@ import { adminOnly, fail, noStore } from "@/lib/adminGate";
 import { loadChannels } from "@/lib/channels";
 import { fetchPageName, systemPageIdFor } from "@/lib/autoPage";
 import { adsStep, type AdsState } from "@/lib/adsSync";
-import { defaultPageRules } from "@/lib/adPageRules";
 import { FbError } from "@/lib/fbSync";
 import { isMetaCdnLink } from "@/lib/creativeUrl";
 import { expiredMetaTokenMessage, isExpiredMetaToken } from "@/lib/metaTokenError";
@@ -65,7 +64,7 @@ export async function POST(req: Request) {
       for (const id of fbPageIds) {
         // Only Facebook Page ids: an Instagram actor id that is not a connected channel keeps the account's page.
         if (!/^\d{5,}$/.test(id) || igAccounts.has(id)) continue;
-        const own = systemPageIdFor(id);
+        const own = knownPages.has(id) ? id : systemPageIdFor(id); // a page the admin added by its plain Facebook id counts too
         if (knownPages.has(own)) out[id] = own; else if (!missing.includes(id)) missing.push(id);
       }
       if (!missing.length) return out;
@@ -85,10 +84,7 @@ export async function POST(req: Request) {
       unnamedPages.push(...named.filter((x) => !x.name).map((x) => `เพจ ${x.id}`));
       return out;
     };
-    // Sheet keywords are optional overrides. With none configured, use the BEQ name rules mapped to unique existing A Pages.
-    const sheetRules = g.mapped.dataset.pages.filter((p) => p.active && p.adKeywords?.length).map((p) => ({ pageId: p.id, keywords: p.adKeywords! }));
-    const pageRules = ch.forceSheetPage ? [] : sheetRules.length ? sheetRules : defaultPageRules(pageMap, new Set(g.mapped.dataset.pages.map((p) => p.id)), undefined, pageNames);
-    const out = await adsStep({ pageRules, pageNames, knownCampaignPages, knownCreativeUrls, pageTokensByFbId, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(24, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
+    const out = await adsStep({ pageNames, knownCampaignPages, knownCreativeUrls, pageTokensByFbId, ...(ch.forceSheetPage ? {} : { resolvePages }), accountId: ch.accountId, token: ch.accessToken, sheetPageId: ch.sheetPageId, days, state: { phase, after, fallback: b.state?.fallback === true, tier: Number.isInteger(b.state?.tier) ? Math.min(9, Math.max(0, Number(b.state?.tier))) : undefined, win: Number.isInteger(b.state?.win) ? Math.min(24, Math.max(0, Number(b.state?.win))) : undefined, lim: Number.isInteger(b.state?.lim) ? Math.min(5, Math.max(0, Number(b.state?.lim))) : undefined }, base: process.env.FB_GRAPH_BASE, pageMap });
     for (const w of out.writes) await upsertRows(w.tab, w.keyCols, w.rows, w.mode);
     if (out.next.phase === "done") invalidateCache();
     // A stale channel mapping used to make every campaign disappear in the mapper; now those ads land on the account's page and the admin is told.
