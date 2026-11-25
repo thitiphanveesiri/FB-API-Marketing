@@ -21,3 +21,11 @@ test("when nothing is found the reason from Meta is kept", async () => {
   const info = await inspectToken("T", "https://g.test", graph({ ...userMe, "me/accounts": { error: { message: "(#200) Requires pages_show_list permission" } } }));
   assert.ok(info.kind === "user" && info.pages.length === 0 && /pages_show_list/.test(info.why ?? ""));
 });
+
+test("an app over its Meta call limit stops after one call and says to wait, not to re-issue the token", async () => {
+  let calls = 0;
+  const g = graph({ ...userMe, "me/accounts": { error: { code: 4, message: "(#4) Application request limit reached" } } });
+  const info = await inspectToken("T", "https://g.test", async (u) => { calls++; return g(u); });
+  assert.ok(info.kind === "user" && /รอประมาณ 1 ชั่วโมง/.test(info.why ?? ""));
+  assert.equal(calls, 3); // me (probe), me (id,name), me/accounts: no assigned_pages / businesses calls
+});
