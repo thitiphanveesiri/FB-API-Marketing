@@ -43,7 +43,9 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
     let id = leadOf.get(ev.customerId) ?? "";
     if (!id) {
       const mineId = `FB-${ev.customerId}`;
-      if (ids.has(mineId)) id = mineId;
+      const byPsid = mine.find((l) => l.fbUserId === ev.customerId)?.id; // a lead the sync/earlier chat already linked to this person
+      if (byPsid) id = byPsid;
+      else if (ids.has(mineId)) id = mineId;
       else {
         const name = ((await nameOf(ev.customerId).catch(() => "")) || "").trim() || "ลูกค้า Facebook";
         id = byName.get(name.toLowerCase()) ?? "";           // an earlier import/sync of the same person (unique name only)

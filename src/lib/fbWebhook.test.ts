@@ -51,3 +51,10 @@ test("a fresh Facebook message in the same stored minute still updates the summa
     lead_id: "FB-customer-1", last_contact_at: "2026-03-04 06:00", last_message: "latest message", unread: true,
   }]);
 });
+
+test("a customer already linked by Facebook user id keeps their lead even when the lead id and name differ", async () => {
+  const old = lead({ id: "t_123", name: "Napat K.", fbUserId: "customer-1" });
+  const r = await buildWrites([event("M-NEW", "hi", "2026-03-05T05:00:00Z")], channel, { ...emptyDataset(), leads: [old] }, "UTC", async () => "ลูกค้า Facebook");
+  assert.deepEqual(r.newLeads, []);
+  assert.equal(r.messages[0].lead_id, "t_123");
+});
