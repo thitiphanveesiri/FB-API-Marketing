@@ -222,7 +222,17 @@ export function mapSheets(tabs: RawTabs): MapResult {
       : "unknown";
     messages[lid].push({ id: r.get("message_id") || `${lid}-M${++mn}`, leadId: lid, direction: dir, senderType, senderApp, text: r.get("text"), at, attachment: att ? { name: att, kind: /\.(png|jpe?g|gif|webp)$/i.test(att) ? "image" : "file" } : undefined, simulated: false, sentBy });
   }
-  for (const k of Object.keys(messages)) messages[k].sort((a, b) => a.at.localeCompare(b.at));
+  for (const k of Object.keys(messages)) {
+    messages[k].sort((a, b) => a.at.localeCompare(b.at));
+    // The same message can arrive twice: from Meta (its own id) and from a CSV ("MSG-…" id). Keep the Meta one.
+    const kept = new Map<string, Message>();
+    for (const m of messages[k]) {
+      const key = m.direction === "note" ? m.id : `${m.direction}|${m.at.slice(0, 16)}|${m.text.trim().slice(0, 40)}`;
+      const old = kept.get(key);
+      if (!old || (old.id.startsWith("MSG-") && !m.id.startsWith("MSG-"))) kept.set(key, m);
+    }
+    messages[k] = [...kept.values()];
+  }
 
   // history + notes written by the app
   const byLead = new Map(leads.map((l) => [l.id, l]));
