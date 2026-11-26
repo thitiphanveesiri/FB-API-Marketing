@@ -10,6 +10,7 @@ import { LeadQuality, LeadStatus, statusTh } from "@/lib/types";
 import { ChatQuality } from "@/lib/metrics";
 import { askForFreshLink, useCreativeUrl } from "@/lib/creativeClient";
 import { linkLooksExpired } from "@/lib/creativeUrl";
+import { csvCell } from "@/lib/csv";
 
 export const cn = clsx;
 
@@ -391,9 +392,8 @@ export function DataTable<T>({
   const doExport = () => {
     // Exports every column that has a sort accessor (the underlying value, not the formatted cell), respecting search + sort.
     const cs = columns.filter((c) => c.sort);
-    const esc = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-    const head = cs.map((c) => esc(typeof c.header === "string" ? c.header : c.key)).join(",");
-    const body = processed.map((r) => cs.map((c) => esc(c.sort!(r))).join(",")).join("\n");
+    const head = cs.map((c) => csvCell(typeof c.header === "string" ? c.header : c.key)).join(",");
+    const body = processed.map((r) => cs.map((c) => csvCell(c.sort!(r))).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["\ufeff" + head + "\n" + body], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = `${exportName ?? caption ?? "table"}.csv`.replace(/\s+/g, "-").toLowerCase(); a.click(); URL.revokeObjectURL(url);
   };

@@ -8,7 +8,7 @@ const b64 = (s: string) => { const p = "=".repeat((4 - (s.length % 4)) % 4), r =
 
 /** Turn alerts on / off for THIS phone or browser. Needs the service worker (public/sw.js). */
 export default function PushCard() {
-  const { toast } = useStore();
+  const { toast, confirm } = useStore();
   const [state, setState] = useState<"loading" | "unsupported" | "unconfigured" | "off" | "on" | "blocked">("loading");
   const [busy, setBusy] = useState(false); const [key, setKey] = useState("");
   const ios = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -24,10 +24,8 @@ export default function PushCard() {
       setKey(j.publicKey);
       if (Notification.permission === "denied") { setState("blocked"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js").catch(() => null);
-      const sub = await reg?.pushManager.getSubscription();
-      // Re-register this device under the CURRENT account (it may have been enabled by someone else on a shared browser, or its row may be missing).
-      if (sub) await fetch("/api/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) }).catch(() => undefined);
-      if (live) setState(sub ? "on" : "off");
+      await reg?.pushManager.getSubscription();
+      if (live) setState("off");
     })();
     return () => { live = false; };
   }, [ios, standalone]);
@@ -38,10 +36,22 @@ export default function PushCard() {
       const perm = await Notification.requestPermission();
       if (perm !== "granted") { setState(perm === "denied" ? "blocked" : "off"); toast("ยังไม่ได้อนุญาตการแจ้งเตือน", "info"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js"); await navigator.serviceWorker.ready;
-      const sub = (await reg.pushManager.getSubscription()) ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
-      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) });
-      const j = await r.json().catch(() => ({ ok: false }));
-      if (!j.ok) { await sub.unsubscribe().catch(() => {}); toast(j.message || "เปิดแจ้งเตือนไม่สำเร็จ", "error"); return; }
+      const existing = await reg.pushManager.getSubscription();
+      const sub = existing ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+      const register = async (takeover: boolean) => {
+        const response = await fetch("/api/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON(), takeover }) });
+        return { response, body: await response.json().catch(() => ({ ok: false })) as { ok?: boolean; code?: string; message?: string } };
+      };
+      let { response, body } = await register(false);
+      if (response.status === 409 && body.code === "subscription_in_use") {
+        const approved = await confirm({ title: "ใช้อุปกรณ์นี้กับบัญชีนี้ไหม?", message: "อุปกรณ์นี้เปิดแจ้งเตือนสำหรับบัญชีอื่นอยู่ การยืนยันจะย้ายการแจ้งเตือนบนอุปกรณ์นี้มาที่บัญชีปัจจุบัน", confirmLabel: "ย้ายมาบัญชีนี้", tone: "danger" });
+        if (!approved.ok) { setState("off"); return; }
+        ({ response, body } = await register(true));
+      }
+      if (!response.ok || !body.ok) {
+        if (!existing && response.status !== 409) await sub.unsubscribe().catch(() => {});
+        toast(body.message || "เปิดแจ้งเตือนไม่สำเร็จ", "error"); return;
+      }
       setState("on"); toast("เปิดแจ้งเตือนบนเครื่องนี้แล้ว", "success");
     } catch { toast("เปิดแจ้งเตือนไม่สำเร็จ", "error"); } finally { setBusy(false); }
   };
@@ -70,7 +80,7 @@ export default function PushCard() {
         {state === "blocked" && <p className="text-amber-700">เครื่องนี้ปิดกั้นการแจ้งเตือนไว้ — เปิดอนุญาตที่การตั้งค่าเว็บไซต์ของเบราว์เซอร์ แล้วโหลดหน้านี้ใหม่</p>}
         {state === "off" && <Btn variant="primary" onClick={enable} disabled={busy}>เปิดแจ้งเตือนบนเครื่องนี้</Btn>}
         {state === "on" && <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-brand-faint px-2.5 py-0.5 text-xs font-medium text-brand">เปิดอยู่บนเครื่องนี้</span><Btn onClick={test} disabled={busy}>ส่งทดสอบ</Btn><Btn onClick={disable} disabled={busy}>ปิด</Btn></div>}
-        <p className="text-xs text-muted">ข้อความใหม่จะส่งเฉพาะ Sales ที่ถูก assign; ถ้ายังไม่มีผู้ดูแลจะไม่ส่ง · ไม่ส่งข้อความใหม่ช่วง 22:00–08:00 · หัวหน้าและแอดมินได้รับแจ้งแชทค้างตามรอบระบบ</p>
+        <p className="text-xs text-muted">ข้อความใหม่จะส่งไปยัง Sales ที่ถูก assign; ถ้ายังไม่มีผู้ดูแลจะส่งให้หัวหน้าช่วงขายและแอดมิน · ไม่ส่งข้อความใหม่ช่วง 22:00–08:00 · หัวหน้าและแอดมินได้รับแจ้งแชทค้างตามรอบระบบ</p>
       </div>
     </Card>
   );

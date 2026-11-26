@@ -49,7 +49,7 @@ export default function FilterBar({ hide = [] }: { hide?: ("rep" | "adStatus")[]
         <TextInput label="Start date" type="date" max={ANCHOR} value={filters.start} onChange={(e) => e.target.value && setFilters({ start: e.target.value })} error={dateErr} className="w-full" />
         <TextInput label="End date" type="date" max={ANCHOR} value={filters.end} onChange={(e) => e.target.value && setFilters({ end: e.target.value })} className="w-full" />
         <Select label="Page" value={filters.pageId} onChange={(v) => setFilters({ pageId: v, campaignId: "all" })} className="w-full"
-          options={[{ value: "all", label: "All Pages" }, ...data.pages.filter((p) => !p.id.startsWith("IG-")).map((p) => ({ value: p.id, label: p.name }))]} />
+          options={[{ value: "all", label: "All Pages" }, ...data.pages.map((p) => ({ value: p.id, label: p.name }))]} />
         <Select label="Campaign" value={filters.campaignId} onChange={(v) => setFilters({ campaignId: v })} className="w-full"
           options={[{ value: "all", label: "All Campaigns" }, ...camps.map((c) => ({ value: c.id, label: c.name }))]} />
         {!hide.includes("rep") && (

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { emptyDataset } from "./dataset";
 import { buildInstagramWrites, instagramRecipientFor, instagramRecipientOf, parseInstagramEvents } from "./instagramWebhook";
+import type { Lead } from "./types";
 
 test("parses Instagram messages separately from Facebook page events", () => {
   const events = parseInstagramEvents({
@@ -46,4 +47,27 @@ test("replies to Instagram leads made by the history sync through their stored c
   assert.equal(instagramRecipientFor({ id: "aWdfZAG1f", fbUserId: "17841400000" }, "111"), "17841400000");
   assert.equal(instagramRecipientFor({ id: "aWdfZAG1f" }, "111"), null);
   assert.equal(instagramRecipientFor({ id: "aWdfZAG1f", fbUserId: "111" }, "111"), null);
+});
+
+const instagramLead = (overrides: Partial<Lead> = {}): Lead => ({
+  id: "IG-ig-business-12345", name: "Instagram Customer", phone: "", email: "", pageId: "PG-IG", adId: null, repId: null,
+  status: "Converted", quality: "Qualified", valid: true, createdAt: "2026-03-01", lastContactAt: "2026-03-04T06:00:00",
+  lastMessage: "newer summary", unread: false, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null,
+  history: [], dropped: null, source: "import", channel: "instagram", ...overrides,
+} as Lead);
+const instagramEvent = (mid: string, text: string, at: number) => ({ accountId: "ig-business", customerId: "12345", mid, text, at, out: false });
+
+test("Instagram replays do not regress summaries but known messages repair partial persistence", () => {
+  const replay = instagramEvent("IG-M-1", "persisted message", Date.parse("2026-03-04T05:00:00Z"));
+  const olderReplay = buildInstagramWrites([replay], { accountId: "ig-business", sheetPageId: "PG-IG" }, {
+    ...emptyDataset(), leads: [instagramLead()],
+  }, "UTC", new Set([replay.mid]));
+  assert.deepEqual(olderReplay.leadUpdates, []);
+
+  const partial = buildInstagramWrites([replay], { accountId: "ig-business", sheetPageId: "PG-IG" }, {
+    ...emptyDataset(), leads: [instagramLead({ createdAt: "2026-03-04", lastContactAt: "2026-03-04T09:00:00", lastMessage: "" })],
+  }, "UTC", new Set([replay.mid]));
+  assert.deepEqual(partial.leadUpdates, [{
+    lead_id: "IG-ig-business-12345", last_contact_at: "2026-03-04 05:00", last_message: "persisted message", unread: true,
+  }]);
 });

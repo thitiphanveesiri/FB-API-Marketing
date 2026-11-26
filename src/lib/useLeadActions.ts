@@ -21,6 +21,19 @@ export function useLeadActions() {
       s.toast(`ย้าย ${lead.name} ไป “${statusTh(to)}” แล้ว`);
       return true;
     },
+    async recover(lead: Lead, to: LeadStatus): Promise<boolean> {
+      const chk = checkTransition(lead, to, s.user.role);
+      if (chk.kind === "blocked") { s.toast(chk.message, "error"); return false; }
+      let note: string | undefined;
+      if (chk.kind === "confirm") {
+        const r = await s.confirm({ title: chk.title, message: chk.message, requireReason: chk.requireReason, confirmLabel: "นำกลับเข้างาน" });
+        if (!r.ok) return false;
+        note = r.reason;
+      }
+      s.recoverLead(lead.id, to, note);
+      s.toast(`นำ ${lead.name} กลับไป “${statusTh(to)}” แล้ว`);
+      return true;
+    },
     async assign(lead: Lead, repId: string | null): Promise<boolean> {
       const claiming = lead.repId == null && repId === s.user.id;
       if (!roleCan.reassign(s.user.role) && !claiming) { s.toast("Only a Sales Manager or Administrator can reassign leads.", "error"); return false; }

@@ -69,13 +69,15 @@ export function buildInstagramWrites(
   channel: { accountId: string; sheetPageId: string },
   dataset: Dataset,
   timezone: string,
+  knownMessageIds: ReadonlySet<string> = new Set(),
 ): InstagramWrites {
   const writes: InstagramWrites = { newLeads: [], leadUpdates: [], messages: [] };
   const leads = dataset.leads.filter((lead) => lead.pageId === channel.sheetPageId && lead.channel === "instagram");
   const knownLeadIds = new Set(leads.map((lead) => lead.id));
+  const leadsById = new Map(leads.map((lead) => [lead.id, lead]));
   const anywhere = new Map(dataset.leads.map((lead) => [lead.id, lead]));
   const leadByCustomer = new Map<string, string>();
-  const latest = new Map<string, Row>();
+  const latest = new Map<string, { row: Row; at: number; fresh: boolean }>();
   for (const event of [...events].sort((a, b) => a.at - b.at)) {
     let leadId = leadByCustomer.get(event.customerId);
     if (!leadId) {
@@ -102,12 +104,23 @@ export function buildInstagramWrites(
       sent_at: stamp, attachment_name: "",
     });
     const existing = anywhere.get(leadId);
-    latest.set(leadId, {
+    const row: Row = {
       lead_id: leadId, last_contact_at: stamp, last_message: event.text.slice(0, 300), unread: !event.out,
       ...(existing && existing.pageId !== channel.sheetPageId ? { page_id: channel.sheetPageId } : {}),
-    });
+    };
+    const fresh = !knownMessageIds.has(event.mid);
+    const previous = latest.get(leadId);
+    if (!previous || event.at > previous.at || (event.at === previous.at && fresh)) latest.set(leadId, { row, at: event.at, fresh });
   }
-  writes.leadUpdates.push(...latest.values());
+  const contactMinute = (value: string) => value.replace("T", " ").slice(0, 16);
+  for (const [leadId, entry] of latest) {
+    const existing = leadsById.get(leadId);
+    const stamp = contactMinute(String(entry.row.last_contact_at));
+    const missingSummary = existing?.lastMessage === "" && existing.lastContactAt === `${existing.createdAt}T09:00:00`;
+    const current = existing && !missingSummary ? contactMinute(existing.lastContactAt) : "";
+    if (existing && (stamp < current || (stamp === current && !entry.fresh))) continue;
+    writes.leadUpdates.push(entry.row);
+  }
   return writes;
 }
 

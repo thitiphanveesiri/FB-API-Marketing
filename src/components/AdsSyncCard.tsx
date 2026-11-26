@@ -1,10 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Images, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Btn, Card, Select } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { pullAds, type AdsTotals } from "@/lib/syncClient";
-import { refreshCreativeLinks } from "@/lib/creativeClient";
 
 interface Acct { channelId: string; name: string; accountId: string }
 
@@ -15,7 +14,6 @@ export default function AdsSyncCard() {
   const [busy, setBusy] = useState(false); const [log, setLog] = useState(""); const [done, setDone] = useState<AdsTotals | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const [acctError, setAcctError] = useState("");
-  const [picBusy, setPicBusy] = useState(false); const [picNote, setPicNote] = useState("");
   const stop = useRef(false);
 
   useEffect(() => {
@@ -49,17 +47,6 @@ export default function AdsSyncCard() {
     finally { setBusy(false); await reloadData(true); }
   };
 
-  // Meta signs every picture link it returns and the signature dies in a few days. This re-reads the links for the ads whose link
-  // has expired and stores the new ones in the sheet — the same thing the thumbnails do by themselves, but for the whole account.
-  const refreshPics = async () => {
-    setPicBusy(true); setPicNote("");
-    try {
-      const r = await refreshCreativeLinks();
-      setPicNote(r.fixed ? `ต่อลิงก์รูปใหม่ให้ ${r.fixed} โฆษณา จาก ${r.checked} โฆษณาที่ลิงก์หมดอายุ (บันทึกใส่ Google Sheet แล้ว)` : (r.message ?? "ไม่พบลิงก์ที่หมดอายุ — ถ้ารูปยังไม่ขึ้น ให้ดึงข้อมูลโฆษณาซ้ำ"));
-      if (r.fixed) await reloadData(true);
-    } finally { setPicBusy(false); }
-  };
-
   return (
     <Card title="ดึงข้อมูลโฆษณาจาก Meta โดยตรง" subtitle="แคมเปญ โฆษณา ผลรายวัน (ใช้จ่าย รีช การแสดงผล คลิก ข้อความที่เริ่มคุย ยอดซื้อ) และภาพโฆษณา — ไม่ต้องดาวน์โหลดไฟล์">
       <div className="space-y-3">
@@ -68,10 +55,8 @@ export default function AdsSyncCard() {
           <Select label="ย้อนหลัง" value={days} onChange={setDays} options={[{ value: "7", label: "7 วัน" }, { value: "14", label: "14 วัน" }, { value: "30", label: "30 วัน" }, { value: "60", label: "60 วัน" }, { value: "90", label: "90 วัน" }, { value: "180", label: "180 วัน (6 เดือน)" }, { value: "365", label: "365 วัน (1 ปี)" }, { value: "730", label: "730 วัน (2 ปี)" }]} />
           <Btn variant="primary" onClick={run} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /> {busy ? "กำลังดึง…" : "ดึงข้อมูลโฆษณาตอนนี้"}</Btn>
           {busy && <Btn onClick={() => { stop.current = true; }}>หยุด</Btn>}
-          <Btn onClick={refreshPics} disabled={busy || picBusy} title="ดึงลิงก์รูปโฆษณาใหม่จาก Meta สำหรับโฆษณาที่ลิงก์เดิมหมดอายุ"><Images size={14} /> {picBusy ? "กำลังรีเฟรช…" : "รีเฟรชรูปโฆษณา"}</Btn>
         </div>
         {log && <p className="text-sm" role="status">{log}</p>}
-        {picNote && <p className="text-xs text-muted" role="status">{picNote}</p>}
         {notes.length > 0 && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
           <p className="font-medium">หมายเหตุ</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
@@ -80,7 +65,7 @@ export default function AdsSyncCard() {
           <p>ได้ {done.ads} โฆษณา ({done.campaigns} แคมเปญ) และสถิติรายวัน {done.rows} แถว</p>
           {pageSplit(done.byPage, data.pages) && <p className="mt-1 text-xs text-muted">แยกตามเพจ: {pageSplit(done.byPage, data.pages)}</p>}
         </div>}
-        <p className="text-xs text-muted">ดึงซ้ำได้ ข้อมูลวันเดิมจะถูกอัปเดตทับ ไม่ซ้ำ · วันที่นับตามเขตเวลาของบัญชีโฆษณา · ลิงก์รูปจาก Meta หมดอายุได้ในไม่กี่วัน ระบบต่อลิงก์ใหม่ให้อัตโนมัติตอนเปิดหน้ารายงาน หรือกด “รีเฟรชรูปโฆษณา”</p>
+        <p className="text-xs text-muted">ดึงซ้ำได้ ข้อมูลวันเดิมจะถูกอัปเดตทับ ไม่ซ้ำ · วันที่นับตามเขตเวลาของบัญชีโฆษณา · ลิงก์รูปจาก Meta หมดอายุได้ในไม่กี่วัน ระบบต่อลิงก์ใหม่ให้อัตโนมัติตอนเปิดหน้ารายงาน หรือกดปุ่ม “รีเฟรชรูปโฆษณา” ในการ์ดด้านบน</p>
       </div>
     </Card>
   );

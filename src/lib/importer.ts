@@ -2,6 +2,7 @@
 import { ImportDataType, ChatChannel, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
 import { ANCHOR } from "./dates";
 import { matchUser } from "./repMatch";
+import { toCsv } from "./csv";
 
 export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
 
@@ -38,6 +39,7 @@ const LEAD_FIELDS: FieldDef[] = [
   F("form", "Form / landing page", false, "text", ["form", "form name", "แบบฟอร์ม"]),
   F("repName", "Salesperson", false, "text", ["salesperson", "sales rep", "assigned to", "rep", "owner", "owner name", "เจ้าของ", "ผู้ดูแล"]),
   F("labels", "Labels / tags (Ad ID is read from here)", false, "text", ["labels", "tags", "ป้ายกำกับ", "แท็ก"]),
+  F("lastMessage", "Message / Note", false, "text", ["message", "last message", "ข้อความ", "ข้อความล่าสุด"]),
 ];
 const INBOX_FIELDS: FieldDef[] = [
   F("channel", "Channel (fb / ig / line / whatsapp)", false, "text", ["channel", "platform", "ช่องทาง", "แพลตฟอร์ม"]),
@@ -408,10 +410,17 @@ export function validate(ctx: ValidateCtx): ValidationResult {
         if (vals.repName && (repId ?? "") !== (existing.repId ?? "")) set.assigned_to = repId ?? "";
         if (st && st !== existing.status) { set.status = st; if ((QUALITIES as readonly string[]).includes(st)) set.quality = st; }
         if (vals.channel && parseChannel(vals.channel) !== (existing.channel ?? "facebook")) set.channel = parseChannel(vals.channel);
-        if (ctx.type === "Inbox Conversations") {
+        if (ctx.type === "Inbox Conversations" || ctx.type === "Lead Data") {
           const at = `${pd(vals.lastContactAt || "") ?? date}T09:00:00`;
           if (at > existing.lastContactAt) set.last_contact_at = at.replace("T", " ").slice(0, 16);
           if (vals.lastMessage && at >= existing.lastContactAt && vals.lastMessage !== existing.lastMessage) set.last_message = vals.lastMessage;
+          if (vals.lastMessage) {
+            const msgId = `MSG-${existing.id}-${at.replace(/\D/g, "")}-in`;
+            if (!seen.has(msgId) && !ctx.existingMessageIds?.has(msgId)) {
+              seen.add(msgId);
+              res.messages.push({ id: msgId, leadId: existing.id, direction: "in", text: vals.lastMessage, at });
+            }
+          }
         }
         if (!Object.keys(set).length) { res.duplicates++; res.issues.push({ row: n, message: `${existing.name} (${existing.id}) already has everything this row contains`, level: "duplicate" }); return; }
         res.leadPatches.push({ leadId: existing.id, set });
@@ -429,13 +438,21 @@ export function validate(ctx: ValidateCtx): ValidationResult {
       }
       if (id) seen.add(id);
       const leadId = id || `L-I${String(leadNo++).padStart(5, "0")}`;
+      const msgAt = `${pd(vals.lastContactAt || "") ?? date}T09:00:00`;
       res.leads.push({
         id: leadId, name, phone: vals.phone, email: vals.email, pageId: targetPageId, adId: vals.adId || adIdFromLabels(vals.labels) || null, repId, status, quality, valid: true, createdAt: date,
         ...(vals.phone2 ? { phone2: vals.phone2 } : {}), ...(vals.whatsapp ? { whatsapp: vals.whatsapp } : {}), ...(vals.leadSource ? { leadSource: vals.leadSource } : {}),
         ...(vals.form ? { form: vals.form } : {}), ...(vals.labels ? { labels: vals.labels } : {}),
-        lastContactAt: `${pd(vals.lastContactAt || "") ?? date}T09:00:00`, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
+        lastContactAt: msgAt, lastMessage: vals.lastMessage || "(imported lead — no messages)", followUpDate: null, notes: [], firstResponseMin: null, followUps: 0, avgFollowUpHrs: null, unread: false,
         history: [{ at: `${date}T09:00:00`, from: null, to: status, by: "Import", note: "Imported from file" }], dropped: null, channel, source: "import",
       });
+      if (vals.lastMessage) {
+        const msgId = `MSG-${leadId}-${msgAt.replace(/\D/g, "")}-in`;
+        if (!seen.has(msgId) && !ctx.existingMessageIds?.has(msgId)) {
+          seen.add(msgId);
+          res.messages.push({ id: msgId, leadId, direction: "in", text: vals.lastMessage, at: msgAt });
+        }
+      }
       res.ok++;
     } else if (ctx.type === "Chat Messages") {
       const at = pdt(vals.sentAt); const dir = parseDirection(vals.direction);
@@ -493,6 +510,5 @@ export function validate(ctx: ValidateCtx): ValidationResult {
 }
 
 export function errorsToCsv(issues: RowIssue[]): string {
-  const esc = (s: string | number) => `"${String(s).replace(/"/g, '""')}"`;
-  return ["Row,Level,Description", ...issues.map((i) => [i.row, i.level, esc(i.message)].map((x, k) => (k === 2 ? x : String(x))).join(","))].join("\n");
+  return toCsv([["Row", "Level", "Description"], ...issues.map((i) => [i.row, i.level, i.message])]);
 }

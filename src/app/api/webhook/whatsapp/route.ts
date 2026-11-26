@@ -1,11 +1,12 @@
 import { after, connection, NextResponse } from "next/server";
 import { loadChannels } from "@/lib/channels";
-import { buildExternalWrites, dedupeExternalEvents, writeExternalWrites } from "@/lib/externalWebhook";
+import { buildExternalWrites, writeExternalWrites } from "@/lib/externalWebhook";
 import { getCached, invalidateCache, setCached } from "@/lib/sheetCache";
 import { readTabs } from "@/lib/googleSheets";
 import { mapSheets } from "@/lib/sheetMapper";
-import { notifyInbound } from "@/lib/push";
+import { notifyInboundFresh } from "@/lib/push";
 import { parseWhatsAppEvents, whatsappSignatureOk } from "@/lib/whatsappWebhook";
+import { readBoundedText } from "@/lib/webhookRequest";
 
 export const maxDuration = 30;
 const text = (body: string, status: number) => new NextResponse(body, { status, headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" } });
@@ -25,8 +26,9 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   await connection();
-  const raw = await req.text();
-  if (raw.length > 1_000_000) return text("too large", 413);
+  const bounded = await readBoundedText(req);
+  if (!bounded.ok) return text("too large", bounded.status);
+  const raw = bounded.text;
   let channels;
   try { channels = await loadChannels(); }
   catch { return text("error", 500); }
@@ -44,18 +46,19 @@ export async function POST(req: Request) {
     const knownMessageIds = new Set(Object.values(mapped.dataset.messages).flat().map((message) => message.id));
     let wrote = false;
     for (const channel of signed) {
-      const mine = dedupeExternalEvents(events.filter((event) => event.accountId === channel.accountId), knownMessageIds);
+      const mine = events.filter((event) => event.accountId === channel.accountId);
       if (!mine.length) continue;
       const writes = buildExternalWrites(mine, {
         channel: "whatsapp",
         sheetPageId: channel.sheetPageId,
         dataset: mapped.dataset,
         timezone: process.env.APP_TZ || "Asia/Bangkok",
+        knownMessageIds,
       });
       const newMessages = await writeExternalWrites(writes, knownMessageIds);
+      if (writes.newLeads.length || writes.leadUpdates.length || newMessages.length) wrote = true;
       if (!newMessages.length) continue;
-      wrote = true;
-      after(() => notifyInbound(mapped.dataset, newMessages).catch((error) => {
+      after(() => notifyInboundFresh(newMessages).catch((error) => {
         console.error("[webhook/whatsapp] push delivery failed", error instanceof Error ? error.name : "UnknownError");
       }));
     }

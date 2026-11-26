@@ -1,7 +1,7 @@
-// SERVER ONLY. Shared sheet mapping for inbound LINE and WhatsApp messages.
+// SERVER ONLY. Shared sheet mapping and persistence for inbound LINE and WhatsApp messages.
 import type { Dataset } from "./dataset";
 import { localStamp } from "./fbSync";
-import { upsertRows } from "./sheetsWrite";
+import { writeWebhookWrites, type WebhookMessageRow, type WebhookWrites } from "./webhookWrites";
 
 export type ExternalChatChannel = "line" | "whatsapp";
 export type ExternalRow = Record<string, string | number | boolean>;
@@ -15,8 +15,8 @@ export interface ExternalEvent {
   phone?: string;
   attachmentName?: string;
 }
-export interface ExternalWrites { newLeads: ExternalRow[]; leadUpdates: ExternalRow[]; messages: ExternalRow[] }
-export interface ExternalMessageRow { message_id: string; lead_id: string; direction: string; text: string }
+export type ExternalWrites = WebhookWrites;
+export type ExternalMessageRow = WebhookMessageRow;
 
 const prefixOf = (channel: ExternalChatChannel) => channel === "line" ? "LINE" : "WA";
 export const externalLeadId = (channel: ExternalChatChannel, accountId: string, customerId: string) => `${prefixOf(channel)}-${accountId}-${customerId}`;
@@ -36,12 +36,13 @@ export function buildExternalWrites(events: ExternalEvent[], input: {
   sheetPageId: string;
   dataset: Dataset;
   timezone: string;
+  knownMessageIds?: ReadonlySet<string>;
 }): ExternalWrites {
   const writes: ExternalWrites = { newLeads: [], leadUpdates: [], messages: [] };
   const anywhere = new Map(input.dataset.leads.map((lead) => [lead.id, lead]));
   const knownLeadIds = new Set(anywhere.keys());
   const leadByCustomer = new Map<string, string>();
-  const latest = new Map<string, ExternalRow>();
+  const latest = new Map<string, { row: ExternalRow; at: number; fresh: boolean }>();
   const label = input.channel === "line" ? "LINE" : "WhatsApp";
 
   for (const event of [...events].sort((a, b) => a.at - b.at)) {
@@ -74,6 +75,7 @@ export function buildExternalWrites(events: ExternalEvent[], input: {
     }
     const existing = anywhere.get(leadId);
     const stamp = localStamp(new Date(event.at).toISOString(), input.timezone);
+    const fresh = !input.knownMessageIds?.has(event.mid);
     writes.messages.push({
       message_id: event.mid,
       lead_id: leadId,
@@ -84,35 +86,31 @@ export function buildExternalWrites(events: ExternalEvent[], input: {
       sent_at: stamp,
       attachment_name: event.attachmentName ?? "",
     });
-    latest.set(leadId, {
+    const row: ExternalRow = {
       lead_id: leadId,
       last_contact_at: stamp,
       last_message: event.text.slice(0, 300),
       unread: true,
-      status: "Not Responded",
-      quality: "Not Responded",
       ...(event.phone ? { phone: event.phone } : {}),
       ...(existing && existing.pageId !== input.sheetPageId ? { page_id: input.sheetPageId } : {}),
-    });
+    };
+    const previous = latest.get(leadId);
+    if (!previous || event.at > previous.at || (event.at === previous.at && fresh)) latest.set(leadId, { row, at: event.at, fresh });
   }
-  writes.leadUpdates.push(...latest.values());
+  const contactMinute = (value: string) => value.replace("T", " ").slice(0, 16);
+  for (const [leadId, entry] of latest) {
+    const existing = anywhere.get(leadId);
+    const stamp = contactMinute(String(entry.row.last_contact_at));
+    const missingSummary = existing?.lastMessage === "" && existing.lastContactAt === `${existing.createdAt}T09:00:00`;
+    const current = existing && !missingSummary ? contactMinute(existing.lastContactAt) : "";
+    if (existing && (stamp < current || (stamp === current && !entry.fresh))) continue;
+    writes.leadUpdates.push(entry.row);
+  }
   return writes;
 }
 
 export async function writeExternalWrites(writes: ExternalWrites, knownMessageIds: Set<string>): Promise<ExternalMessageRow[]> {
-  const newMessages: ExternalMessageRow[] = [];
-  for (const row of writes.messages) {
-    const id = String(row.message_id ?? "");
-    if (!id || knownMessageIds.has(id)) continue;
-    knownMessageIds.add(id);
-    newMessages.push({ message_id: id, lead_id: String(row.lead_id ?? ""), direction: String(row.direction ?? "in"), text: String(row.text ?? "") });
-  }
-  if (!newMessages.length) return [];
-  const newIds = new Set(newMessages.map((message) => message.message_id));
-  if (writes.newLeads.length) await upsertRows("leads", ["lead_id"], writes.newLeads, "insert");
-  await upsertRows("messages", ["message_id"], writes.messages.filter((row) => newIds.has(String(row.message_id ?? ""))), "insert");
-  if (writes.leadUpdates.length) await upsertRows("leads", ["lead_id"], writes.leadUpdates, "updateOnly");
-  return newMessages;
+  return writeWebhookWrites(writes, knownMessageIds);
 }
 
 export function externalRecipientOf(leadId: string, channel: ExternalChatChannel, accountId: string): string | null {

@@ -21,7 +21,7 @@ export interface ConfirmOpts {
 export interface ConfirmState extends ConfirmOpts { resolve: (r: { ok: boolean; reason?: string }) => void }
 
 export type Source = "loading" | "setup" | "sheets" | "error" | "forbidden";
-export interface SourceMeta { fetchedAt?: string; warnings: SheetWarning[]; warningCount: number; missingTabs: string[]; counts?: Record<string, number>; message?: string; fbPages?: Record<string, string> }
+export interface SourceMeta { fetchedAt?: string; backend?: string; warnings: SheetWarning[]; warningCount: number; missingTabs: string[]; counts?: Record<string, number>; message?: string; fbPages?: Record<string, string> }
 
 interface Store {
   source: Source;
@@ -53,7 +53,7 @@ interface Store {
   sendReply: (id: string, text: string) => Promise<{ ok: true; saved: boolean } | { ok: false; message: string }>;
   markRead: (id: string) => void;
   dropLead: (id: string, reason: DropReason) => void;
-  recoverLead: (id: string, to: LeadStatus) => void;
+  recoverLead: (id: string, to: LeadStatus, note?: string) => void;
   setRecovery: (id: string, r: RecoveryStatus) => void;
   addEvaluation: (e: Omit<Evaluation, "id" | "at" | "reviewerId" | "previousQuality">) => void;
   // settings
@@ -110,21 +110,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [sourceMeta, setSourceMeta] = useState<SourceMeta | null>(null);
 
-  const applyResponse = useCallback((first: boolean, j: { source: string; me?: { id?: string; email?: string; name?: string } | null; email?: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; fbPages?: Record<string, string>; message?: string }) => {
+  const applyResponse = useCallback((first: boolean, j: { source: string; backend?: string; me?: { id?: string; email?: string; name?: string } | null; email?: string; dataset?: Dataset; fetchedAt?: string; warnings?: SheetWarning[]; warningCount?: number; missingTabs?: string[]; counts?: Record<string, number>; fbPages?: Record<string, string>; message?: string }) => {
+    // "sheets" remains the legacy wire value so existing screens keep working; backend identifies the real source.
     if (j.source === "sheets" && j.dataset) {
       setAnchor(localToday()); // real data uses the real date, not the demo's fixed one
       const ds = j.dataset;
       setData(ds); if (first) setF(defaultFilters());
       setUserId(j.me?.id ?? (ds.users.find((u) => u.role === "Administrator") ?? ds.users[0]).id);
       setAuthed(!!j.me);
-      setSourceMeta({ fetchedAt: j.fetchedAt, warnings: j.warnings ?? [], warningCount: j.warningCount ?? 0, missingTabs: j.missingTabs ?? [], counts: j.counts, fbPages: j.fbPages });
+      setSourceMeta({ fetchedAt: j.fetchedAt, backend: j.backend, warnings: j.warnings ?? [], warningCount: j.warningCount ?? 0, missingTabs: j.missingTabs ?? [], counts: j.counts, fbPages: j.fbPages });
       setSource("sheets");
     } else if (j.source === "unauthenticated") { // full page load on purpose: drops all in-memory data
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`; }
     else if (j.source === "forbidden") { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: j.email }); setSource("forbidden"); }
-    else if (j.source === "error") { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: j.message }); setSource("error"); }
-    else if (j.source === "setup") { setAuthed(!!j.me); setSource("setup"); }
+    else if (j.source === "error") { setSourceMeta({ backend: j.backend, warnings: [], warningCount: 0, missingTabs: [], message: j.message }); setSource("error"); }
+    else if (j.source === "setup") { setSourceMeta({ backend: j.backend, warnings: [], warningCount: 0, missingTabs: [] }); setAuthed(!!j.me); setSource("setup"); }
     else { setSourceMeta({ warnings: [], warningCount: 0, missingTabs: [], message: "Unexpected response from the server." }); setSource("error"); }
   }, []);
   const signOut = useCallback(async () => {
@@ -151,7 +152,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return true;
       }
       if (!response.ok || !j || !["sheets", "setup"].includes(j.source))
-        return fail(apiErrorMessage(body, response, "โหลดข้อมูลจาก Google Sheet ไม่สำเร็จ"));
+        return fail(apiErrorMessage(body, response, "โหลดข้อมูลจากแหล่งข้อมูลไม่สำเร็จ"));
       applyResponse(false, j);
       return true;
     } catch {
@@ -272,11 +273,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updLead(id, (x) => ({ ...x, dropped: { reason, at, previousStatus: x.status, recovery: "Not Started", lastActivity: "Marked as dropped by user" }, history: [...x.history, { at: nowStamp(), from: x.status, to: x.status, by: byName, note: `Dropped: ${reason}` }] }));
       void persist({ t: "lead.set", id, set: { drop_reason: reason, dropped_at: at, previous_status: l.status, recovery_status: "Not Started", last_activity: "Marked as dropped by user" }, log: { from: l.status, to: l.status, text: `Dropped: ${reason}` } });
     },
-    recoverLead: (id, to) => {
+    recoverLead: (id, to, note) => {
       const l = data.leads.find((x) => x.id === id); if (!l) return;
-      const quality = (QUALITIES as readonly string[]).includes(to) ? (to as LeadQuality) : l.quality;
-      updLead(id, (x) => ({ ...x, status: to, quality, dropped: null, unread: false, history: [...x.history, { at: nowStamp(), from: x.status, to, by: byName, note: "Recovered from Dropped" }] }));
-      void persist({ t: "lead.set", id, set: { status: to, quality, drop_reason: "", dropped_at: "", previous_status: "", recovery_status: "", last_activity: "", unread: false }, log: { from: l.status, to, text: "Recovered from Dropped" } });
+      const quality = qualityAfterMove(l, to);
+      const text = `Recovered from Dropped${note ? `: ${note}` : ""}`;
+      updLead(id, (x) => ({ ...x, status: to, quality, dropped: null, unread: false, history: [...x.history, { at: nowStamp(), from: x.status, to, by: byName, note: text }] }));
+      void persist({ t: "lead.set", id, set: { status: to, quality, drop_reason: "", dropped_at: "", previous_status: "", recovery_status: "", last_activity: "", unread: false }, log: { from: l.status, to, text } });
     },
     setRecovery: (id, r) => {
       updLead(id, (l) => (l.dropped ? { ...l, dropped: { ...l.dropped, recovery: r } } : l));
