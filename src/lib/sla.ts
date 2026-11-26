@@ -104,14 +104,14 @@ export function computeSla(i: SlaInput): SlaResult {
   const events = i.leads.filter((l) => l.valid && (!i.pageId || i.pageId === "all" || l.pageId === i.pageId))
     .flatMap((l) => chatEvents(l, i.messages[l.id] ?? [], i.now, (id) => allReps.some((r) => r.id === id))).filter((e) => inRange(e.inAt));
   const commentEvents = i.comments.filter((c) => inRange(c.at) && (!i.pageId || i.pageId === "all" || c.pageId === i.pageId)).map((c) => commentEvent(c, i.now));
-  const teamOf = (pageId: string) => { const t = i.pages.find((p) => p.id === pageId)?.teamIds ?? []; return t.length ? allReps.filter((r) => t.includes(r.id)) : allReps; };
+  const teamOf = (pageId: string) => { const t = i.pages.find((p) => p.id === pageId)?.teamIds ?? []; return allReps.filter((r) => t.includes(r.id)); };
 
   const rows: RepSla[] = reps.map((r) => {
     const mine = events.filter((e) => e.repId === r.id);
     const replied = mine.filter((e) => !e.open); const waits = replied.map((e) => e.minutes);
     const cd = commentEvents.filter((c) => c.deduct > 0 && teamOf(c.comment.pageId).some((t) => t.id === r.id)).reduce((s, c) => s + c.deduct, 0);
     const chatDeduct = mine.reduce((s, e) => s + e.deduct, 0);
-    return { repId: r.id, name: r.name, chats: mine.length, replied: replied.length, onTime: mine.filter((e) => !e.late).length, late: mine.filter((e) => e.late).length, open: mine.filter((e) => e.open).length,
+    return { repId: r.id, name: r.name, chats: mine.length, replied: replied.length, onTime: replied.filter((e) => !e.late).length, late: mine.filter((e) => e.late).length, open: mine.filter((e) => e.open).length,
       lateDeduct: mine.filter((e) => e.deduct > 0).length, lateNoDeduct: mine.filter((e) => e.late && e.deduct === 0).length,
       chatDeduct, commentDeduct: cd, deducted: chatDeduct + cd, score: Math.max(0, SLA_RULES.basePoints - chatDeduct - cd),
       lateTravel: mine.filter((e) => e.lateStat).length, nightReplies: mine.filter((e) => e.nightReply).length, avgMin: waits.length ? Math.round(waits.reduce((s, x) => s + x, 0) / waits.length) : null };

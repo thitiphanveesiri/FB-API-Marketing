@@ -2,6 +2,7 @@
 import { ImportDataType, ChatChannel, DailyPerf, Lead, LeadStatus, QUALITIES, LeadQuality, PageInsight, PostComment, parseStatus, parseChannel } from "./types";
 import { ANCHOR } from "./dates";
 import { matchUser } from "./repMatch";
+import { toCsv } from "./csv";
 
 export interface FieldDef { key: string; label: string; required: boolean; kind: "text" | "date" | "number" | "int"; synonyms: string[] }
 
@@ -509,6 +510,5 @@ export function validate(ctx: ValidateCtx): ValidationResult {
 }
 
 export function errorsToCsv(issues: RowIssue[]): string {
-  const esc = (s: string | number) => `"${String(s).replace(/"/g, '""')}"`;
-  return ["Row,Level,Description", ...issues.map((i) => [i.row, i.level, esc(i.message)].map((x, k) => (k === 2 ? x : String(x))).join(","))].join("\n");
+  return toCsv([["Row", "Level", "Description"], ...issues.map((i) => [i.row, i.level, i.message])]);
 }

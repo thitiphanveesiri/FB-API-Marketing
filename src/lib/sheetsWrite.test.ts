@@ -108,7 +108,7 @@ test("writes and deduplicates external messages through the local JSON upsert ba
     ]);
 
     const beforeReplay = await readFile(file, "utf8");
-    assert.deepEqual(await writeExternalWrites(writes, knownMessageIds), []);
+    assert.deepEqual(await writeExternalWrites(writes, knownMessageIds), newMessages);
     assert.equal(await readFile(file, "utf8"), beforeReplay);
 
     assert.deepEqual(await upsertRows("leads", ["lead_id"], [{

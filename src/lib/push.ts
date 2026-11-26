@@ -8,6 +8,7 @@ import { extConfigured, notifyExternal } from "./extNotify";
 import { isClosingMessage } from "./sla";
 import type { Dataset } from "./dataset";
 import type { Lead } from "./types";
+import { mapSheets } from "./sheetMapper";
 
 export const pushConfigured = () => !!(
   process.env.VAPID_PUBLIC_KEY?.trim() &&
@@ -32,6 +33,12 @@ export interface AuditInput {
   actor_id?: string;
 }
 export interface AuditResult { status: "sent" | "failed" | "duplicate"; sent: number; failed: number; detail: string }
+export const NOTIFICATION_PENDING_LEASE_MS = 2 * 60_000;
+export const pendingNotificationRetryable = (status: string, attemptedAt: string, now = Date.now()) => {
+  if (status !== "pending") return false;
+  const at = Date.parse(attemptedAt);
+  return !Number.isFinite(at) || now - at >= NOTIFICATION_PENDING_LEASE_MS;
+};
 
 let cache: { at: number; subs: Sub[] } | null = null;
 const TTL = 30_000;
@@ -59,14 +66,15 @@ function decryptSubscription(value: string): SubInput {
   if (!validSubscription(parsed)) throw new Error("Invalid stored push subscription");
   return parsed;
 }
-function validEndpoint(endpoint: string): boolean {
-  if (endpoint.length > 2048) return false;
+export function validEndpoint(endpoint: string): boolean {
+  if (!endpoint || endpoint.length > 2048) return false;
   try {
-    const url = new URL(endpoint);
-    return url.protocol === "https:" && !url.username && !url.password;
+    const url = new URL(endpoint), host = url.hostname.toLowerCase();
+    const known = host === "fcm.googleapis.com" || host === "updates.push.services.mozilla.com" || host === "web.push.apple.com" || host === "wns.windows.com" || host.endsWith(".notify.windows.com");
+    return url.protocol === "https:" && !url.username && !url.password && known;
   } catch { return false; }
 }
-function validSubscription(s: SubInput | undefined): s is SubInput {
+export function validSubscription(s: SubInput | undefined): s is SubInput {
   return !!s && validEndpoint(s.endpoint) &&
     /^[A-Za-z0-9_-]{20,200}$/.test(s.keys?.p256dh ?? "") &&
     /^[A-Za-z0-9_-]{16,200}$/.test(s.keys?.auth ?? "");
@@ -105,10 +113,13 @@ async function loadSubs(fresh = false): Promise<Sub[]> {
   return subs;
 }
 
-export async function saveSub(userId: string, s: SubInput): Promise<void> {
+export class SubscriptionInUseError extends Error { constructor() { super("อุปกรณ์นี้เปิดแจ้งเตือนสำหรับบัญชีอื่นแล้ว"); } }
+
+export async function saveSub(userId: string, s: SubInput, options: { takeover?: boolean } = {}): Promise<void> {
   if (!pushConfigured()) throw new Error("ตั้งค่า VAPID และ PUSH_SUBSCRIPTION_SECRET ก่อน");
   if (!validSubscription(s)) throw new Error("การสมัครรับแจ้งเตือนไม่ถูกต้อง");
-  await loadSubs(true);
+  const existing = (await loadSubs(true)).find((sub) => sub.endpoint === s.endpoint);
+  if (existing && existing.userId !== userId && !options.takeover) throw new SubscriptionInUseError();
   await upsertRows("push_subs", ["endpoint"], [{
     endpoint: endpointKey(s.endpoint), user_id: userId, encrypted_subscription: encryptSubscription(s),
     created_at: new Date().toISOString(), active: true, p256dh: "", auth: "",
@@ -158,12 +169,14 @@ export async function notifyAudited(input: AuditInput, userIds: string[], note: 
   const run = async (): Promise<AuditResult> => {
     const grid = (await readTabs()).notification_log ?? [];
     const headers = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
-    const idCol = headers.indexOf("notification_id"), statusCol = headers.indexOf("status");
+    const idCol = headers.indexOf("notification_id"), statusCol = headers.indexOf("status"), attemptedCol = headers.indexOf("attempted_at");
     const prior = idCol < 0 ? "" : grid.slice(1).find((row) => String(row[idCol] ?? "").trim() === input.notification_id);
     const priorStatus = prior && statusCol >= 0 ? String(prior[statusCol] ?? "").trim().toLowerCase() : "";
-    if (priorStatus === "sent" || priorStatus === "pending") return { status: "duplicate", sent: 0, failed: 0, detail: priorStatus };
+    const priorAttemptedAt = prior && attemptedCol >= 0 ? String(prior[attemptedCol] ?? "").trim() : "";
+    if (priorStatus === "sent" || (priorStatus === "pending" && !pendingNotificationRetryable(priorStatus, priorAttemptedAt)))
+      return { status: "duplicate", sent: 0, failed: 0, detail: priorStatus };
 
-    const base: Obj = { ...input, sent_at: new Date().toISOString(), sent_count: 0, failed_count: 0, detail: "" };
+    const base: Obj = { ...input, attempted_at: new Date().toISOString(), sent_at: "", sent_count: 0, failed_count: 0, detail: "" };
     await upsertRows("notification_log", ["notification_id"], [{ ...base, status: "pending" }], "upsert");
     let result: { sent: number; failed: number }, detail = "";
     try {
@@ -203,7 +216,12 @@ export function isQuiet(date = new Date(), tz = process.env.APP_TZ || "Asia/Bang
   return from > to ? h >= from || h < to : h >= from && h < to;
 }
 
-/** One audited push per assigned Sales Rep for the inbound messages in a webhook batch. */
+export async function notifyInboundFresh(msgs: { message_id: string; lead_id: string; direction: string; text: string }[]): Promise<void> {
+  const mapped = mapSheets(await readTabs(true));
+  await notifyInbound(mapped.dataset, msgs);
+}
+
+/** One audited push per responsible user; unassigned chats go to managers and administrators. */
 export async function notifyInbound(ds: Dataset, msgs: { message_id: string; lead_id: string; direction: string; text: string }[]): Promise<void> {
   if (!notifyConfigured() || isQuiet()) return;
   const grouped = new Map<string, { text: string; ids: string[] }>();
@@ -216,12 +234,13 @@ export async function notifyInbound(ds: Dataset, msgs: { message_id: string; lea
   }
   for (const [leadId, group] of grouped) {
     const lead = ds.leads.find((l) => l.id === leadId);
-    const rep = lead?.repId && ds.users.find((u) => u.id === lead.repId && u.active && u.role === "Sales Representative");
-    if (!lead || !rep) continue;
+    if (!lead) continue;
     const ids = [...new Set(group.ids)].sort();
-    const id = stableNotificationId("inbound", leadId, rep.id, ids.join("|"));
-    await notifyAudited({
-      notification_id: id, kind: "inbound", lead_id: leadId, message_ids: ids.join(","), recipient_id: rep.id,
-    }, [rep.id], { title: "ข้อความใหม่ใน Inbox", body: "มีลูกค้าส่งข้อความใหม่ เปิดแอปเพื่อดู", url: "/inbox", tag: `msg-${leadId}` });
+    for (const recipientId of recipientsFor(ds, lead)) {
+      const id = stableNotificationId("inbound", leadId, recipientId, ids.join("|"));
+      await notifyAudited({
+        notification_id: id, kind: "inbound", lead_id: leadId, message_ids: ids.join(","), recipient_id: recipientId,
+      }, [recipientId], { title: "ข้อความใหม่ใน Inbox", body: "มีลูกค้าส่งข้อความใหม่ เปิดแอปเพื่อดู", url: "/inbox", tag: `msg-${leadId}` });
+    }
   }
 }

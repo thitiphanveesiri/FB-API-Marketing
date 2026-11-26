@@ -1,0 +1,207 @@
+"use client";
+import { useMemo, useState } from "react";
+import { Check, Minus, Plus } from "lucide-react";
+import { useStore } from "@/lib/store";
+import { roleCan } from "@/lib/queries";
+import { aggregate, fmtMoney, fmtPct, leadStats } from "@/lib/metrics";
+import { Avatar, Badge, Btn, Card, Column, DataTable, Modal, Select, TextInput, cn } from "@/components/ui";
+import { Agency, FbPage, ROLES, Role, User } from "@/lib/types";
+
+type Tab = "pages" | "agencies" | "users" | "roles";
+const TABS: { id: Tab; label: string }[] = [{ id: "pages", label: "Pages" }, { id: "agencies", label: "Agencies" }, { id: "users", label: "Users" }, { id: "roles", label: "Roles & Permissions" }];
+const emailOk = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+const newId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+
+export default function SettingsPage() {
+  const { user } = useStore();
+  const [tab, setTab] = useState<Tab>("pages");
+  const canManage = roleCan.manageSettings(user.role);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">Setting</h1>
+        {!canManage && <Badge tone="blue">Read-only for your role</Badge>}</div>
+      <nav className="flex gap-1 overflow-x-auto border-b border-line" aria-label="Settings sections">
+        {TABS.map((t) => <button key={t.id} aria-current={tab === t.id} onClick={() => setTab(t.id)} className={cn("whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium", tab === t.id ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink")}>{t.label}</button>)}
+      </nav>
+      {tab === "pages" && <PagesTab canManage={canManage} />}
+      {tab === "agencies" && <AgenciesTab canManage={canManage} />}
+      {tab === "users" && <UsersTab canManage={canManage} />}
+      {tab === "roles" && <RolesTab />}
+    </div>
+  );
+}
+
+function PagesTab({ canManage }: { canManage: boolean }) {
+  const { data, savePage, mergePages, toast, confirm } = useStore();
+  const [edit, setEdit] = useState<FbPage | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [err, setErr] = useState<Record<string, string>>({});
+  const [mergeTo, setMergeTo] = useState<Record<string, string>>({});
+  const [merging, setMerging] = useState("");
+  const placeholders = data.pages.filter((p) => p.name.includes("ไม่พบในแท็บ Pages"));
+  const move = async (p: FbPage, to: string) => {
+    const toName = data.pages.find((x) => x.id === to)?.name ?? to;
+    const r = await confirm({ title: `ย้ายข้อมูลไป ${toName}?`, message: `แชท แคมเปญ และโฆษณาที่อ้างถึง ${p.id} จะถูกเปลี่ยนไปอยู่ใต้ ${toName} ในชีต — ข้อมูลเดิมไม่ถูกลบ`, confirmLabel: "ย้ายข้อมูล", tone: "danger" });
+    if (!r.ok) return;
+    setMerging(p.id);
+    try { if (await mergePages(p.id, to)) setMergeTo((m) => ({ ...m, [p.id]: "" })); } finally { setMerging(""); }
+  };
+  const reps = data.users.filter((u) => u.role === "Sales Representative" && u.active);
+  const agName = (id: string | null) => data.agencies.find((a) => a.id === id)?.name ?? "—";
+  const save = () => {
+    if (!edit) return;
+    const e: Record<string, string> = {};
+    if (edit.name.trim().length < 3) e.name = "Enter at least 3 characters";
+    if (data.pages.some((p) => p.id !== edit.id && p.name.toLowerCase() === edit.name.trim().toLowerCase())) e.name = "A page with this name already exists";
+    setErr(e); if (Object.keys(e).length) return;
+    savePage({ ...edit, name: edit.name.trim() }); toast(isNew ? "Page added" : "Page updated"); setEdit(null);
+  };
+  const cols: Column<FbPage>[] = [
+    { key: "n", header: "Page", sort: (p) => p.name, render: (p) => <span className="font-medium">{p.name}</span> },
+    { key: "a", header: "Agency", sort: (p) => agName(p.agencyId), render: (p) => agName(p.agencyId) },
+    { key: "t", header: "Sales team", render: (p) => <div className="flex -space-x-1.5">{p.teamIds.map((id) => { const u = data.users.find((x) => x.id === id); return u ? <span key={id} title={u.name}><Avatar name={u.name} hue={u.hue} size={26} /></span> : null; })}{p.teamIds.length === 0 && <span className="text-xs text-gray-400">None</span>}</div> },
+    { key: "s", header: "Status", sort: (p) => String(p.active), render: (p) => <Badge tone={p.active ? "green" : "gray"}>{p.active ? "Active" : "Disabled"}</Badge> },
+    { key: "x", header: "", render: (p) => canManage && <div className="flex gap-1"><Btn size="sm" onClick={() => { setIsNew(false); setErr({}); setEdit({ ...p }); }}>Edit</Btn>
+      <Btn size="sm" onClick={async () => { if (p.active) { const r = await confirm({ title: `Disable ${p.name}?`, message: "The page is hidden from selectors and new imports. Existing data is kept.", tone: "danger", confirmLabel: "Disable" }); if (!r.ok) return; } savePage({ ...p, active: !p.active }); toast(p.active ? "Page disabled" : "Page enabled"); }}>{p.active ? "Disable" : "Enable"}</Btn></div> },
+  ];
+  return (
+    <Card title="Pages" subtitle="เพจ Facebook / Instagram ของธุรกิจ — ผูกกับเอเจนซีและทีมขาย" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: newId("PG"), name: "", active: true, agencyId: null, teamIds: [] }); }}><Plus size={15} /> Add page</Btn>}>
+      <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Pages here are entered manually. Linking a real Page (OAuth + page access token) is part of the Meta API phase.</p>
+      {placeholders.length > 0 && <div className="mb-3 space-y-2">
+        {placeholders.map((p) => {
+          const chats = data.leads.filter((l) => l.pageId === p.id).length;
+          const camps = data.campaigns.filter((c) => c.pageId === p.id).length;
+          const target = mergeTo[p.id] ?? "";
+          const targets = data.pages.filter((x) => x.id !== p.id && !x.name.includes("ไม่พบในแท็บ Pages"));
+          return <div key={p.id} className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+            <p className="text-sm font-medium text-amber-900">{p.name}</p>
+            <p className="mt-0.5 text-xs text-amber-900">ข้อมูลจริงที่ยังอ้างถึงเพจนี้: แชท {chats} · แคมเปญ {camps} — เพจนี้ไม่มีแถวในชีตแล้ว แชทจึงขึ้นในกล่องข้อความไม่ได้</p>
+            {canManage && targets.length > 0 && <div className="mt-2 flex flex-wrap items-end gap-2">
+              <Select label="ย้ายข้อมูลไปเพจ" value={target} onChange={(v) => setMergeTo((m) => ({ ...m, [p.id]: v }))} options={[{ value: "", label: "— เลือกเพจ —" }, ...targets.map((x) => ({ value: x.id, label: x.name }))]} />
+              <Btn variant="primary" disabled={!target || merging === p.id} onClick={() => void move(p, target)}>{merging === p.id ? "กำลังย้าย…" : "ย้ายข้อมูล"}</Btn>
+            </div>}
+            <p className="mt-2 text-xs text-amber-800">หรือถ้าเพจนี้มีอยู่จริง แค่กด <b>Edit</b> ใส่ชื่อเพจจริงแล้ว <b>Save</b> — ระบบจะเพิ่มแถวเพจกลับลงชีตให้</p>
+          </div>;
+        })}
+      </div>}
+      <DataTable columns={cols} rows={data.pages} rowKey={(p) => p.id} caption="Pages" />
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add page" : "Edit page"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
+        {edit && <div className="space-y-3">
+          <TextInput label="Page name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} />
+          <Select label="Agency" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v || null })} options={[{ value: "", label: "No agency" }, ...data.agencies.filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]} />
+          <fieldset><legend className="mb-1 text-xs font-medium text-muted">Sales team</legend><div className="grid gap-1 sm:grid-cols-2">{reps.map((r) => (
+            <label key={r.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-[#087a58]" checked={edit.teamIds.includes(r.id)} onChange={(e) => setEdit({ ...edit, teamIds: e.target.checked ? [...edit.teamIds, r.id] : edit.teamIds.filter((x) => x !== r.id) })} />{r.name}</label>))}</div></fieldset>
+        </div>}
+      </Modal>
+    </Card>
+  );
+}
+
+function AgenciesTab({ canManage }: { canManage: boolean }) {
+  const { data, saveAgency, assignCampaigns, toast } = useStore();
+  const [edit, setEdit] = useState<Agency | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [assign, setAssign] = useState<Agency | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [perf, setPerf] = useState<Agency | null>(null);
+  const [err, setErr] = useState<Record<string, string>>({});
+  const save = () => {
+    if (!edit) return;
+    const e: Record<string, string> = {};
+    if (edit.name.trim().length < 2) e.name = "Enter an agency name";
+    if (!emailOk(edit.email)) e.email = "Enter a valid email";
+    setErr(e); if (Object.keys(e).length) return;
+    saveAgency(edit); toast(isNew ? "Agency added" : "Agency updated"); setEdit(null);
+  };
+  const stats = (a: Agency) => {
+    const adIds = new Set(data.ads.filter((ad) => data.campaigns.find((c) => c.id === ad.campaignId)?.agencyId === a.id).map((x) => x.id));
+    const p = aggregate(data.perf.filter((x) => adIds.has(x.adId)));
+    const ls = leadStats(data.leads.filter((l) => l.adId && adIds.has(l.adId)));
+    return { campaigns: data.campaigns.filter((c) => c.agencyId === a.id).length, spend: p.spend, ls, cpq: ls.qualified ? p.spend / ls.qualified : null };
+  };
+  const cols: Column<Agency>[] = [
+    { key: "n", header: "Agency", sort: (a) => a.name, render: (a) => <div><span className="font-medium">{a.name}</span><span className="block text-xs text-muted">{a.contact} · {a.email}</span></div> },
+    { key: "c", header: "Campaigns", align: "right", sort: (a) => stats(a).campaigns, render: (a) => stats(a).campaigns },
+    { key: "s", header: "Status", render: (a) => <Badge tone={a.active ? "green" : "gray"}>{a.active ? "Active" : "Disabled"}</Badge> },
+    { key: "x", header: "", render: (a) => <div className="flex gap-1"><Btn size="sm" onClick={() => setPerf(a)}>Performance</Btn>{canManage && <><Btn size="sm" onClick={() => { setIsNew(false); setErr({}); setEdit({ ...a }); }}>Edit</Btn><Btn size="sm" onClick={() => { setPicked(data.campaigns.filter((c) => c.agencyId === a.id).map((c) => c.id)); setAssign(a); }}>Assign campaigns</Btn></>}</div> },
+  ];
+  const ps = perf ? stats(perf) : null;
+  return (
+    <Card title="Agencies" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: newId("AG"), name: "", contact: "", email: "", active: true }); }}><Plus size={15} /> Add Agency</Btn>}>
+      <DataTable columns={cols} rows={data.agencies} rowKey={(a) => a.id} caption="Agencies" />
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add agency" : "Edit agency"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
+        {edit && <div className="space-y-3"><TextInput label="Agency name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label="Contact person" value={edit.contact} onChange={(e) => setEdit({ ...edit, contact: e.target.value })} /><TextInput label="Email *" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} />
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-[#087a58]" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active</label></div>}
+      </Modal>
+      <Modal open={!!assign} onClose={() => setAssign(null)} title={`Assign campaigns · ${assign?.name ?? ""}`} footer={<><Btn onClick={() => setAssign(null)}>Cancel</Btn><Btn variant="primary" onClick={() => { if (assign) { assignCampaigns(assign.id, picked); toast("Campaigns assigned"); setAssign(null); } }}>Save</Btn></>}>
+        <ul className="space-y-1.5">{data.campaigns.map((c) => <li key={c.id}><label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-[#087a58]" checked={picked.includes(c.id)} onChange={(e) => setPicked(e.target.checked ? [...picked, c.id] : picked.filter((x) => x !== c.id))} />{c.name}<span className="text-xs text-muted">· currently {data.agencies.find((a) => a.id === c.agencyId)?.name ?? "none"}</span></label></li>)}</ul>
+      </Modal>
+      <Modal open={!!perf} onClose={() => setPerf(null)} title={`Agency performance · ${perf?.name ?? ""}`}>
+        {ps && <div className="grid grid-cols-2 gap-2">{[["Campaigns", ps.campaigns], ["Spend (all time)", fmtMoney(ps.spend)], ["Valid leads", ps.ls.valid], ["Qualified rate", fmtPct(ps.ls.qualifiedRate)], ["Cost per qualified", fmtMoney(ps.cpq, 0)], ["Converted", ps.ls.converted]].map(([k, v]) => <div key={String(k)} className="rounded-lg bg-gray-50 p-3"><p className="text-xs text-muted">{k}</p><p className="text-lg font-semibold tabnum">{v}</p></div>)}</div>}
+      </Modal>
+    </Card>
+  );
+}
+
+function UsersTab({ canManage }: { canManage: boolean }) {
+  const { data, saveUser, toast, confirm, user: me } = useStore();
+  const [edit, setEdit] = useState<User | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [err, setErr] = useState<Record<string, string>>({});
+  const save = () => {
+    if (!edit) return;
+    const e: Record<string, string> = {};
+    if (edit.name.trim().length < 2) e.name = "Enter a name";
+    const needsEmail = edit.role !== "Sales Representative"; // a salesperson can be a name only (assigned leads, no sign-in)
+    if (edit.email.trim() ? !emailOk(edit.email) : needsEmail) e.email = needsEmail ? "Enter a valid email" : "Enter a valid email or leave it blank";
+    const email = edit.email.trim().toLowerCase();
+    if (email && data.users.some((u) => u.id !== edit.id && u.email.trim().toLowerCase() === email)) e.email = "Email already in use";
+    if (edit.role === "Agency" && (!edit.agencyId || !data.agencies.some((a) => a.id === edit.agencyId && a.active))) e.agency = "Choose an active agency this user belongs to";
+    if (!isNew && data.users.find((u) => u.id === edit.id)?.role === "Administrator" && edit.role !== "Administrator" && data.users.filter((u) => u.active && u.role === "Administrator").length <= 1) e.role = "At least one active Administrator is required";
+    setErr(e); if (Object.keys(e).length) return;
+    saveUser({ ...edit, email, agencyId: edit.role === "Agency" ? edit.agencyId : undefined }); toast(isNew ? "User added" : "User updated"); setEdit(null);
+  };
+  const cols: Column<User>[] = [
+    { key: "n", header: "User", sort: (u) => u.name, render: (u) => <div className="flex items-center gap-2"><Avatar name={u.name} hue={u.hue} size={30} /><div><span className="font-medium">{u.name}</span><span className="block text-xs text-muted">{u.email}</span></div></div> },
+    { key: "r", header: "Role", sort: (u) => u.role, render: (u) => <Badge tone={u.role === "Administrator" ? "violet" : "blue"}>{u.role}</Badge> },
+    { key: "s", header: "Status", sort: (u) => String(u.active), render: (u) => <Badge tone={u.active ? "green" : "gray"}>{u.active ? "Active" : "Disabled"}</Badge> },
+    { key: "x", header: "", render: (u) => canManage && <div className="flex gap-1"><Btn size="sm" onClick={() => { setIsNew(false); setErr({}); setEdit({ ...u }); }}>Edit</Btn>
+      <Btn size="sm" disabled={u.id === me.id} title={u.id === me.id ? "You cannot disable yourself" : ""} onClick={async () => { if (u.active) { const r = await confirm({ title: `Disable ${u.name}?`, message: "They can no longer sign in. Their leads stay assigned until you reassign them.", tone: "danger", confirmLabel: "Disable" }); if (!r.ok) return; } saveUser({ ...u, active: !u.active }); toast(u.active ? "User disabled" : "User enabled"); }}>{u.active ? "Disable" : "Enable"}</Btn></div> },
+  ];
+  return (
+    <Card title="Users" subtitle="ผู้ใช้ที่ได้รับสิทธิ์เข้าสู่ระบบด้วย Google — อีเมลใช้ระบุตัวตน หากเป็น Sales Representative ที่ไม่เข้าสู่ระบบสามารถเว้นอีเมลได้" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: newId("U"), name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
+      <DataTable columns={cols} rows={data.users} rowKey={(u) => u.id} searchText={(u) => `${u.name} ${u.email} ${u.role}`} searchPlaceholder="Search users…" caption="Users" />
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add user" : "Edit user"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
+        {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label={edit.role === "Sales Representative" ? "Email (optional — only needed to sign in)" : "Email *"} value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} disabled={!isNew && !!edit.email} />
+          {!isNew && !!edit.email && <p className="text-xs text-muted">อีเมลที่ใช้ลงชื่อเข้า Google ไม่สามารถแก้ไขที่นี่ได้ หากต้องเปลี่ยนบัญชี ให้สร้างผู้ใช้ใหม่และปิดบัญชีเก่า</p>}
+          {err.role && <p className="text-xs text-red-500">{err.role}</p>}
+          <Select label="Role" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as Role })} options={ROLES.map((r) => ({ value: r, label: r }))} />
+          {edit.role === "Agency" && <><Select label="Agency *" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v })} options={[{ value: "", label: "— select —" }, ...data.agencies.filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]} />{err.agency && <p className="text-xs text-red-500">{err.agency}</p>}</>}</div>}
+      </Modal>
+    </Card>
+  );
+}
+
+const PERMS: { label: string; check: (r: Role) => boolean }[] = [
+  { label: "Dashboard", check: (r) => roleCan.nav(r, "dashboard") },
+  { label: "Inbox", check: (r) => roleCan.nav(r, "inbox") },
+  { label: "Board", check: (r) => roleCan.nav(r, "board") },
+  { label: "Edit leads / move stages", check: (r) => roleCan.editLeads(r) },
+  { label: "Mark Converted", check: (r) => roleCan.moveToConverted(r) },
+  { label: "Reassign leads", check: (r) => roleCan.reassign(r) },
+  { label: "Upload data", check: (r) => roleCan.upload(r) },
+  { label: "Quality (view)", check: (r) => roleCan.nav(r, "quality") },
+  { label: "Quality (evaluate)", check: (r) => roleCan.evaluate(r) },
+  { label: "Settings (view)", check: (r) => roleCan.nav(r, "settings") },
+  { label: "Settings (manage)", check: (r) => roleCan.manageSettings(r) },
+];
+function RolesTab() {
+  const rows = useMemo(() => PERMS, []);
+  return (
+    <Card title="Role-based access control" subtitle="Enforced on the server: each role only receives, and can only change, what is allowed below.">
+      <div className="overflow-x-auto rounded-xl border border-line"><table className="w-full text-sm"><thead className="bg-gray-50 text-xs"><tr><th className="px-3 py-2 text-left">Permission</th>{ROLES.map((r) => <th key={r} className="px-3 py-2 text-center font-semibold">{r}</th>)}</tr></thead>
+        <tbody>{rows.map((p) => <tr key={p.label} className="border-t border-line"><td className="px-3 py-2">{p.label}</td>{ROLES.map((r) => <td key={r} className="px-3 py-2 text-center">{p.check(r) ? <Check size={16} className="mx-auto text-emerald-600" aria-label="Allowed" /> : <Minus size={16} className="mx-auto text-gray-300" aria-label="Not allowed" />}</td>)}</tr>)}</tbody></table></div>
+      <p className="mt-3 text-xs text-muted">Sales Representatives see only their own assigned leads; Agency users only see campaigns assigned to their agency. To change a user&apos;s role, edit the user on the Users tab.</p>
+    </Card>
+  );
+}

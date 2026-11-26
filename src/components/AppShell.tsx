@@ -78,6 +78,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const current = path.startsWith("/account") ? "account" : NAV.find((n) => path.startsWith("/" + (n.key === "dashboard" ? "dashboard" : n.key)))?.key;
   const currentLabel = current === "account" ? "User account" : NAV.find((n) => n.key === current)?.label ?? "Workspace";
   const homeHref = landingPathForRole(user.role);
+  const dataSourceName = sourceMeta?.backend === "local-json" ? "Local test data" : "Google Sheets";
 
   // Resolve the role-aware home only after the authenticated dataset has loaded.
   useEffect(() => {
@@ -122,7 +123,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen items-center justify-center bg-bg p-6">
         <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
           <p className="text-base font-semibold">This account has no access</p>
-          <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> is not on the allow-list (or is switched off). Ask an Administrator to add the email to the <code>users</code> tab of the Google Sheet.</p>
+          <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> is not on the allow-list (or is switched off). Ask an Administrator to add the email to the <code>users</code> tab in the data store.</p>
           <div className="mt-4 flex justify-center"><button onClick={() => { void signOut(); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Sign out and use another account</button></div>
         </div>
       </div>
@@ -132,7 +133,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg p-6">
         <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
-          <p className="text-base font-semibold">Couldn&apos;t load your Google Sheet</p>
+          <p className="text-base font-semibold">Couldn&apos;t load your data</p>
           <p className="mt-2 text-sm text-muted">{sourceMeta?.message}</p>
           <div className="mt-4 flex justify-center gap-2">
             <button onClick={() => { void reloadData(true); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Try again</button>
@@ -176,7 +177,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <span className="hidden text-xs font-medium text-muted xl:inline">Page</span>
       <select aria-label="Select page" value={filters.pageId} onChange={(e) => setFilters({ pageId: e.target.value })} className="min-w-0 max-w-[180px] bg-transparent py-0.5 text-sm font-medium text-ink focus:outline-none">
         <option value="all">All Pages</option>
-        {pagesForUser.filter((p) => !p.id.startsWith("IG-")).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        {pagesForUser.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
     </label>
   );
@@ -191,7 +192,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <nav className="min-h-0 flex-1 overflow-y-auto" aria-label="Primary navigation">{renderNavigation()}</nav>
         <div className="mt-4 rounded-xl border border-line bg-gray-50/70 p-3">
           <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold">Data connection</span><span className="h-2 w-2 rounded-full bg-emerald-500" /></div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted">Google Sheets · updated {fmtShort(ANCHOR)}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">{dataSourceName} · updated {fmtShort(ANCHOR)}</p>
         </div>
       </aside>
 
@@ -207,7 +208,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="mb-5">{pagePicker}</div>
           <nav className="min-h-0 flex-1 overflow-y-auto" aria-label="Mobile navigation">{renderNavigation()}</nav>
-          <div className="mt-4 rounded-xl border border-line bg-gray-50/70 p-3 text-xs text-muted">Google Sheets · updated {fmtShort(ANCHOR)}</div>
+          <div className="mt-4 rounded-xl border border-line bg-gray-50/70 p-3 text-xs text-muted">{dataSourceName} · updated {fmtShort(ANCHOR)}</div>
         </aside>
       )}
 
@@ -221,7 +222,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
             <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
               <div className="hidden md:block">{pagePicker}</div>
-              <Badge tone="green" className="hidden 2xl:inline-flex">Google Sheets · {fmtShort(ANCHOR)}</Badge>
+              <Badge tone="green" className="hidden 2xl:inline-flex">{dataSourceName} · {fmtShort(ANCHOR)}</Badge>
               <DisplayMenu />
               <div className="relative" ref={bellRef}>
                 <button onClick={() => setBell((b) => !b)} aria-label="Notifications" aria-expanded={bell} className="relative rounded-xl p-2 text-muted hover:bg-gray-50">
@@ -254,7 +255,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     <div className="my-1 border-t border-line" />
                     {authed
                       ? <button onClick={() => { void signOut(); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-gray-50"><LogOut size={16} /> Sign out</button>
-                      : <p className="px-2 py-2 text-xs text-muted">Sign-in is off (ALLOW_PUBLIC). Turn on Google sign-in to enable Sign out.</p>}
+                      : <p className="px-2 py-2 text-xs text-muted">Sign-in is off (ALLOW_PUBLIC). Configure Google OAuth to enable Sign out.</p>}
                   </div>
                 )}
               </div>
@@ -266,7 +267,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {source === "sheets" && (
             <div className="mb-5 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50 text-ink shadow-sm">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs">
-                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /><b>Google Sheet connected</b></span>
+                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-500" /><b>{dataSourceName} connected</b></span>
                 <span className="text-emerald-800">Loaded {sourceMeta?.fetchedAt ? new Date(sourceMeta.fetchedAt).toLocaleTimeString() : ""}</span>
                 <button className="font-semibold underline underline-offset-2" disabled={reloading} onClick={async () => { setReloading(true); try { await reloadData(true); } finally { setReloading(false); } }}>{reloading ? "Reloading…" : "Reload data"}</button>
                 {sourceMeta?.message && <span role="alert" className="rounded-lg bg-red-50 px-2.5 py-1 font-medium text-red-700">{sourceMeta.message}</span>}

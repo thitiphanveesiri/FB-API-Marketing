@@ -33,7 +33,7 @@ src/
   app/                    one folder per page (dashboard/{ads,ads-chat,sales,trend,dropped}, inbox, board, upload, quality, settings, account)
   components/             ui.tsx (kit), AppShell, FilterBar, LeadDrawer, charts
   lib/
-    types.ts              domain model (mirrors docs/schema.sql)
+    types.ts              domain model and Google Sheets row contracts
     seed.ts               DEMO data generator — the only place sample data lives
     queries.ts            filter + role-scope logic (pure)
     metrics.ts            all KPI formulas (pure)
@@ -41,7 +41,6 @@ src/
     importer.ts           column mapping + validation + dedupe (pure)
     store.tsx             in-memory state + actions (swap for API/DB)
     useDash.ts, useLeadActions.ts
-docs/schema.sql           PostgreSQL / Supabase schema proposal
 public/sample-ads-export.csv
 ```
 Separation: **UI** (`app/`, `components/`) → **hooks/store** → **pure business logic** (`metrics`, `queries`, `transitions`, `importer`) → **data** (`seed.ts` now; repository/API later).
@@ -71,16 +70,16 @@ CTR = clicks ÷ impressions × 100 · CPC = spend ÷ clicks · CPM = spend ÷ im
 ## Data flow
 Filters (store) → `useDash` → `queries.ts` selects ads/performance/leads for the range and the equal-length previous range → `metrics.ts` aggregates → page renders. Lead actions go through `useLeadActions` (permission check → confirmation → store action → toast → history entry). Imports: file → `importer.validate` → confirm → `store.commitImport`, which only touches ad+date keys present in the file.
 
-## Known limitations of the demo
-- State lives in browser memory: a refresh resets to the seed data (imports included). Persistence arrives with the database.
-- Sign-in is simulated; role checks are UI-level only. Real enforcement must be server-side + row-level security.
-- Inbox replies are simulated and labelled as such. Creative thumbnails are placeholders.
+## Current data and integration limits
+- Data persists in Google Sheets; `SHEETS_LOCAL_JSON` is for local testing only. A move to another database is intentionally deferred.
+- Sign-in uses Google OAuth with a sheet-based allow-list and server-side role scoping. Demo mode is open when Google sign-in is not configured.
+- Inbox replies are simulated only in demo mode; connected channels send through their provider APIs. Creative thumbnails may be placeholders.
 - The Board shows up to 40 cards per column (search/filter to narrow); no virtualisation yet.
 
 ## Facebook integration plan
-1. **Database:** apply `docs/schema.sql` (Supabase). Replace `store.tsx` actions with API route handlers + a repository layer; keep `lib/*` logic as-is.
-2. **Auth & RBAC:** Supabase Auth; RLS for agency/rep scoping; mirror the permission matrix server-side.
-3. **Ads data:** start with the existing CSV/XLSX import writing to `ad_performance` (primary key `ad_id, date` gives duplicate protection). Then a scheduled job pulling Meta Marketing API insights (ad level, daily) with a fixed attribution window stored per row.
+1. **Data storage:** keep Google Sheets as the current datastore and preserve the `RawTabs` boundary so a later database migration does not require changing the business logic.
+2. **Auth & RBAC:** maintain Google OAuth, the sheet allow-list and the server-enforced permission matrix together.
+3. **Ads data:** the existing CSV/XLSX import writes to `ad_performance`; Meta sync adds ad-level daily insights with attribution fields stored per row.
 4. **Facebook Messenger and Instagram Messaging:** connect Instagram Professional accounts through their linked Facebook Page using the existing Page authorization flow. Facebook Page webhook fields are subscribed through `/{page-id}/subscribed_apps`; subscribe the Meta App to the `Instagram` webhook object's `messages` field separately in the App Dashboard. Incoming Instagram leads are stored with channel `instagram` and Instagram-scoped IDs separate from Facebook PSIDs. The app needs `instagram_basic`, `instagram_manage_messages`, and `pages_manage_metadata`; Advanced Access/App Review and a published app are required for messages from customers without an app role. Respect Meta's messaging window when sending.
 5. **CRM:** a webhook/import sets `Converted` and CRM purchase values, kept in separate columns from Meta-reported purchases.
 

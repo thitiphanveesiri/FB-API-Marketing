@@ -29,15 +29,16 @@ type Row = Record<string, string | number | boolean>;
 export interface Writes { newLeads: Row[]; leadUpdates: Row[]; messages: Row[] }
 
 /** Pure: decides which rows to write. `nameOf` is only called for a customer we have never seen (Graph profile lookup). */
-export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, tz: string, nameOf: (psid: string) => Promise<string>): Promise<Writes> {
+export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, tz: string, nameOf: (psid: string) => Promise<string>, knownMessageIds: ReadonlySet<string> = new Set()): Promise<Writes> {
   const w: Writes = { newLeads: [], leadUpdates: [], messages: [] };
   const mine = ds.leads.filter((l) => l.pageId === ch.sheetPageId);
+  const mineById = new Map(mine.map((lead) => [lead.id, lead]));
   const ids = new Set(mine.map((l) => l.id)), byName = new Map<string, string | null>();
   for (const l of mine) { const k = l.name.trim().toLowerCase(); if (k) byName.set(k, byName.has(k) ? null : l.id); }
   const hasPsid = new Set(mine.filter((l) => l.fbUserId).map((l) => l.id)); // leads whose Facebook user id is already stored
   const leadOf = new Map<string, string>(); // psid → lead id (this batch)
   const sorted = [...events].sort((a, b) => a.at - b.at);
-  const latest = new Map<string, Row>();
+  const latest = new Map<string, { row: Row; at: number; fresh: boolean }>();
   for (const ev of sorted) {
     let id = leadOf.get(ev.customerId) ?? "";
     if (!id) {
@@ -52,8 +53,19 @@ export async function buildWrites(events: FbEvent[], ch: Channel, ds: Dataset, t
     }
     const stamp = localStamp(new Date(ev.at).toISOString(), tz);
     w.messages.push({ message_id: ev.mid, lead_id: id, direction: ev.out ? "out" : "in", sender_type: ev.out ? "unknown" : "customer", sender_app: ev.appId ?? "", text: ev.text, sent_at: stamp, attachment_name: "" });
-    latest.set(id, { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) });
+    const row: Row = { lead_id: id, last_contact_at: stamp, last_message: ev.text.slice(0, 300), unread: !ev.out, ...(hasPsid.has(id) ? {} : { fb_user_id: ev.customerId, channel: "facebook" }) };
+    const fresh = !knownMessageIds.has(ev.mid);
+    const previous = latest.get(id);
+    if (!previous || ev.at > previous.at || (ev.at === previous.at && fresh)) latest.set(id, { row, at: ev.at, fresh });
   }
-  w.leadUpdates.push(...latest.values());
+  const contactMinute = (value: string) => value.replace("T", " ").slice(0, 16);
+  for (const [id, entry] of latest) {
+    const existing = mineById.get(id);
+    const stamp = contactMinute(String(entry.row.last_contact_at));
+    const missingSummary = existing?.lastMessage === "" && existing.lastContactAt === `${existing.createdAt}T09:00:00`;
+    const current = existing && !missingSummary ? contactMinute(existing.lastContactAt) : "";
+    if (existing && (stamp < current || (stamp === current && !entry.fresh))) continue;
+    w.leadUpdates.push(entry.row);
+  }
   return w;
 }

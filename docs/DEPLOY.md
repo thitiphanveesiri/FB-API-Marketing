@@ -81,7 +81,7 @@ What the server enforces (not just the UI): Administrator, Marketing Manager and
 ## 7. Before real customer data goes live
 - Known limits of the sign-in: no rate limiting or brute-force protection (Google handles the password); the ID token is read straight from Google's token endpoint over TLS rather than signature-verified; a removed user can still hold a valid cookie for up to ~1 minute (blocked as soon as the sheet cache refreshes); sessions can't be revoked individually (rotate `AUTH_SECRET` to sign everyone out).
 - Without Google sign-in configured, the demo build is open to anyone with the URL. Never connect real data without it.
-- Sheets API quotas apply; fine for a small team. Move to Supabase (`docs/schema.sql`) when rows/users grow.
+- Sheets API quotas apply; monitor usage and plan a separate database migration if rows/users grow.
 - Customer names, phones and chats are personal data (PDPA): limit who can open the Sheet itself.
 - For the installable mobile Inbox and Web Push setup, see `docs/NOTIFICATIONS.md`.
 

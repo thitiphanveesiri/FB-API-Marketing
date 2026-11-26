@@ -35,7 +35,19 @@ export const makeSession = (email: string, name: string) => signToken({ typ: "se
 export const verifySession = (t: string | undefined) => verifyToken<SessionPayload>(t, "session");
 
 /* ---------- OAuth helpers ---------- */
-export const safeNext = (n: string | null | undefined) => (n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\") && !n.startsWith("/api/") ? n : "/dashboard/ads");
+export const safeNext = (n: string | null | undefined) => {
+  if (!n || !n.startsWith("/") || /[\u0000-\u001f\u007f]/.test(n)) return "/dashboard/ads";
+  try {
+    const decoded = decodeURIComponent(n);
+    if (/[\u0000-\u001f\u007f]/.test(decoded) || decoded.startsWith("//") || decoded.startsWith("/\\")) return "/dashboard/ads";
+    const base = "https://beq.invalid";
+    const url = new URL(decoded, base);
+    if (url.origin !== base || url.username || url.password || url.pathname.startsWith("/api/") || url.pathname.startsWith("/_next/")) return "/dashboard/ads";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/dashboard/ads";
+  }
+};
 export const redirectUri = (reqUrl: string) => `${env("AUTH_URL") ? env("AUTH_URL").replace(/\/$/, "") : new URL(reqUrl).origin}/api/auth/callback`;
 export const newPkce = () => { const verifier = b64u(randomBytes(32)); return { verifier, challenge: b64u(createHash("sha256").update(verifier).digest()) }; };
 export const newState = () => b64u(randomBytes(24));
