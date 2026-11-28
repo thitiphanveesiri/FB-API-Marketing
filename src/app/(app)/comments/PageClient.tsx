@@ -8,6 +8,7 @@ import { roleCan } from "@/lib/queries";
 import FilterBar from "@/components/FilterBar";
 import { CommentEvent, SLA_RULES, commentEvent } from "@/lib/sla";
 import { PostRow, postRows } from "@/lib/posts";
+import type { PagePost } from "@/lib/types";
 import { nowStamp } from "@/lib/dates";
 import { postLink } from "@/lib/postLinks";
 
@@ -29,6 +30,16 @@ export default function CommentsPage() {
   const [replyTo, setReplyTo] = useState<CommentEvent | null>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [viewPost, setViewPost] = useState<PagePost | null>(null);
+  const [preview, setPreview] = useState<{ state: "loading" } | { state: "error"; message: string } | { state: "ok"; p: { type: string; image: string; video: string; text: string; link: string } } | null>(null);
+  const openPost = async (post: PagePost) => {
+    setViewPost(post); setPreview({ state: "loading" });
+    try {
+      const r = await fetch(`/api/post-preview?postId=${encodeURIComponent(post.id)}`);
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; message?: string; preview?: { type: string; image: string; video: string; text: string; link: string } };
+      setPreview(r.ok && j.ok && j.preview ? { state: "ok", p: j.preview } : { state: "error", message: j.message ?? "ดึงพรีวิวไม่สำเร็จ" });
+    } catch { setPreview({ state: "error", message: "ดึงพรีวิวไม่สำเร็จ" }); }
+  };
   const canReply = roleCan.editLeads(user.role) && user.role !== "Agency" && user.role !== "Sales Representative";
   const send = async () => {
     if (!replyTo || !replyText.trim()) return;
@@ -83,6 +94,7 @@ export default function CommentsPage() {
     { key: "u", header: "ยังไม่ตอบ", align: "right", sort: (r) => r.unreplied, render: (r) => (r.unreplied ? <Badge tone="red">{r.unreplied}</Badge> : "—") },
     { key: "l", header: "คอมเมนต์ล่าสุด", sort: (r) => r.lastCommentAt, render: (r) => (r.lastCommentAt ? hm(r.lastCommentAt) : "—") },
     { key: "po", header: "โพสต์", render: (r) => <PostAnchor postId={r.post.id} /> },
+    ...(canReply ? [{ key: "pv", header: "พรีวิว", render: (r: PostRow) => <Btn size="sm" onClick={() => void openPost(r.post)}>ดู</Btn> }] : []),
   ];
 
   const siteButtons = (["all", "Facebook", "Instagram"] as const).map((v) => <Btn key={v} size="sm" variant={site === v ? "primary" : "secondary"} aria-pressed={site === v} onClick={() => setSite(v)}>{v === "all" ? "FB + IG" : v}</Btn>);
@@ -152,6 +164,27 @@ export default function CommentsPage() {
           )}
         </>
       )}
+      <Modal open={!!viewPost} onClose={() => setViewPost(null)} title="โพสต์และคอมเมนต์" width={640}>
+        {preview?.state === "loading" && <p className="text-sm text-muted">กำลังดึงโพสต์จาก Meta…</p>}
+        {preview?.state === "error" && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{preview.message}</p>}
+        {preview?.state === "ok" && (
+          <div className="mb-4">
+            {preview.p.video ? <video src={preview.p.video} poster={preview.p.image || undefined} controls className="max-h-80 w-full rounded-lg bg-black" />
+              : preview.p.image ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={preview.p.image} alt="รูปโพสต์" className="max-h-80 w-full rounded-lg object-contain" /> : null}
+            <p className="mt-2 whitespace-pre-wrap text-sm">{preview.p.text || "(ไม่มีแคปชั่น)"}</p>
+            {preview.p.link && <a href={preview.p.link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs font-medium text-brand hover:underline">เปิดโพสต์ในแอป</a>}
+          </div>
+        )}
+        <h3 className="mb-2 text-sm font-semibold">คอมเมนต์ในโพสต์นี้</h3>
+        <ul className="space-y-2">
+          {viewPost && data.comments.filter((c) => c.postId === viewPost.id).sort((a, b) => b.at.localeCompare(a.at)).map((c) => (
+            <li key={c.id} className="flex items-start justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm">
+              <div><p className="text-xs text-muted">{c.commenter || "ลูกค้า"} · {hm(c.at)}</p><p className="whitespace-pre-wrap">{c.text}</p>{c.repliedAt && <p className="text-xs text-ok">ตอบแล้ว {hm(c.repliedAt)}</p>}</div>
+              {!c.repliedAt && !/^CM-/.test(c.id) && <Btn size="sm" variant="primary" onClick={() => { setReplyTo(commentEvent(c, now)); setReplyText(""); }}>ตอบ</Btn>}
+            </li>
+          ))}
+        </ul>
+      </Modal>
       <Modal open={!!replyTo} onClose={() => setReplyTo(null)} title="ตอบคอมเมนต์" footer={<><Btn onClick={() => setReplyTo(null)}>ยกเลิก</Btn><Btn variant="primary" disabled={sending || !replyText.trim()} onClick={() => void send()}>{sending ? "กำลังส่ง…" : "ส่งคำตอบ"}</Btn></>}>
         <p className="text-xs text-muted">{replyTo?.comment.commenter || "ลูกค้า"} · {replyTo ? hm(replyTo.comment.at) : ""}</p>
         <p className="mb-3 mt-1 whitespace-pre-wrap rounded-lg bg-brand-faint px-3 py-2 text-sm">{replyTo?.comment.text || "—"}</p>

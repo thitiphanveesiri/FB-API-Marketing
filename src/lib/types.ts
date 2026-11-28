@@ -77,7 +77,7 @@ export function parseStatus(v: string): LeadStatus | undefined {
 export interface PostComment { id: string; pageId: string; postId: string; commenter: string; text: string; at: string; repliedAt: string | null; repliedBy: string }
 
 /** A page post (Facebook feed item or Instagram media) saved by the sync, so posts nobody commented on can be listed too. `id` matches PostComment.postId; `at` is "" when unknown. */
-export interface PagePost { id: string; pageId: string; channel: "facebook" | "instagram"; text: string; at: string }
+export interface PagePost { id: string; pageId: string; channel: "facebook" | "instagram"; text: string; at: string; /** Meta's own id, saved by the sync; the preview needs it (the id above is usually a permalink) */ graphId?: string }
 
 export interface PageInsight { pageId: string; date: string; reach: number; views: number; engagements: number; followers: number; newFollowers: number; linkClicks: number }
 

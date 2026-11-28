@@ -173,7 +173,7 @@ export async function syncStep(i: SyncInput): Promise<SyncOutput> {
   const nextPhaseAfterChats: Phase = i.scope === "chats" ? "done" : "comments";
   /** One `posts` row per feed item, keyed exactly like the comments' post_id (permalink, else id), so a post is listed even when nobody commented on it. */
   const postWrite = (list: { id: string; url?: string; text?: string; at?: string }[], channel: "facebook" | "instagram"): SyncWrite => ({ tab: "posts", keyCols: ["post_id"], mode: "upsert",
-    rows: list.map((p) => ({ post_id: p.url || p.id, page_id: i.sheetPageId, channel, text: (p.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300), posted_at: p.at ? localStamp(p.at, i.tz) : "" })) });
+    rows: list.map((p) => ({ post_id: p.url || p.id, page_id: i.sheetPageId, channel, text: (p.text ?? "").replace(/\s+/g, " ").trim().slice(0, 300), posted_at: p.at ? localStamp(p.at, i.tz) : "", graph_id: p.id })) });
 
   if (i.state.phase === "chats") {
     // Meta sometimes answers 500 "unexpected error" (code 1/2) for the full conversation list: retry with lighter requests (no participant details, then without the platform filter)
