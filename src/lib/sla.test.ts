@@ -50,3 +50,14 @@ test("an empty page team does not fall back to all sales reps for comment penalt
   assert.equal(result.reps.find((item) => item.repId === rep.id)?.commentDeduct, 0.5);
   assert.equal(result.reps.find((item) => item.repId === second.id)?.commentDeduct, 0);
 });
+
+test("reminders fire once each at 5 and 10 minutes, then the 15-minute alert follows", async () => {
+  const { dueReminders } = await import("./sla");
+  assert.deepEqual(dueReminders(4, 5), []);
+  assert.deepEqual(dueReminders(5, 5), [5]);
+  assert.deepEqual(dueReminders(9, 5), [5]);
+  assert.deepEqual(dueReminders(10, 5), [10]);
+  assert.deepEqual(dueReminders(14, 5), [10]);
+  assert.deepEqual(dueReminders(15, 5), []); // 15 minutes is the late alert, sent by the tick route
+  assert.deepEqual(dueReminders(7, 30), [5]);
+});
