@@ -186,6 +186,13 @@ export function planOp(op: Op, me: User, ds: Dataset, now: string): Write[] {
         if (old?.active && old.role === "Administrator" && !(active && role === "Administrator") &&
           !ds.users.some((u) => u.id !== id && u.active && u.role === "Administrator"))
           throw new Denied(400, "At least one active Administrator is required");
+        if (has(row, "username")) {
+          const un = text(row.username).toLowerCase();
+          if (un && !/^[a-z0-9._-]{3,32}$/.test(un)) throw new Denied(400, "Username must be 3-32 characters: a-z, 0-9, . _ -");
+          if (un && ds.users.some((u) => u.id !== id && u.username === un)) throw new Denied(400, "Username already in use");
+          if (!un && old?.username) throw new Denied(400, "A username cannot be removed; disable the user instead");
+          row.username = un;
+        }
         if (has(row, "email")) row.email = email;
         row.agency_id = agencyId;
       } else if (op.tab === "pages") {

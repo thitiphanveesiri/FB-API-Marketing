@@ -12,7 +12,7 @@ export const SHEET_TABS: SheetTab[] = [
   { tab: "agencies", required: false, purpose: "Advertising agencies", cols: [
     C("agency_id", "e.g. AG-1", true), C("name", "Agency name", true), C("contact", "Contact person"), C("email", "Email"), C("active", "TRUE / FALSE") ] },
   { tab: "users", required: false, purpose: "People who use the dashboard (roles) and salespeople", cols: [
-    C("user_id", "e.g. U-R1", true), C("name", "Full name", true), C("email", "Email"),
+    C("user_id", "e.g. U-R1", true), C("name", "Full name", true), C("email", "Email"), C("username", "Sign-in name: a-z 0-9 . _ - (3-32). The password hash lives in a password_hash column that only the server writes"),
     C("role", "Administrator | Marketing Manager | Sales Manager | Sales Representative | Agency | Viewer", true), C("agency_id", "Required when role = Agency"), C("active", "TRUE / FALSE") ] },
   { tab: "campaigns", required: true, purpose: "Campaigns (one Page → many campaigns)", cols: [
     C("campaign_id", "Meta campaign ID or your own", true), C("name", "Campaign name", true), C("page_id", "→ pages.page_id", true), C("agency_id", "→ agencies.agency_id"), C("objective", "e.g. Messages") ] },

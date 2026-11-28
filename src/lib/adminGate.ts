@@ -21,11 +21,11 @@ async function readMapped(): Promise<{ mapped: MapResult } | { err: NextResponse
 export async function adminOnly(req: Request, write: boolean): Promise<{ err: NextResponse } | { mapped: MapResult }> {
   if (!sheetsConfigured()) return { err: fail(503, "ยังไม่ได้เชื่อม Google Sheet") };
   if (write && !isSameOrigin(req)) return { err: fail(403, "Bad origin") };
-  let session = null as { email: string; name: string } | null;
+  let session = null as { uid: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return { err: fail(401, "กรุณาล็อกอินใหม่") }; }
   else if (process.env.ALLOW_PUBLIC !== "1") return { err: fail(503, "ยังไม่ได้ตั้งค่าการล็อกอิน") };
   const rd = await readMapped(); if ("err" in rd) return { err: rd.err }; const mapped = rd.mapped;
-  const me = session ? resolveUser(mapped.dataset, session.email, session.name) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
+  const me = session ? resolveUser(mapped.dataset, session.uid) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
   if (!me || me.role !== "Administrator") return { err: fail(403, "เฉพาะผู้ดูแลระบบเท่านั้น") };
   return { mapped };
 }
@@ -34,11 +34,11 @@ export async function adminOnly(req: Request, write: boolean): Promise<{ err: Ne
 export async function userGate(req: Request): Promise<{ err: NextResponse } | { mapped: MapResult; me: User }> {
   if (!sheetsConfigured()) return { err: fail(503, "ยังไม่ได้เชื่อม Google Sheet") };
   if (!isSameOrigin(req)) return { err: fail(403, "Bad origin") };
-  let session = null as { email: string; name: string } | null;
+  let session = null as { uid: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return { err: fail(401, "กรุณาล็อกอินใหม่") }; }
   else if (process.env.ALLOW_PUBLIC !== "1") return { err: fail(503, "ยังไม่ได้ตั้งค่าการล็อกอิน") };
   const rd = await readMapped(); if ("err" in rd) return { err: rd.err }; const mapped = rd.mapped;
-  const me = session ? resolveUser(mapped.dataset, session.email, session.name) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
+  const me = session ? resolveUser(mapped.dataset, session.uid) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
   if (!me) return { err: fail(403, "บัญชีนี้ไม่มีสิทธิ์เข้าใช้") };
   return { mapped, me };
 }

@@ -73,7 +73,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
     if (!role) { warn("users", r.n, `Unknown role "${r.get("role")}" — set to Viewer`); }
     const agencyId = r.get("agency_id") || undefined;
     if ((role ?? "Viewer") === "Agency" && !(agencyId && agencyIds.has(agencyId))) warn("users", r.n, "Agency users need a valid agency_id");
-    users.push({ id, name, email: r.get("email"), role: role ?? "Viewer", active: bool(r.get("active"), true), agencyId, hue: hue(id) });
+    users.push({ id, name, email: r.get("email"), username: r.get("username").trim().toLowerCase() || undefined, role: role ?? "Viewer", active: bool(r.get("active"), true), agencyId, hue: hue(id) });
   }
   const userIds = new Set(users.map((u) => u.id));
 

@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   const sheets = sheetsConfigured();
   const auth = authConfigured();
   if (sheets && !auth && process.env.ALLOW_PUBLIC !== "1")
-    return NextResponse.json({ source: "error", message: "Sign-in is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and AUTH_SECRET (see docs/DEPLOY.md). The sheet data stays locked until then." }, { status: 503, ...noStore });
+    return NextResponse.json({ source: "error", message: "Sign-in is not configured. Set AUTH_SECRET (32+ characters, see docs/DEPLOY.md). The sheet data stays locked until then." }, { status: 503, ...noStore });
 
   const session = auth ? verifySession((await cookies()).get(SESSION_COOKIE)?.value) : null;
   if (auth && !session) return NextResponse.json({ source: "unauthenticated" }, { status: 401, ...noStore });
@@ -42,8 +42,8 @@ export async function GET(req: Request) {
     let scoped: Dataset = dataset;
     let me = null as { id: string; role: string } | null;
     if (session) {
-      const u = resolveUser(dataset, session.email, session.name);
-      if (!u) return NextResponse.json({ source: "forbidden", email: session.email }, { status: 403, ...noStore });
+      const u = resolveUser(dataset, session.uid);
+      if (!u) return NextResponse.json({ source: "forbidden", email: session.name }, { status: 403, ...noStore });
       scoped = scopeDataset(dataset, u);
       if (!scoped.users.some((x) => x.id === u.id)) scoped = { ...scoped, users: [u, ...scoped.users] };
       me = { id: u.id, role: u.role };

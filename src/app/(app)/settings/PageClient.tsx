@@ -148,6 +148,14 @@ function UsersTab({ canManage }: { canManage: boolean }) {
   const [edit, setEdit] = useState<User | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [err, setErr] = useState<Record<string, string>>({});
+  const [pwUser, setPwUser] = useState<User | null>(null);
+  const [pw, setPw] = useState("");
+  const setPassword = async () => {
+    if (!pwUser) return;
+    const r = await fetch("/api/users/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: pwUser.id, password: pw }) });
+    const j = (await r.json().catch(() => ({}))) as { message?: string };
+    if (r.ok) { toast(`ตั้งรหัสผ่านให้ ${pwUser.name} แล้ว`); setPwUser(null); setPw(""); } else toast(j.message || "ตั้งรหัสผ่านไม่สำเร็จ");
+  };
   const save = () => {
     if (!edit) return;
     const e: Record<string, string> = {};
@@ -155,28 +163,36 @@ function UsersTab({ canManage }: { canManage: boolean }) {
     const needsEmail = edit.role !== "Sales Representative"; // a salesperson can be a name only (assigned leads, no sign-in)
     if (edit.email.trim() ? !emailOk(edit.email) : needsEmail) e.email = needsEmail ? "Enter a valid email" : "Enter a valid email or leave it blank";
     const email = edit.email.trim().toLowerCase();
+    const username = (edit.username ?? "").trim().toLowerCase();
+    if (username ? !/^[a-z0-9._-]{3,32}$/.test(username) : !!data.users.find((u) => u.id === edit.id)?.username) e.username = "Username 3-32 characters: a-z 0-9 . _ - (cannot be removed)";
+    if (username && data.users.some((u) => u.id !== edit.id && u.username === username)) e.username = "Username already in use";
     if (email && data.users.some((u) => u.id !== edit.id && u.email.trim().toLowerCase() === email)) e.email = "Email already in use";
     if (edit.role === "Agency" && (!edit.agencyId || !data.agencies.some((a) => a.id === edit.agencyId && a.active))) e.agency = "Choose an active agency this user belongs to";
     if (!isNew && data.users.find((u) => u.id === edit.id)?.role === "Administrator" && edit.role !== "Administrator" && data.users.filter((u) => u.active && u.role === "Administrator").length <= 1) e.role = "At least one active Administrator is required";
     setErr(e); if (Object.keys(e).length) return;
-    saveUser({ ...edit, email, agencyId: edit.role === "Agency" ? edit.agencyId : undefined }); toast(isNew ? "User added" : "User updated"); setEdit(null);
+    saveUser({ ...edit, email, username: username || undefined, agencyId: edit.role === "Agency" ? edit.agencyId : undefined }); toast(isNew ? "User added" : "User updated"); setEdit(null);
   };
   const cols: Column<User>[] = [
     { key: "n", header: "User", sort: (u) => u.name, render: (u) => <div className="flex items-center gap-2"><Avatar name={u.name} hue={u.hue} size={30} /><div><span className="font-medium">{u.name}</span><span className="block text-xs text-muted">{u.email}</span></div></div> },
     { key: "r", header: "Role", sort: (u) => u.role, render: (u) => <Badge tone={u.role === "Administrator" ? "violet" : "blue"}>{u.role}</Badge> },
     { key: "s", header: "Status", sort: (u) => String(u.active), render: (u) => <Badge tone={u.active ? "green" : "gray"}>{u.active ? "Active" : "Disabled"}</Badge> },
-    { key: "x", header: "", render: (u) => canManage && <div className="flex gap-1"><Btn size="sm" onClick={() => { setIsNew(false); setErr({}); setEdit({ ...u }); }}>Edit</Btn>
+    { key: "x", header: "", render: (u) => canManage && <div className="flex gap-1"><Btn size="sm" onClick={() => { setIsNew(false); setErr({}); setEdit({ ...u }); }}>Edit</Btn><Btn size="sm" disabled={!u.username} title={u.username ? "" : "Set a username first (Edit)"} onClick={() => { setPw(""); setPwUser(u); }}>Set password</Btn>
       <Btn size="sm" disabled={u.id === me.id} title={u.id === me.id ? "You cannot disable yourself" : ""} onClick={async () => { if (u.active) { const r = await confirm({ title: `Disable ${u.name}?`, message: "They can no longer sign in. Their leads stay assigned until you reassign them.", tone: "danger", confirmLabel: "Disable" }); if (!r.ok) return; } saveUser({ ...u, active: !u.active }); toast(u.active ? "User disabled" : "User enabled"); }}>{u.active ? "Disable" : "Enable"}</Btn></div> },
   ];
   return (
-    <Card title="Users" subtitle="ผู้ใช้ที่ได้รับสิทธิ์เข้าสู่ระบบด้วย Google — อีเมลใช้ระบุตัวตน หากเป็น Sales Representative ที่ไม่เข้าสู่ระบบสามารถเว้นอีเมลได้" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: newId("U"), name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
+    <Card title="Users" subtitle="ผู้ใช้เข้าสู่ระบบด้วย username + รหัสผ่าน — เฉพาะ Administrator เท่านั้นที่ตั้ง/เปลี่ยนรหัสผ่านได้ Sales Representative ที่ไม่เข้าสู่ระบบเว้น username ได้" right={canManage && <Btn variant="primary" onClick={() => { setIsNew(true); setErr({}); setEdit({ id: newId("U"), name: "", email: "", role: "Viewer", active: true, hue: Math.floor(Math.random() * 360) }); }}><Plus size={15} /> Add User</Btn>}>
       <DataTable columns={cols} rows={data.users} rowKey={(u) => u.id} searchText={(u) => `${u.name} ${u.email} ${u.role}`} searchPlaceholder="Search users…" caption="Users" />
       <Modal open={!!edit} onClose={() => setEdit(null)} title={isNew ? "Add user" : "Edit user"} footer={<><Btn onClick={() => setEdit(null)}>Cancel</Btn><Btn variant="primary" onClick={save}>Save</Btn></>}>
         {edit && <div className="space-y-3"><TextInput label="Full name *" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} error={err.name} /><TextInput label={edit.role === "Sales Representative" ? "Email (optional — only needed to sign in)" : "Email *"} value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} error={err.email} disabled={!isNew && !!edit.email} />
-          {!isNew && !!edit.email && <p className="text-xs text-muted">อีเมลที่ใช้ลงชื่อเข้า Google ไม่สามารถแก้ไขที่นี่ได้ หากต้องเปลี่ยนบัญชี ให้สร้างผู้ใช้ใหม่และปิดบัญชีเก่า</p>}
+          {!isNew && !!edit.email && <p className="text-xs text-muted">อีเมลที่บันทึกไว้แล้วแก้ไขที่นี่ไม่ได้</p>}
+          <TextInput label="Username (ใช้เข้าสู่ระบบ)" value={edit.username ?? ""} onChange={(e) => setEdit({ ...edit, username: e.target.value })} error={err.username} />
           {err.role && <p className="text-xs text-red-500">{err.role}</p>}
           <Select label="Role" value={edit.role} onChange={(v) => setEdit({ ...edit, role: v as Role })} options={ROLES.map((r) => ({ value: r, label: r }))} />
           {edit.role === "Agency" && <><Select label="Agency *" value={edit.agencyId ?? ""} onChange={(v) => setEdit({ ...edit, agencyId: v })} options={[{ value: "", label: "— select —" }, ...data.agencies.filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]} />{err.agency && <p className="text-xs text-red-500">{err.agency}</p>}</>}</div>}
+      </Modal>
+      <Modal open={!!pwUser} onClose={() => setPwUser(null)} title={`ตั้งรหัสผ่าน: ${pwUser?.name ?? ""}`} footer={<><Btn onClick={() => setPwUser(null)}>Cancel</Btn><Btn variant="primary" disabled={pw.length < 8} onClick={() => void setPassword()}>Save password</Btn></>}>
+        <TextInput label={`รหัสผ่านใหม่ (อย่างน้อย 8 ตัว) — username: ${pwUser?.username ?? ""}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
+        <p className="mt-2 text-xs text-muted">แจ้งรหัสให้ผู้ใช้เอง ผู้ใช้เปลี่ยนรหัสเองไม่ได้ ต้องให้ Administrator ตั้งให้</p>
       </Modal>
     </Card>
   );

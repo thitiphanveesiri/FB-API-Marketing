@@ -29,19 +29,14 @@ With no environment variables set the app runs on **Demo Data**, so a first depl
 
 Redeploy. The top bar then shows **Google Sheets** instead of Demo Data. If the sheet cannot be read, the app shows an error screen (it never silently falls back to demo numbers).
 
-## 5. Sign-in (Google account + allow-list)
-1. [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → **OAuth consent screen** (External is fine; add yourself as test user while in Testing) → **Credentials → Create credentials → OAuth client ID → Web application**.
-2. **Authorized redirect URI:** `https://<your-vercel-domain>/api/auth/callback` (add `http://localhost:3000/api/auth/callback` for local use). Copy the client ID and secret.
-3. Add to Vercel:
-
-| Name | Value |
-|---|---|
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from step 1 |
-| `AUTH_SECRET` | random string, 32+ chars: `openssl rand -hex 32` |
-| `AUTH_ADMIN_EMAILS` | *(optional)* your own email(s), comma separated. Always allowed as Administrator, so you can sign in while the sheet is still empty |
-| `AUTH_URL` | *(optional)* `https://your-domain` if the redirect URI is wrong behind a custom domain |
-
-4. In the Sheet's **`users`** tab, add one row per person (`email`, `role`, `agency_id` for Agency users, `active` = TRUE). **A Google account whose email is not on the tab (or is `active` FALSE) is refused.** Changes apply within ~1 minute (sheet cache) and on the user's next page load.
+## 5. Sign-in (username + password)
+There is no Google login any more. Only an **Administrator** can set or change a password (Settings → Users → *Set password*); users cannot change their own.
+1. Add to Vercel: `AUTH_SECRET` = random string, 32+ chars (`openssl rand -hex 32`). *(Optional)* `AUTH_URL` = `https://your-domain` behind a custom domain.
+2. **Create the first Administrator** from your computer (needs the Sheet / `DATABASE_URL` variables in `.env.local`):
+   `PASSWORD='a long secret' npx tsx --env-file=.env.local scripts/set-password.ts U-ADMIN admin "Your Name"`
+   Do this **before** you deploy this version, or nobody can sign in. The same command resets a forgotten Administrator password.
+3. Sign in, then in Settings → Users give everyone else a **username** (a-z 0-9 . _ -) and press *Set password*; tell them the password yourself.
+4. Wrong password 5 times locks that username + IP for 15 minutes. Disabling a user (`active` = FALSE) stops them at the next request. The password hash sits in the `users` tab column `password_hash` (scrypt); never share edit access to that tab with non-admins.
 
 What the server enforces (not just the UI): Administrator, Marketing Manager and Sales Manager receive all data; a Sales Representative receives only the leads assigned to them and those chats; an Agency user receives only their agency's campaigns, ads and performance, with no customer names, phones or chats; a Viewer receives dashboards only, without customer personal data. If the Sheet is connected but sign-in is **not** configured, `/api/data` refuses to serve it (set `ALLOW_PUBLIC=1` only if you deliberately want it open). Sessions last 7 days; **Sign out** clears the cookie.
 

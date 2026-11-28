@@ -90,6 +90,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  username?: string; // sign-in name (the password hash is never loaded into this object)
   role: Role;
   active: boolean;
   agencyId?: string;

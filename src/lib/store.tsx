@@ -312,7 +312,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     saveUser: (u) => {
       setData((d) => ({ ...d, users: d.users.some((x) => x.id === u.id) ? d.users.map((x) => (x.id === u.id ? u : x)) : [...d.users, u] }));
-      void persist({ t: "settings.upsert", tab: "users", row: { user_id: u.id, name: u.name, email: u.email, role: u.role, agency_id: u.agencyId ?? "", active: u.active } });
+      void persist({ t: "settings.upsert", tab: "users", row: { user_id: u.id, name: u.name, email: u.email, username: u.username ?? "", role: u.role, agency_id: u.agencyId ?? "", active: u.active } });
     },
     assignCampaigns: (agencyId, ids) => {
       setData((d) => ({ ...d, campaigns: d.campaigns.map((c) => (ids.includes(c.id) ? { ...c, agencyId } : c)) }));
