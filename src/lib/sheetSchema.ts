@@ -59,7 +59,7 @@ export const SHEET_TABS: SheetTab[] = [
     C("commented_at", "YYYY-MM-DD HH:MM", true), C("replied_at", "YYYY-MM-DD HH:MM (blank = not replied yet)"), C("replied_by", "→ users.user_id or name") ] },
   { tab: "posts", required: false, purpose: "Every Facebook / Instagram post the sync saw, including posts without comments (written by the comment sync; used by the Comments page)", cols: [
     C("post_id", "Post link or ID — the same value post_comments.post_id uses", true), C("page_id", "→ pages.page_id", true), C("channel", "facebook | instagram (blank = facebook)"),
-    C("text", "Post text / caption"), C("posted_at", "YYYY-MM-DD HH:MM") ] },
+    C("text", "Post text / caption"), C("posted_at", "YYYY-MM-DD HH:MM"), C("graph_id", "Meta's own post / media id (written by the sync; used for the preview)") ] },
   { tab: "push_subs", required: false, purpose: "Encrypted phones / browsers that receive alerts", cols: [
     C("endpoint", "SHA-256 key for encrypted subscription (unique)", true), C("user_id", "→ users.user_id", true),
     C("encrypted_subscription", "AES-256-GCM encrypted endpoint and keys"), C("created_at", "ISO time"), C("active", "TRUE / FALSE"),

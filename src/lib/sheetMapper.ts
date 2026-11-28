@@ -278,7 +278,7 @@ export function mapSheets(tabs: RawTabs): MapResult {
     const id = r.get("post_id"), pid = r.get("page_id");
     if (!id || !pid) { warn("posts", r.n, "post_id and page_id are required — row skipped"); continue; }
     if (seenPost.has(id)) { warn("posts", r.n, `Duplicate post_id ${id} — skipped`); continue; } seenPost.add(id);
-    posts.push({ id, pageId: pid, channel: parseChannel(r.get("channel")) === "instagram" ? "instagram" : "facebook", text: r.get("text"), at: dateTime(r.get("posted_at")) ?? "" });
+    posts.push({ id, pageId: pid, channel: parseChannel(r.get("channel")) === "instagram" ? "instagram" : "facebook", text: r.get("text"), at: dateTime(r.get("posted_at")) ?? "", ...(r.get("graph_id") ? { graphId: r.get("graph_id") } : {}) });
   }
   // Give every orphaned page id a placeholder page so its rows are usable (and visible) instead of silently dropped.
   for (const [id, o] of orphans) {
