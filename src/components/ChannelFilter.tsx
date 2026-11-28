@@ -20,7 +20,7 @@ export default function ChannelFilter({ value, onChange, counts, className }: { 
 }
 
 export const countByChannel = (leads: { channel?: ChatChannel }[]): Record<ChatChannel, number> => {
-  const n: Record<ChatChannel, number> = { facebook: 0, instagram: 0, line: 0, whatsapp: 0 };
+  const n: Record<ChatChannel, number> = { facebook: 0, instagram: 0, line: 0, whatsapp: 0, wechat: 0 };
   for (const l of leads) n[l.channel ?? "facebook"]++;
   return n;
 };

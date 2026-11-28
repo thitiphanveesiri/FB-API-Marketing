@@ -33,9 +33,10 @@ export async function POST(req: Request) {
     const channels = await loadChannels();
     let ch: Channel | undefined;
     let externalRecipient: string | null = null;
-    if (channel === "line" || channel === "whatsapp") {
+    const external = channel === "line" || channel === "whatsapp" || channel === "wechat", extLabel = channel === "line" ? "LINE" : channel === "wechat" ? "WeChat" : "WhatsApp";
+    if (external) {
       ch = channels.find((item) => item.channel === channel && item.active && item.accessToken && item.sheetPageId === lead.pageId && externalRecipientOf(lead.id, channel, item.accountId) !== null);
-      if (!ch) return fail(400, `${channel === "line" ? "LINE" : "WhatsApp"} นี้ยังไม่ได้เชื่อมตอบกลับ — ตรวจสอบการเชื่อมต่อในหน้า Upload`);
+      if (!ch) return fail(400, `${extLabel} นี้ยังไม่ได้เชื่อมตอบกลับ — ตรวจสอบการเชื่อมต่อในหน้า Upload`);
       externalRecipient = externalRecipientOf(lead.id, channel, ch.accountId);
     } else {
       ch = channel === "instagram"
@@ -47,11 +48,12 @@ export async function POST(req: Request) {
     const tz = process.env.APP_TZ || "Asia/Bangkok", base = process.env.FB_GRAPH_BASE || "https://graph.facebook.com";
     const since = minutesSinceCustomer(mapped.dataset.messages[lead.id] ?? [], tz);
     if (channel === "instagram" && since == null) return fail(400, "ส่งข้อความ Instagram ได้หลังจากลูกค้าทักมาเท่านั้น");
-    if (channel === "whatsapp" && since == null) return fail(400, "ส่งข้อความ WhatsApp ได้หลังจากลูกค้าทักมาผ่าน Webhook เท่านั้น");
-    if (channel !== "line" && since != null && since > WINDOW_HOURS * 60) return fail(400, `ส่งไม่ได้: ลูกค้าทักล่าสุดเกิน ${WINDOW_HOURS} ชั่วโมงแล้ว — ตอบในช่องทางของลูกค้าหรือรอให้ลูกค้าทักมาใหม่`);
+    if ((channel === "whatsapp" || channel === "wechat") && since == null) return fail(400, `ส่งข้อความ ${extLabel} ได้หลังจากลูกค้าทักมาผ่าน Webhook เท่านั้น`);
+    const windowHours = channel === "wechat" ? 48 : WINDOW_HOURS; // WeChat allows a customer-service reply for 48 h after the customer's message
+    if (channel !== "line" && since != null && since > windowHours * 60) return fail(400, `ส่งไม่ได้: ลูกค้าทักล่าสุดเกิน ${windowHours} ชั่วโมงแล้ว — ตอบในช่องทางของลูกค้าหรือรอให้ลูกค้าทักมาใหม่`);
     let mid: string;
-    if (channel === "line" || channel === "whatsapp") {
-      if (!externalRecipient) return fail(400, "ไม่พบผู้รับ LINE/WhatsApp ของลีดนี้");
+    if (external) {
+      if (!externalRecipient) return fail(400, `ไม่พบผู้รับ ${extLabel} ของลีดนี้`);
       mid = await sendExternalText(ch, channel, externalRecipient, text);
     } else {
       const instagram = channel === "instagram" ? instagramRecipientFor(lead, ch.accountId) : null;

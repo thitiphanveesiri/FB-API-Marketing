@@ -3,7 +3,7 @@ import type { Dataset } from "./dataset";
 import { localStamp } from "./fbSync";
 import { writeWebhookWrites, type WebhookMessageRow, type WebhookWrites } from "./webhookWrites";
 
-export type ExternalChatChannel = "line" | "whatsapp";
+export type ExternalChatChannel = "line" | "whatsapp" | "wechat";
 export type ExternalRow = Record<string, string | number | boolean>;
 export interface ExternalEvent {
   accountId: string;
@@ -18,7 +18,7 @@ export interface ExternalEvent {
 export type ExternalWrites = WebhookWrites;
 export type ExternalMessageRow = WebhookMessageRow;
 
-const prefixOf = (channel: ExternalChatChannel) => channel === "line" ? "LINE" : "WA";
+const prefixOf = (channel: ExternalChatChannel) => channel === "line" ? "LINE" : channel === "wechat" ? "WC" : "WA";
 export const externalLeadId = (channel: ExternalChatChannel, accountId: string, customerId: string) => `${prefixOf(channel)}-${accountId}-${customerId}`;
 export const externalMessageId = (channel: ExternalChatChannel, messageId: string) => `${prefixOf(channel)}-IN-${messageId}`;
 
@@ -43,7 +43,7 @@ export function buildExternalWrites(events: ExternalEvent[], input: {
   const knownLeadIds = new Set(anywhere.keys());
   const leadByCustomer = new Map<string, string>();
   const latest = new Map<string, { row: ExternalRow; at: number; fresh: boolean }>();
-  const label = input.channel === "line" ? "LINE" : "WhatsApp";
+  const label = input.channel === "line" ? "LINE" : input.channel === "wechat" ? "WeChat" : "WhatsApp";
 
   for (const event of [...events].sort((a, b) => a.at - b.at)) {
     let leadId = leadByCustomer.get(event.customerId);
@@ -118,5 +118,6 @@ export function externalRecipientOf(leadId: string, channel: ExternalChatChannel
   if (!leadId.startsWith(prefix)) return null;
   const recipient = leadId.slice(prefix.length);
   if (channel === "whatsapp") return /^\d{6,20}$/.test(recipient) ? recipient : null;
+  if (channel === "wechat") return /^[A-Za-z0-9_-]{20,40}$/.test(recipient) ? recipient : null; // an OpenID
   return /^U[A-Za-z0-9_-]{5,64}$/.test(recipient) ? recipient : null;
 }

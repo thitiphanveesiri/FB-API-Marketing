@@ -7,7 +7,7 @@ import { useStore, type Toast } from "@/lib/store";
 interface Ch { channelId: string; channel: string; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
 interface AdAcct { id: string; name: string; status?: number; currency?: string; connected: boolean }
 interface ConnectRes { fbPageId: string; name: string; ok: boolean; message?: string; systemPageId?: string; createdPage?: boolean; subscribed?: boolean; subscribeMessage?: string; instagram?: { id: string; username: string } | null; instagramLookupMessage?: string }
-interface ChannelList { channels: Ch[]; webhookUrls: { facebook: string; instagram: string; line: string; whatsapp: string }; verifyToken: string }
+interface ChannelList { channels: Ch[]; webhookUrls: { facebook: string; instagram: string; line: string; whatsapp: string; wechat: string }; verifyToken: string }
 const inp = "min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm font-mono";
 
 function CopyBox({ label, value }: { label: string; value: string }) {
@@ -19,12 +19,17 @@ function CopyBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-type ExternalKind = "line" | "whatsapp";
+type ExternalKind = "line" | "whatsapp" | "wechat";
+const KIND = {
+  line: { label: "LINE", idLabel: "LINE Channel ID", token: "Channel Access Token", secret: "Channel Secret", numeric: true, max: 30, hook: "Webhook URL — LINE Developers → Messaging API" },
+  whatsapp: { label: "WhatsApp", idLabel: "WhatsApp Phone Number ID", token: "Access Token", secret: "Meta App Secret", numeric: true, max: 25, hook: "Callback URL — Meta → WhatsApp → Configuration" },
+  wechat: { label: "WeChat", idLabel: "WeChat AppID", token: "AppSecret", secret: "", numeric: false, max: 18, hook: "URL (server address) — WeChat Official Account → Settings & development → Basic configuration" },
+} as const;
 
 function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
   channels: Ch[];
   pages: { id: string; name: string; active: boolean }[];
-  webhookUrls: { line: string; whatsapp: string };
+  webhookUrls: { line: string; whatsapp: string; wechat: string };
   refresh: () => Promise<void>;
   toast: (text: string, tone?: Toast["tone"]) => void;
 }) {
@@ -38,10 +43,11 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
   const [sheetPageId, setSheetPageId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const active = channels.filter((channel) => channel.active && (channel.channel === "line" || channel.channel === "whatsapp"));
-  const ready = active.filter((channel) => channel.hasToken && channel.hasSecret);
+  const active = channels.filter((channel) => channel.active && (channel.channel === "line" || channel.channel === "whatsapp" || channel.channel === "wechat"));
+  const complete = (channel: Ch) => channel.hasToken && (channel.channel === "wechat" ? !!channel.verifyToken : channel.hasSecret);
+  const ready = active.filter(complete);
   const pageOptions = pages.filter((page) => page.active).map((page) => ({ value: page.id, label: page.name }));
-  const label = kind === "line" ? "LINE" : kind === "whatsapp" ? "WhatsApp" : "";
+  const label = kind ? KIND[kind].label : "";
 
   const open = (next: ExternalKind, channel?: Ch) => {
     setKind(next); setEditing(channel ?? null); setAccountId(channel?.accountId ?? ""); setName(channel?.name ?? "");
@@ -53,10 +59,10 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
   const save = async () => {
     if (!kind) return;
     setError("");
-    if (!accountId.trim()) { setError(`ใส่${label === "LINE" ? " Channel ID" : " Phone Number ID"} ก่อน`); return; }
+    if (!accountId.trim()) { setError(`ใส่ ${KIND[kind].idLabel} ก่อน`); return; }
     if (!sheetPageId) { setError("เลือกเพจในระบบที่จะเก็บแชทก่อน"); return; }
     if (!accessToken && (!editing || !editing.hasToken)) { setError(`วาง ${label} Access Token ก่อน`); return; }
-    if (!secret && (!editing || !editing.hasSecret)) { setError(`วาง${label === "LINE" ? " Channel Secret" : " Meta App Secret"} ก่อน`); return; }
+    if (kind !== "wechat" && !secret && (!editing || !editing.hasSecret)) { setError(`วาง ${KIND[kind].secret} ก่อน`); return; }
     setBusy(true);
     try {
       const response = await fetch("/api/channels", {
@@ -71,7 +77,7 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
   };
 
   const disconnect = async (channel: Ch) => {
-    const channelLabel = channel.channel === "line" ? "LINE" : "WhatsApp";
+    const channelLabel = KIND[channel.channel as ExternalKind].label;
     if (!window.confirm(`ยกเลิกการเชื่อมต่อ ${channelLabel} “${channel.name || channel.accountId}”? ระบบจะลบ Token ออกจากชีต`)) return;
     setBusy(true); setError("");
     try {
@@ -86,17 +92,18 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
   return (
     <div className="space-y-3 rounded-xl border border-line p-3 sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h3 className="text-sm font-semibold">LINE และ WhatsApp</h3><p className="mt-1 text-xs text-muted">รับข้อความเข้า Leads และ Inbox แบบเรียลไทม์ พร้อมตอบกลับจากหน้าลูกค้า</p></div>
+        <div><h3 className="text-sm font-semibold">LINE, WhatsApp และ WeChat</h3><p className="mt-1 text-xs text-muted">รับข้อความเข้า Leads และ Inbox แบบเรียลไทม์ พร้อมตอบกลับจากหน้าลูกค้า</p></div>
         <div className="flex flex-wrap gap-2">
           <Btn size="sm" className="min-h-11" onClick={() => open("line")} disabled={busy || kind !== null}><ChannelIcon id="line" size={14} /> + เชื่อม LINE</Btn>
           <Btn size="sm" className="min-h-11" onClick={() => open("whatsapp")} disabled={busy || kind !== null}><ChannelIcon id="whatsapp" size={14} /> + เชื่อม WhatsApp</Btn>
+          <Btn size="sm" className="min-h-11" onClick={() => open("wechat")} disabled={busy || kind !== null}><ChannelIcon id="wechat" size={14} /> + เชื่อม WeChat</Btn>
         </div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {(["line", "whatsapp"] as const).map((item) => {
+      <div className="grid gap-2 sm:grid-cols-3">
+        {(["line", "whatsapp", "wechat"] as const).map((item) => {
           const count = ready.filter((channel) => channel.channel === item).length;
           return <div key={item} className={`rounded-lg border p-3 text-sm ${count ? "border-emerald-200 bg-emerald-50" : "bg-gray-50"}`}>
-            <b className="inline-flex items-center gap-1"><ChannelIcon id={item} size={14} /> {item === "line" ? "LINE" : "WhatsApp"}</b>
+            <b className="inline-flex items-center gap-1"><ChannelIcon id={item} size={14} /> {KIND[item].label}</b>
             <div className="mt-1 text-xs text-muted">{count ? `เชื่อมแล้ว ${count} บัญชี` : "ยังไม่ได้เชื่อม"}</div>
           </div>;
         })}
@@ -105,12 +112,12 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
       {active.map((channel) => (
         <div key={channel.channelId} className="space-y-2 rounded-xl bg-gray-50 p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <ChannelIcon id={channel.channel === "line" ? "line" : "whatsapp"} size={15} /><b>{channel.name || channel.accountId}</b><Badge tone={channel.hasToken && channel.hasSecret ? "green" : "amber"}>{channel.hasToken && channel.hasSecret ? "เชื่อมแล้ว" : "ข้อมูลไม่ครบ"}</Badge>
-            <span className="text-xs text-muted">{channel.channel === "line" ? "Channel ID" : "Phone Number ID"} {channel.accountId} · Token …{channel.tokenTail} · เก็บในเพจ {pages.find((page) => page.id === channel.sheetPageId)?.name ?? channel.sheetPageId}</span>
-            {!channel.hasSecret && <Badge tone="red">ยังไม่มี Secret</Badge>}
+            <ChannelIcon id={channel.channel as ExternalKind} size={15} /><b>{channel.name || channel.accountId}</b><Badge tone={complete(channel) ? "green" : "amber"}>{complete(channel) ? "เชื่อมแล้ว" : "ข้อมูลไม่ครบ"}</Badge>
+            <span className="text-xs text-muted">{KIND[channel.channel as ExternalKind].idLabel} {channel.accountId} · Token …{channel.tokenTail} · เก็บในเพจ {pages.find((page) => page.id === channel.sheetPageId)?.name ?? channel.sheetPageId}</span>
+            {channel.channel !== "wechat" && !channel.hasSecret && <Badge tone="red">ยังไม่มี Secret</Badge>}
             <span className="ml-auto flex gap-2"><Btn size="sm" className="min-h-11" onClick={() => open(channel.channel as ExternalKind, channel)} disabled={busy || kind !== null}>แก้ไข</Btn><Btn size="sm" className="min-h-11" onClick={() => void disconnect(channel)} disabled={busy}>ยกเลิกการเชื่อม</Btn></span>
           </div>
-          {channel.channel === "whatsapp" && channel.verifyToken && <div className="max-w-lg"><CopyBox label="Verify Token สำหรับ Meta" value={channel.verifyToken} /></div>}
+          {(channel.channel === "whatsapp" || channel.channel === "wechat") && channel.verifyToken && <div className="max-w-lg"><CopyBox label={channel.channel === "wechat" ? "Token สำหรับ WeChat (ใส่ในช่อง Token)" : "Verify Token สำหรับ Meta"} value={channel.verifyToken} /></div>}
         </div>
       ))}
 
@@ -119,20 +126,22 @@ function ExternalChatCard({ channels, pages, webhookUrls, refresh, toast }: {
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block text-xs font-medium text-muted">ชื่อที่แสดง (ไม่บังคับ)
             <input value={name} onChange={(event) => setName(event.target.value)} disabled={busy} maxLength={120} placeholder={`${label} ของฉัน`} className={`${inp} mt-1 font-sans`} /></label>
-          <label className="block text-xs font-medium text-muted">{kind === "line" ? "LINE Channel ID *" : "WhatsApp Phone Number ID *"}
-            <input inputMode="numeric" value={accountId} onChange={(event) => setAccountId(event.target.value.replace(/\D/g, ""))} disabled={busy || !!editing} maxLength={kind === "line" ? 30 : 25} placeholder="ตัวเลขจากผู้ให้บริการ" className={`${inp} mt-1`} /></label>
-          <label className="block text-xs font-medium text-muted">{kind === "line" ? "Channel Access Token" : "Access Token"} *{editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
+          <label className="block text-xs font-medium text-muted">{KIND[kind].idLabel} *
+            <input inputMode={KIND[kind].numeric ? "numeric" : "text"} value={accountId} onChange={(event) => setAccountId(KIND[kind].numeric ? event.target.value.replace(/\D/g, "") : event.target.value.trim())} disabled={busy || !!editing} maxLength={KIND[kind].max} placeholder="ตัวเลขจากผู้ให้บริการ" className={`${inp} mt-1`} /></label>
+          <label className="block text-xs font-medium text-muted">{KIND[kind].token} *{editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
             <input type="password" autoComplete="off" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} disabled={busy} placeholder={editing ? "เว้นว่างได้ถ้าใช้ Token เดิม" : "วาง Token จากผู้ให้บริการ"} className={`${inp} mt-1`} /></label>
-          <label className="block text-xs font-medium text-muted">{kind === "line" ? "Channel Secret" : "Meta App Secret"} *{editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
-            <input type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} disabled={busy} placeholder={editing ? "เว้นว่างได้ถ้าใช้ Secret เดิม" : "วาง Secret เพื่อตรวจลายเซ็น Webhook"} className={`${inp} mt-1`} /></label>
-          {kind === "whatsapp" && <label className="block text-xs font-medium text-muted">Verify Token (เว้นว่าง = สุ่มให้){editing && editing.verifyToken ? " · ค่าเดิมแสดงอยู่แล้ว" : ""}
-            <input value={verifyToken} onChange={(event) => setVerifyToken(event.target.value)} disabled={busy} autoComplete="off" maxLength={200} placeholder="ตัวอักษร/เลข 8–200 ตัว" className={`${inp} mt-1`} /></label>}
+          {kind !== "wechat" && <label className="block text-xs font-medium text-muted">{KIND[kind].secret} *{editing ? " (เว้นว่าง = ใช้ตัวเดิม)" : ""}
+            <input type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} disabled={busy} placeholder={editing ? "เว้นว่างได้ถ้าใช้ Secret เดิม" : "วาง Secret เพื่อตรวจลายเซ็น Webhook"} className={`${inp} mt-1`} /></label>}
+          {(kind === "whatsapp" || kind === "wechat") && <label className="block text-xs font-medium text-muted">{kind === "wechat" ? "Token (ตัวอักษร/เลข 3–32 ตัว)" : "Verify Token"} (เว้นว่าง = สุ่มให้){editing && editing.verifyToken ? " · ค่าเดิมแสดงอยู่แล้ว" : ""}
+            <input value={verifyToken} onChange={(event) => setVerifyToken(event.target.value)} disabled={busy} autoComplete="off" maxLength={kind === "wechat" ? 32 : 200} placeholder={kind === "wechat" ? "เช่น a1b2c3 (ตัวอักษรอังกฤษ/เลข)" : "ตัวอักษร/เลข 8–200 ตัว"} className={`${inp} mt-1`} /></label>}
           <Select label="เก็บแชทเข้าเพจในระบบ *" value={sheetPageId} onChange={setSheetPageId} disabled={busy} className="[&>select]:min-h-11" options={[{ value: "", label: "— เลือกเพจ —" }, ...pageOptions]} />
         </div>
-        <CopyBox label={kind === "line" ? "Webhook URL — LINE Developers → Messaging API" : "Callback URL — Meta → WhatsApp → Configuration"} value={webhookUrls[kind]} />
+        <CopyBox label={KIND[kind].hook} value={webhookUrls[kind]} />
         <p className="text-xs text-muted">{kind === "line"
           ? "เปิด Webhook sending และรับข้อความจากผู้ใช้ที่เพิ่มเพื่อนบอทแล้ว Channel Secret ต้องตรงกับช่องทางนี้"
-          : "ใส่ Callback URL และ Verify Token ใน Meta แล้ว subscribe ฟิลด์ messages; การตอบกลับลูกค้ามีข้อจำกัด 24 ชั่วโมงหลังลูกค้าทักมา"}</p>
+          : kind === "wechat"
+            ? "ต้องเป็น Official Account (Service/Subscription ที่ยืนยันแล้ว): ใส่ URL และ Token แล้วเลือกโหมดข้อความ “Plain text” (ไม่เข้ารหัส) และเพิ่ม IP ของเซิร์ฟเวอร์ใน IP whitelist; ตอบกลับได้ภายใน 48 ชั่วโมงหลังลูกค้าทักมา"
+            : "ใส่ Callback URL และ Verify Token ใน Meta แล้ว subscribe ฟิลด์ messages; การตอบกลับลูกค้ามีข้อจำกัด 24 ชั่วโมงหลังลูกค้าทักมา"}</p>
         {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
         <div className="flex flex-wrap gap-2">
           <Btn variant="primary" className="min-h-11" onClick={() => void save()} disabled={busy || !accountId.trim() || !sheetPageId || (!accessToken && !editing)} aria-busy={busy}>{busy ? "กำลังบันทึก…" : editing ? "บันทึกการแก้ไข" : "บันทึกและเชื่อมต่อ"}</Btn>
@@ -155,7 +164,7 @@ const extendText = (e: ExtendRes | null) => !e ? "" : e.extended ? `ต่ออ
 export default function ChannelsCard() {
   const { data, user, reloadData, toast } = useStore();
   const [list, setList] = useState<Ch[] | null>(null);
-  const [hooks, setHooks] = useState<ChannelList["webhookUrls"]>({ facebook: "", instagram: "", line: "", whatsapp: "" });
+  const [hooks, setHooks] = useState<ChannelList["webhookUrls"]>({ facebook: "", instagram: "", line: "", whatsapp: "", wechat: "" });
   const [verify, setVerify] = useState("");
   const [choices, setChoices] = useState<{ id: string; name: string }[]>([]); const [fbPageId, setFbPageId] = useState("");
   const [token, setToken] = useState(""); const [secret, setSecret] = useState(""); const [pageId, setPageId] = useState("");
@@ -181,6 +190,7 @@ export default function ChannelsCard() {
           instagram: result.webhookUrls?.instagram ?? result.webhookUrls?.facebook ?? "",
           line: result.webhookUrls?.line ?? "",
           whatsapp: result.webhookUrls?.whatsapp ?? "",
+          wechat: result.webhookUrls?.wechat ?? "",
         },
         verifyToken: result.verifyToken ?? "",
       };
