@@ -4,6 +4,7 @@ import type { FbPage, Lead, Message, PostComment, User } from "./types";
 
 export const SLA_RULES = {
   chatMinutes: 15,        // reply to a customer chat within this
+  remindMinutes: [5, 10], // nudge the rep at these minutes of waiting; the 15-minute "late" alert after them is the third
   chatPenalty: 1,         // points per late reply (per chat, per occurrence, per page)
   commentMinutes: 60,     // reply to a post comment within this
   commentPenalty: 0.5,    // points deducted from EVERY sales rep on the page's team
@@ -122,3 +123,6 @@ export function computeSla(i: SlaInput): SlaResult {
       lateDeduct: assigned.filter((e) => e.deduct > 0).length, lateNoDeduct: assigned.filter((e) => e.late && e.deduct === 0).length,
       lateTravel: assigned.filter((e) => e.lateStat).length, nightReplies: assigned.filter((e) => e.nightReply).length, lateComments: commentEvents.filter((c) => c.late).length } };
 }
+
+/** Which reminder thresholds (minutes) a chat waiting `minutes` has just crossed, when a timer fires every `win` minutes. */
+export const dueReminders = (minutes: number, win: number): number[] => SLA_RULES.remindMinutes.filter((at) => minutes >= at && minutes < at + win);
