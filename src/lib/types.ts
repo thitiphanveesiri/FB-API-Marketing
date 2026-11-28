@@ -145,10 +145,10 @@ export interface DailyPerf {
   source: "demo" | "import";
   importId?: string;
 }
-export type ChatChannel = "facebook" | "instagram" | "line" | "whatsapp";
+export type ChatChannel = "facebook" | "instagram" | "line" | "whatsapp" | "wechat";
 export const CHANNELS: { id: ChatChannel; label: string; color: string }[] = [
   { id: "facebook", label: "Facebook", color: "#1877f2" }, { id: "instagram", label: "Instagram", color: "#e1306c" },
-  { id: "line", label: "LINE", color: "#06c755" }, { id: "whatsapp", label: "WhatsApp", color: "#25d366" },
+  { id: "line", label: "LINE", color: "#06c755" }, { id: "whatsapp", label: "WhatsApp", color: "#25d366" }, { id: "wechat", label: "WeChat", color: "#07c160" },
 ];
 /** Sheet / export value → channel. Meta's lead export writes "fb" / "ig". Blank or unknown = facebook (the only channel connected so far). */
 export function parseChannel(raw: string | null | undefined): ChatChannel {
@@ -156,6 +156,7 @@ export function parseChannel(raw: string | null | undefined): ChatChannel {
   if (/^(ig|insta|instagram)\b|instagram/.test(t)) return "instagram";
   if (/^line\b|line oa|ไลน์/.test(t)) return "line";
   if (/^(wa|whatsapp)\b|whatsapp/.test(t)) return "whatsapp";
+  if (/^(wc|wechat)\b|wechat|วีแชท/.test(t)) return "wechat";
   return "facebook";
 }
 export const channelOf = (l: { channel?: ChatChannel }): ChatChannel => l.channel ?? "facebook";

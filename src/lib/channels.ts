@@ -4,7 +4,7 @@ import { invalidateTabs, readTabs } from "./googleSheets";
 import { upsertRows } from "./sheetsWrite";
 import { fbConfigs, type FbPageCfg } from "./fbSync";
 
-export type ChannelKind = "facebook" | "instagram" | "line" | "whatsapp" | "ads"; // "ads" = Meta Marketing API (ad account)
+export type ChannelKind = "facebook" | "instagram" | "line" | "whatsapp" | "wechat" | "ads"; // "ads" = Meta Marketing API (ad account)
 export interface Channel { channelId: string; channel: ChannelKind; accountId: string; name: string; accessToken: string; appSecret: string; verifyToken: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; updatedAt: string }
 export interface PublicChannel { channelId: string; channel: ChannelKind; accountId: string; name: string; sheetPageId: string; forceSheetPage: boolean; active: boolean; updatedAt: string; hasToken: boolean; tokenTail: string; hasSecret: boolean; verifyToken: string }
 

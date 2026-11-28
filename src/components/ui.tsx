@@ -547,11 +547,20 @@ export function WhatsApp({ size = 16, className }: { size?: number; className?: 
   );
 }
 
-export type ChannelMark = "facebook" | "instagram" | "line" | "whatsapp";
-export const CHANNEL_MARK_COLOR: Record<ChannelMark, string> = { facebook: "#1877f2", instagram: "#e1306c", line: "#06c755", whatsapp: "#25d366" };
+/** Simple two-bubble mark for WeChat. */
+export function WeChat({ size = 16, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M9 3C4.6 3 1 5.9 1 9.6c0 2.1 1.2 4 3 5.2L3.4 17l2.6-1.3c.9.3 1.9.4 3 .4h.4c-.1-.4-.2-.8-.2-1.2 0-3.3 3.1-6 7-6h.3C16.1 5.1 12.9 3 9 3zM6.5 8.2a1 1 0 110-2 1 1 0 010 2zm5 0a1 1 0 110-2 1 1 0 010 2zM23 14.6c0-2.8-2.7-5-6-5s-6 2.2-6 5 2.7 5 6 5c.8 0 1.6-.1 2.3-.4l2 1-.5-1.8c1.4-.9 2.2-2.3 2.2-3.8zm-8-.8a.8.8 0 110-1.6.8.8 0 010 1.6zm4 0a.8.8 0 110-1.6.8.8 0 010 1.6z" />
+    </svg>
+  );
+}
+
+export type ChannelMark = "facebook" | "instagram" | "line" | "whatsapp" | "wechat";
+export const CHANNEL_MARK_COLOR: Record<ChannelMark, string> = { facebook: "#1877f2", instagram: "#e1306c", line: "#06c755", whatsapp: "#25d366", wechat: "#07c160" };
 
 /** The real logo of a chat channel, in its brand colour unless `color` overrides it. */
 export function ChannelIcon({ id, size = 14, color, className }: { id: ChannelMark; size?: number; color?: string; className?: string }) {
-  const Mark = id === "instagram" ? Instagram : id === "line" ? Line : id === "whatsapp" ? WhatsApp : Facebook;
+  const Mark = id === "instagram" ? Instagram : id === "line" ? Line : id === "whatsapp" ? WhatsApp : id === "wechat" ? WeChat : Facebook;
   return <span className={cn("inline-flex shrink-0 items-center justify-center", className)} style={{ color: color ?? CHANNEL_MARK_COLOR[id] }}><Mark size={size} /></span>;
 }
