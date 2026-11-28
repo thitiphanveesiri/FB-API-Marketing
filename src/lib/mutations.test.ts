@@ -128,3 +128,12 @@ test("settings cannot disable or demote the last active Administrator", () => {
   ds.users.push(user("U-ADMIN-2", "Administrator"));
   assert.equal(planOp({ t: "settings.upsert", tab: "users", row: { user_id: admin.id, active: false } }, admin, ds, "now").length, 1);
 });
+
+test("usernames are validated, unique, and cannot be removed; password_hash is not writable from the client", () => {
+  const ds = dataset();
+  const base = { user_id: "U-NEW", name: "Ann", email: "ann@example.test", role: "Viewer", active: true };
+  const up = (extra: object) => planOp({ t: "settings.upsert", tab: "users", row: { ...base, ...extra } }, admin, ds, "now");
+  assert.equal((up({ username: "Ann.Lee" })[0].rows[0] as { username: string }).username, "ann.lee");
+  denied(() => up({ username: "a b" }), 400);
+  denied(() => up({ password_hash: "scrypt$x$y" }), 400);
+});

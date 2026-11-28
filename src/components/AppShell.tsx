@@ -123,7 +123,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen items-center justify-center bg-bg p-6">
         <div className="max-w-md rounded-2xl border border-line bg-surface p-6 text-center shadow-card">
           <p className="text-base font-semibold">This account has no access</p>
-          <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> is not on the allow-list (or is switched off). Ask an Administrator to add the email to the <code>users</code> tab in the data store.</p>
+          <p className="mt-2 text-sm text-muted"><b>{sourceMeta?.message}</b> has been switched off or removed. Ask an Administrator to re-enable the account.</p>
           <div className="mt-4 flex justify-center"><button onClick={() => { void signOut(); }} className="rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-hover">Sign out and use another account</button></div>
         </div>
       </div>

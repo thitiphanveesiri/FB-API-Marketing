@@ -19,14 +19,14 @@ export async function POST(req: Request) {
   await connection();
   if (!sheetsConfigured()) return NextResponse.json({ ok: false, message: "No Google Sheet is connected." }, { status: 503, ...noStore });
   if (!isSameOrigin(req)) return NextResponse.json({ ok: false, message: "Bad origin" }, { status: 403, ...noStore });
-  let session = null as { email: string; name: string } | null;
+  let session = null as { uid: string } | null;
   if (authConfigured()) { session = verifySession((await cookies()).get(SESSION_COOKIE)?.value); if (!session) return NextResponse.json({ ok: false, message: "Please sign in again." }, { status: 401, ...noStore }); }
   else if (process.env.ALLOW_PUBLIC !== "1") return NextResponse.json({ ok: false, message: "Sign-in is not configured." }, { status: 503, ...noStore });
   try {
     const op = (await req.json()) as Op;
     const mapped = getCached() ?? mapSheets(await readTabs());
     setCached(mapped);
-    const me = session ? resolveUser(mapped.dataset, session.email, session.name) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
+    const me = session ? resolveUser(mapped.dataset, session.uid) : mapped.dataset.users.find((u) => u.role === "Administrator") ?? null;
     if (!me) return NextResponse.json({ ok: false, message: "This account has no access." }, { status: 403, ...noStore });
     const writes = planOp(op, me, mapped.dataset, stamp());
     const results = [];
