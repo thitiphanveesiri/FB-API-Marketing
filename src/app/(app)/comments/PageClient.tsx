@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { Badge, Btn, Card, ChannelIcon, Column, DataTable, EmptyState, KpiCard } from "@/components/ui";
+import { Badge, Btn, Card, ChannelIcon, Column, DataTable, EmptyState, KpiCard, Modal } from "@/components/ui";
+import { roleCan } from "@/lib/queries";
 import FilterBar from "@/components/FilterBar";
 import { CommentEvent, SLA_RULES, commentEvent } from "@/lib/sla";
 import { PostRow, postRows } from "@/lib/posts";
@@ -24,7 +25,22 @@ function PostAnchor({ postId }: { postId: string }) {
 }
 
 export default function CommentsPage() {
-  const { data, filters } = useStore();
+  const { data, filters, user, reloadData, toast } = useStore();
+  const [replyTo, setReplyTo] = useState<CommentEvent | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+  const canReply = roleCan.editLeads(user.role) && user.role !== "Agency" && user.role !== "Sales Representative";
+  const send = async () => {
+    if (!replyTo || !replyText.trim()) return;
+    setSending(true);
+    try {
+      const r = await fetch("/api/comment-reply", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commentId: replyTo.comment.id, text: replyText }) });
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; message?: string; saved?: boolean };
+      if (!r.ok || !j.ok) { toast(j.message ?? "ส่งคำตอบไม่สำเร็จ", "error"); return; }
+      toast(j.saved === false ? "ส่งคำตอบแล้ว แต่บันทึกเวลาตอบไม่สำเร็จ — กดซิงค์เพื่ออัปเดต" : "ส่งคำตอบแล้ว", "success");
+      setReplyTo(null); setReplyText(""); void reloadData(true);
+    } finally { setSending(false); }
+  };
   const [tab, setTab] = useState<"posts" | "comments">("posts");
   const [view, setView] = useState<"all" | "late" | "open">("all");
   const [site, setSite] = useState<"all" | "Facebook" | "Instagram">("all");
@@ -54,6 +70,7 @@ export default function CommentsPage() {
     { key: "po", header: "โพสต์", sort: (e) => e.comment.postId, render: (e) => <PostAnchor postId={e.comment.postId} /> },
     { key: "w", header: "ใช้เวลา", align: "right", sort: (e) => e.minutes, render: (e) => (e.open ? <Badge tone="red">ยังไม่ตอบ · {dur(e.minutes)}</Badge> : dur(e.minutes)) },
     { key: "ra", header: "ตอบเมื่อ", sort: (e) => e.comment.repliedAt, render: (e) => (e.comment.repliedAt ? hm(e.comment.repliedAt) : "—") },
+    ...(canReply ? [{ key: "re", header: "ตอบ", render: (e: CommentEvent) => e.comment.repliedAt || /^CM-/.test(e.comment.id) ? <span className="text-muted">—</span> : <Btn size="sm" variant="primary" onClick={() => { setReplyTo(e); setReplyText(""); }}>ตอบ</Btn> }] : []),
     { key: "d", header: `ผล (หัก ${pts(SLA_RULES.commentPenalty)} แต้ม/คน)`, align: "right", sort: (e) => e.deduct, render: (e) => (e.deduct ? <b className="text-red-500">−{pts(e.deduct)}</b> : e.late ? <span className="text-xs text-muted">ไม่หัก (นอกช่วงเวลา/วันหยุด)</span> : <span className="text-xs text-muted">ทัน</span>) },
   ];
 
@@ -135,6 +152,11 @@ export default function CommentsPage() {
           )}
         </>
       )}
+      <Modal open={!!replyTo} onClose={() => setReplyTo(null)} title="ตอบคอมเมนต์" footer={<><Btn onClick={() => setReplyTo(null)}>ยกเลิก</Btn><Btn variant="primary" disabled={sending || !replyText.trim()} onClick={() => void send()}>{sending ? "กำลังส่ง…" : "ส่งคำตอบ"}</Btn></>}>
+        <p className="text-xs text-muted">{replyTo?.comment.commenter || "ลูกค้า"} · {replyTo ? hm(replyTo.comment.at) : ""}</p>
+        <p className="mb-3 mt-1 whitespace-pre-wrap rounded-lg bg-brand-faint px-3 py-2 text-sm">{replyTo?.comment.text || "—"}</p>
+        <textarea value={replyText} onChange={(e) => setReplyText(e.target.value)} rows={4} maxLength={2000} aria-label="ข้อความตอบ" placeholder="พิมพ์คำตอบ — จะโพสต์ในชื่อเพจ" className="w-full rounded-lg border border-line bg-surface p-2 text-sm outline-none focus:border-brand" />
+      </Modal>
     </div>
   );
 }
