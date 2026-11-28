@@ -1,4 +1,5 @@
 "use client";
+import ChatWidget from "@/components/ChatWidget";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, Inbox, KanbanSquare, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Upload, UserRound, X, ClipboardCheck, Timer, BellRing, MessageSquare, Layers } from "lucide-react";
@@ -285,6 +286,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
       <FeedbackHost />
+      <ChatWidget />
     </div>
   );
 }
